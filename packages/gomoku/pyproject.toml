@@ -1,0 +1,19 @@
+[project]
+name = "gomoku"
+version = "0.1.0"
+description = "Gomoku core engine — board, rules, and game loop"
+requires-python = ">=3.14"
+dependencies = [
+    "pydantic>=2.12",
+    "logfire>=4.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/gomoku"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

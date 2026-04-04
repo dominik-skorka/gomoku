@@ -1,0 +1,47 @@
+[project]
+name = "gomoku-workspace"
+version = "0.1.0"
+description = "Gomoku (Five in a Row) game workspace"
+requires-python = ">=3.14"
+dependencies = [
+    "gomoku",
+    "gomoku-brain",
+    "gomoku-cli",
+]
+
+[tool.uv.workspace]
+members = ["packages/*"]
+
+[tool.uv.sources]
+gomoku = { workspace = true }
+gomoku-brain = { workspace = true }
+gomoku-cli = { workspace = true }
+
+[tool.ruff]
+target-version = "py314"
+line-length = 120
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+    "SIM", # flake8-simplify
+    "RUF", # ruff-specific
+]
+
+[tool.pytest.ini_options]
+testpaths = [
+    "packages/gomoku/tests",
+    "packages/gomoku-brain/tests",
+    "packages/gomoku-cli/tests",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+    "ruff>=0.15.9",
+]
