@@ -1,0 +1,17 @@
+[game]
+board_size = 15
+win_length = 5
+
+[brains.minimax]
+depth = 3
+
+[brains.negamax]
+depth = 3
+
+[brains.alphabeta]
+depth = 4
+
+[brains.threat]
+depth = 4
+vcf_depth = 20
+vct_depth = 8

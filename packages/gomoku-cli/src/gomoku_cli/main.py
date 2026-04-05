@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import click
 import logfire
 from gomoku.game import Game, InvalidMoveError
 from gomoku.models import GameConfig, Stone
-from gomoku_brain import BRAINS, get_brain
+from gomoku.settings import GomokuSettings
+from gomoku_brain import BRAINS, get_brain_from_settings
 from rich.console import Console
 
 from gomoku_cli.display import render_board, render_result
@@ -17,16 +20,10 @@ console = Console()
 _ALL_PROVIDERS = sorted([*BRAINS, "keyboard"])
 
 
-def _make_provider(name: str, depth: int) -> object:
+def _make_provider(name: str, settings: GomokuSettings) -> object:
     if name == "keyboard":
         return KeyboardProvider()
-    return get_brain(name, **_brain_kwargs(name, depth))
-
-
-def _brain_kwargs(name: str, depth: int) -> dict[str, object]:
-    if name == "random":
-        return {}
-    return {"depth": depth}
+    return get_brain_from_settings(name, settings.brains)
 
 
 @click.group()
@@ -52,15 +49,26 @@ def cli() -> None:
     show_default=True,
     help="Move provider for White.",
 )
-@click.option("--board-size", type=click.IntRange(5, 25), default=15, show_default=True, help="Board size (NxN).")
-@click.option("--depth", type=click.IntRange(1, 10), default=3, show_default=True, help="Search depth for AI brains.")
-def play(black_name: str, white_name: str, board_size: int, depth: int) -> None:
+@click.option("--board-size", type=click.IntRange(5, 25), default=None, help="Board size (NxN). [default: from config]")
+@click.option(
+    "--config",
+    "config_path",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=None,
+    help="Path to gomoku.toml config file.",
+)
+def play(black_name: str, white_name: str, board_size: int | None, config_path: Path | None) -> None:
     """Start a Gomoku game."""
-    config = GameConfig(board_size=board_size)
-    black = _make_provider(black_name, depth)
-    white = _make_provider(white_name, depth)
+    settings = _load_settings(config_path)
 
-    console.print(f"\n[bold]Gomoku {board_size}x{board_size}[/bold]")
+    if board_size is not None:
+        settings.game.board_size = board_size
+
+    config = GameConfig(board_size=settings.game.board_size, win_length=settings.game.win_length)
+    black = _make_provider(black_name, settings)
+    white = _make_provider(white_name, settings)
+
+    console.print(f"\n[bold]Gomoku {config.board_size}x{config.board_size}[/bold]")
     console.print(f"  Black: {black_name}  |  White: {white_name}\n")
 
     game = Game(config, black, white)  # type: ignore[arg-type]
@@ -81,6 +89,17 @@ def play(black_name: str, white_name: str, board_size: int, depth: int) -> None:
         if result is not None:
             render_result(result, turn)
             break
+
+
+def _load_settings(config_path: Path | None) -> GomokuSettings:
+    """Load settings, optionally from an explicit TOML path."""
+    if config_path is not None:
+        import tomllib
+
+        with config_path.open("rb") as f:
+            data = tomllib.load(f)
+        return GomokuSettings(**data)
+    return GomokuSettings()
 
 
 if __name__ == "__main__":
