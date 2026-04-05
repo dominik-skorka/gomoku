@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import logfire
 
 from gomoku.board import Board
@@ -22,12 +24,19 @@ class InvalidMoveError(Exception):
 class Game:
     """Runs a Gomoku game between two MoveProviders."""
 
-    def __init__(self, config: GameConfig, black: MoveProvider, white: MoveProvider) -> None:
+    def __init__(
+        self,
+        config: GameConfig,
+        black: MoveProvider,
+        white: MoveProvider,
+        on_move: Callable[[Stone, Move], None] | None = None,
+    ) -> None:
         self.config = config
         self.board = Board(size=config.board_size)
         self.players: dict[Stone, MoveProvider] = {Stone.BLACK: black, Stone.WHITE: white}
         self.current_stone: Stone = Stone.BLACK
         self.move_history: list[tuple[Stone, Move]] = []
+        self._on_move = on_move
 
     def play_turn(self) -> GameResult | None:
         """Execute one turn. Returns GameResult if the game ends, else None."""
@@ -47,6 +56,9 @@ class Game:
 
             self.board = self.board.place_stone(move, self.current_stone)
             self.move_history.append((self.current_stone, move))
+
+            if self._on_move is not None:
+                self._on_move(self.current_stone, move)
 
             logfire.info("Move played: {stone} -> {move}", stone=str(self.current_stone), move=str(move))
 

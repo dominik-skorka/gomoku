@@ -14,4 +14,11 @@ depth = 4
 [brains.threat]
 depth = 4
 vcf_depth = 20
-vct_depth = 8
+vct_depth = 12
+threat_search = "pns"
+pns_nodes = 10_000
+pns_time_s = 5.0
+
+[recording]
+enabled = true        # Set to true to record every game
+directory = "recordings"

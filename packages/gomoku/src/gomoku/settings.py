@@ -48,7 +48,20 @@ class ThreatBrainSettings(BaseModel):
 
     depth: int = Field(default=4, ge=1, le=10)
     vcf_depth: int = Field(default=20, ge=1, le=40)
-    vct_depth: int = Field(default=8, ge=1, le=20)
+    vct_depth: int = Field(default=12, ge=1, le=30)
+    threat_search: str = Field(default="pns", pattern="^(pns|vct)$")
+    pns_nodes: int = Field(default=10_000, ge=1_000, le=10_000_000)
+    pns_time_s: float = Field(default=5.0, ge=0.1, le=60.0)
+
+
+# ── Recording settings ──────────────────────────────────────────────────────
+
+
+class RecordingSettings(BaseModel):
+    """Settings for game recording."""
+
+    enabled: bool = False
+    directory: Path = Path("recordings")
 
 
 # ── Game-level settings ─────────────────────────────────────────────────────
@@ -88,6 +101,7 @@ class GomokuSettings(BaseSettings):
 
     game: GameSettings = GameSettings()
     brains: BrainSettings = BrainSettings()
+    recording: RecordingSettings = RecordingSettings()
 
     @classmethod
     def settings_customise_sources(

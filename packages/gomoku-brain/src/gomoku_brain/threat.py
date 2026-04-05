@@ -195,6 +195,37 @@ def _vcf(
 # ---------------------------------------------------------------------------
 
 
+def _vct_defence_moves(board: Board, attack_move: Move, stone: Stone) -> list[Move]:
+    """Compute the full defence set for a three-threat played by *stone*.
+
+    Includes the two open-end cells of the threat **plus** any move that
+    creates a four-threat for the *opponent* (counter-threats).  This prevents
+    the VCT from declaring false forced wins when the opponent can create
+    counter-threats from unexpected cells (e.g. the K8 bug).
+    """
+    opp = stone.opponent()
+    trial = board.place_stone(attack_move, stone)
+
+    # Start with the natural blocking cells (open ends of the live three)
+    three_threats = _find_three_threats(board, stone)
+    end_cells: set[tuple[int, int]] = set()
+    for atk, defs in three_threats:
+        if atk == attack_move:
+            for d in defs:
+                end_cells.add((d.row, d.col))
+
+    # Add any candidate move that would create a four-threat for the opponent
+    for candidate in get_candidate_moves(trial, radius=2):
+        if (candidate.row, candidate.col) in end_cells:
+            continue
+        cand_board = trial.place_stone(candidate, opp)
+        opp_fours = _find_four_threats(cand_board, opp)
+        if opp_fours:
+            end_cells.add((candidate.row, candidate.col))
+
+    return [Move(row=r, col=c) for r, c in sorted(end_cells)]
+
+
 def _vct(
     board: Board,
     stone: Stone,
@@ -204,8 +235,8 @@ def _vct(
     """Recursive VCT search.
 
     Attacker plays four-threats *and* live-three threats.
-    Defender must block four-threats (forced), and for three-threats tries all
-    reasonable defence moves (including own counter four-threats).
+    Defender tries all reasonable defence moves: the two open-end cells of the
+    threat **and** any move that creates a counter four-threat.
     """
     if depth <= 0:
         return None
@@ -218,7 +249,7 @@ def _vct(
 
         # 2) Try three-threats
         three_threats = _find_three_threats(board, stone)
-        for attack, defence_moves in three_threats:
+        for attack, _naive_defences in three_threats:
             trial = board.place_stone(attack, stone)
 
             # Check if attack itself wins
@@ -229,6 +260,9 @@ def _vct(
             # Opponent gets to respond — can they win first?
             if _find_winning_move(trial, stone.opponent()) is not None:
                 continue
+
+            # Compute full defence set (end cells + counter-threat moves)
+            defence_moves = _vct_defence_moves(board, attack, stone)
 
             # Defender responds: must refute ALL defence moves to prove win
             all_refuted = True
@@ -243,12 +277,35 @@ def _vct(
                     # Defender may also play a counter four-threat
                     opponent_fours = _find_four_threats(trial2, stone.opponent())
                     if opponent_fours:
-                        # Opponent has a counter-threat — this defence line
-                        # is not simply refutable; abandon this attack.
-                        all_refuted = False
-                        break
+                        # Unblockable four (live four / five) → opponent wins
+                        if any(d is None for _, d in opponent_fours):
+                            all_refuted = False
+                            break
 
-                    if _vct(trial2, stone, depth - 2, is_attacker=True) is None:
+                        # All counter-fours are dead fours (blockable).
+                        # Attacker must block each one before continuing.
+                        board_after_counters = trial2
+                        depth_cost = 0
+                        countered = True
+                        for _, block_move in opponent_fours:
+                            if not board_after_counters.is_valid_move(block_move):
+                                countered = False
+                                break
+                            board_after_counters = board_after_counters.place_stone(
+                                block_move,
+                                stone,
+                            )
+                            depth_cost += 2  # opponent four + our block
+
+                        if not countered:
+                            all_refuted = False
+                            break
+
+                        # Continue the attack after blocking the dead fours
+                        if _vct(board_after_counters, stone, depth - 2 - depth_cost, is_attacker=True) is None:
+                            all_refuted = False
+                            break
+                    elif _vct(trial2, stone, depth - 2, is_attacker=True) is None:
                         all_refuted = False
                         break
 
@@ -264,17 +321,28 @@ def _vct(
 
 
 class ThreatBrain:
-    """MoveProvider using VCF / VCT with alpha-beta fallback."""
+    """MoveProvider using VCF / VCT or PNS with alpha-beta fallback.
+
+    *threat_search* selects the algorithm used after VCF:
+    - ``"pns"`` (default): Proof-Number Search — sound, covers all defender moves.
+    - ``"vct"`` : depth-limited VCT — faster but weaker (expanded defence set).
+    """
 
     def __init__(
         self,
         depth: int = 4,
         vcf_depth: int = 20,
-        vct_depth: int = 8,
+        vct_depth: int = 12,
+        threat_search: str = "pns",
+        pns_nodes: int = 10_000,
+        pns_time_s: float = 5.0,
     ) -> None:
         self.depth = depth
         self.vcf_depth = vcf_depth
         self.vct_depth = vct_depth
+        self.threat_search = threat_search
+        self.pns_nodes = pns_nodes
+        self.pns_time_s = pns_time_s
         self._fallback = AlphaBetaBrain(depth=depth)
 
     @property
@@ -286,6 +354,8 @@ class ThreatBrain:
             "brain.threat",
             vcf_depth=self.vcf_depth,
             vct_depth=self.vct_depth,
+            threat_search=self.threat_search,
+            pns_nodes=self.pns_nodes,
             stone=str(stone),
         ):
             # 0) If we can win immediately, do it
@@ -307,19 +377,79 @@ class ThreatBrain:
                 logfire.info("VCF found winning move: {move}", move=str(move))
                 return move
 
-            # 3) Try VCT — broader threat search
-            move = _vct(board, stone, self.vct_depth, is_attacker=True)
-            if move is not None:
-                logfire.info("VCT found winning move: {move}", move=str(move))
-                return move
+            # 3) Try broader threat search (PNS or VCT)
+            if self.threat_search == "pns":
+                from gomoku_brain.pns import pns_threat_search
 
-            # 4) Check if opponent has a VCF threat; if so, try to block
+                move = pns_threat_search(board, stone, max_nodes=self.pns_nodes, max_time_s=self.pns_time_s)
+                if move is not None:
+                    logfire.info("PNS found winning move: {move}", move=str(move))
+                    return move
+            else:
+                move = _vct(board, stone, self.vct_depth, is_attacker=True)
+                if move is not None:
+                    logfire.info("VCT found winning move: {move}", move=str(move))
+                    return move
+
+            # 4) Check if opponent has a VCF threat
             opp_vcf = _vcf(board, opp, self.vcf_depth, is_attacker=True)
             if opp_vcf is not None:
-                logfire.info("Blocking opponent VCF at: {move}", move=str(opp_vcf))
-                if board.is_valid_move(opp_vcf):
-                    return opp_vcf
+                return self._vcf_aware_search(board, stone, opp_vcf)
 
             # 5) Fallback to alpha-beta
             logfire.info("No threat sequence found, falling back to alpha-beta")
             return self._fallback.get_move(board, stone)
+
+    # -- VCF-aware search ---------------------------------------------------
+
+    def _vcf_aware_search(
+        self, board: Board, stone: Stone, opp_vcf_move: Move,
+    ) -> Move:
+        """Pick the best move when the opponent has a VCF.
+
+        Instead of unconditionally blocking at *opp_vcf_move*, we check
+        every candidate: does our move break the opponent's VCF?  Among
+        the VCF-breakers we let alpha-beta choose the positionally best
+        one.  If nothing breaks it we fall back to the direct block.
+        """
+        from gomoku_brain.evaluate import evaluate_board
+
+        opp = stone.opponent()
+        candidates = get_candidate_moves(board, radius=2)
+
+        # Partition candidates into those that break opp VCF and those that don't.
+        breakers: list[Move] = []
+        for move in candidates:
+            trial = board.place_stone(move, stone)
+            if _vcf(trial, opp, self.vcf_depth, is_attacker=True) is None:
+                breakers.append(move)
+
+        if not breakers:
+            # Nothing breaks the VCF — block at the threatened cell as last resort.
+            logfire.info(
+                "No VCF breaker found, blocking opponent VCF at: {move}",
+                move=str(opp_vcf_move),
+            )
+            if board.is_valid_move(opp_vcf_move):
+                return opp_vcf_move
+            return self._fallback.get_move(board, stone)
+
+        if len(breakers) == 1:
+            logfire.info("Single VCF breaker: {move}", move=str(breakers[0]))
+            return breakers[0]
+
+        # Multiple breakers — use alpha-beta among them for positional quality.
+        logfire.info(
+            "VCF-aware search: {n} breakers, picking best via alpha-beta",
+            n=len(breakers),
+        )
+        best_score = float("-inf")
+        best_move = breakers[0]
+        for move in breakers:
+            trial = board.place_stone(move, stone)
+            score = evaluate_board(trial, stone)
+            if score > best_score:
+                best_score = score
+                best_move = move
+
+        return best_move

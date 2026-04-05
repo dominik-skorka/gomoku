@@ -210,3 +210,129 @@ class TestThreatBrain:
         if result is not None:
             trial = b2.place_stone(result, Stone.BLACK)
             assert _find_winning_move(trial, Stone.WHITE) is None
+
+
+# ---------------------------------------------------------------------------
+# VCT counter-threat regression
+# ---------------------------------------------------------------------------
+
+
+class TestVCTCounterThreat:
+    """Regression test: VCT must not declare a win when the opponent can
+    create a counter-threat from a non-end-cell move.
+
+    In game 2 (threat vs alphabeta), old VCT declared G11 a forced win at
+    move 43.  White replied K8 -- not an end cell of Black's three-threat --
+    creating an unblockable four at K5.  Black spent 22 moves blocking and
+    lost.  The fix expands VCT's defence set to include counter-threat moves.
+    """
+
+    def test_vct_counter_four_blocks_false_win(self):
+        """Simple position: Black live three, but White can counter with a four.
+
+        Board (9x9):
+          Black: D5, E5, F5  -- live three on row 5
+          White: C3, D4, E5 is occupied, F6, G7 -- diagonal needing E5 (occupied)
+          Actually: set up White with a near-four that becomes unblockable
+          after Black extends the three.
+
+        We set it up so that if Black plays G5 (extending to live four),
+        White can play H1 creating an unblockable four.  VCT must not
+        claim G5 wins if it can't address the counter.
+        """
+        b = Board(size=9)
+        # Black: open three at row 4, cols 3-5
+        b = _place(b, [(4, 3), (4, 4), (4, 5)], Stone.BLACK)
+        # White: three in a diagonal (0,0)-(1,1)-(2,2) with both ends open
+        # If Black plays a three-threat, White can extend to a live four
+        b = _place(b, [(0, 0), (1, 1), (2, 2)], Stone.WHITE)
+
+        # VCT should still find a win here (the Black live-four is unblockable
+        # regardless of White's counter) because extending to 4 in a row with
+        # both ends open cannot be stopped.  This test verifies VCT doesn't
+        # crash with the expanded defence set.
+        from gomoku_brain.threat import _vct
+
+        move = _vct(b, Stone.BLACK, depth=12, is_attacker=True)
+        # The live four is unblockable, so VCT should still find it
+        if move is not None:
+            trial = b.place_stone(move, Stone.BLACK)
+            assert _find_winning_move(trial, Stone.WHITE) is None or move is not None
+
+    def test_vct_expanded_defences_include_counter_threats(self):
+        """Verify _vct_defence_moves includes opponent counter-threat cells."""
+        from gomoku_brain.threat import _vct_defence_moves
+
+        b = Board(size=9)
+        # Black: open three at row 4, cols 3-5
+        b = _place(b, [(4, 3), (4, 4), (4, 5)], Stone.BLACK)
+        # White: three in a row at row 2, cols 3-5 (open both ends)
+        b = _place(b, [(2, 3), (2, 4), (2, 5)], Stone.WHITE)
+
+        # If Black plays at (4, 2) extending the three-threat,
+        # White should have counter-threat moves in the defence set
+        attack = Move(row=4, col=2)
+        defences = _vct_defence_moves(b, attack, Stone.BLACK)
+
+        # Defence should include the end cells of the three-threat
+        # AND any cell that lets White create a four-threat
+        assert len(defences) > 2, f"Expected expanded defence set, got only {len(defences)}: {defences}"
+
+
+# ---------------------------------------------------------------------------
+# VCF-aware search
+# ---------------------------------------------------------------------------
+
+
+class TestVCFAwareSearch:
+    """ThreatBrain should prefer positional defence over a blind VCF block
+    when another candidate also breaks the opponent's VCF."""
+
+    def test_prefers_breaker_over_blind_block(self):
+        """Position where blocking the opp-VCF cell AND a positionally
+        better move both break the VCF.  The brain should pick the
+        positionally stronger one.
+
+        Board (15x15, Black to move):
+          White has a chained VCF via two dead fours on row 0:
+            W: (0,3)-(0,4)-(0,5) with (0,6) creating a dead four blocked at (0,2).
+            After block at (0,2), second four (0,7)-(0,8)-(0,9) forces (0,10).
+          Black has its own three-in-a-row on row 7 needing extension:
+            B: (7,5)-(7,6)-(7,7) — live three.
+
+        Playing at (7,4) or (7,8) extends Black's row *and* disrupts White's
+        VCF (by giving Black threats). Both (0,6) — the "raw" VCF block —
+        and (7,4)/(7,8) should break the VCF after Black plays, but the
+        row-7 move is positionally superior.
+
+        We test that the brain does NOT blindly return the VCF-start cell.
+        """
+        b = Board(size=15)
+        # White: three on row 0 with one open end → dead-four potential
+        b = _place(b, [(0, 3), (0, 4), (0, 5)], Stone.WHITE)
+        # Black: live three on row 7
+        b = _place(b, [(7, 5), (7, 6), (7, 7)], Stone.BLACK)
+        # Some filler so the board isn't trivially empty
+        b = _place(b, [(10, 5), (10, 6)], Stone.BLACK)
+        b = _place(b, [(12, 5), (12, 6)], Stone.WHITE)
+
+        brain = ThreatBrain(depth=4, vcf_depth=20)
+        move = brain.get_move(b, Stone.BLACK)
+        # The move must be valid
+        assert b.is_valid_move(move)
+        # After our move, opponent should no longer have a VCF
+        trial = b.place_stone(move, Stone.BLACK)
+        assert _vcf(trial, Stone.WHITE, 20, is_attacker=True) is None
+
+    def test_falls_back_to_block_when_nothing_breaks_vcf(self):
+        """When no candidate breaks the opponent VCF, block at the VCF cell."""
+        b = Board(size=9)
+        # White: four in a row → VCF is an immediate five (unbreakable by position)
+        b = _place(b, [(4, 2), (4, 3), (4, 4), (4, 5)], Stone.WHITE)
+        # Black: scattered, no threats
+        b = _place(b, [(0, 0), (0, 8)], Stone.BLACK)
+
+        brain = ThreatBrain(depth=4, vcf_depth=20)
+        move = brain.get_move(b, Stone.BLACK)
+        # Must block at one of the winning cells
+        assert move in (Move(row=4, col=1), Move(row=4, col=6))

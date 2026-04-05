@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from gomoku.board import Board
 from gomoku.models import GameResult, Move, Stone
+from gomoku.recorder import GameRecord
 from rich.console import Console
 from rich.text import Text
 
@@ -74,3 +75,22 @@ def render_result(result: GameResult, total_turns: int) -> None:
         if result.winning_moves:
             moves_str = ", ".join(str(m) for m in result.winning_moves)
             console.print(f"Winning line: {moves_str}", style="dim")
+
+
+def render_playback_info(record: GameRecord) -> None:
+    """Print a header summarising the recorded game."""
+    cfg = record.game_config
+    console.print(f"\n[bold]Gomoku {cfg.board_size}x{cfg.board_size}[/bold] \u2014 Playback")
+
+    for p in record.players:
+        settings_str = ", ".join(f"{k}={v}" for k, v in p.settings.items()) if p.settings else ""
+        label = f"{p.provider}" + (f" ({settings_str})" if settings_str else "")
+        console.print(f"  {p.stone}: {label}")
+
+    started = record.started_at.strftime("%Y-%m-%d %H:%M:%S")
+    ended = record.ended_at.strftime("%Y-%m-%d %H:%M:%S")
+    console.print(f"  Played: {started} → {ended}")
+
+    total = len(record.moves)
+    outcome = "Draw" if record.result.is_draw else f"{record.result.winner} wins"
+    console.print(f"  Moves: {total}  |  Result: {outcome}\n")

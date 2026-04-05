@@ -1,4 +1,4 @@
-# Threat Brain — VCF / VCT Search
+# Threat Brain — VCF / VCT / PNS Search
 
 A **threat-based** Gomoku brain that tries to prove a forced win before
 resorting to general search.  It chains together *threats* — moves the opponent
@@ -13,29 +13,31 @@ resorting to general search.  It chains together *threats* — moves the opponen
 3. [Threat Types](#threat-types)
 4. [VCF — Victory by Continuous Fours](#vcf--victory-by-continuous-fours)
 5. [VCT — Victory by Continuous Threats](#vct--victory-by-continuous-threats)
-6. [Execution Pipeline](#execution-pipeline)
-7. [Depth Parameters](#depth-parameters)
-8. [Example Scenarios](#example-scenarios)
-9. [Configuration & Usage](#configuration--usage)
-10. [Brain Comparison](#brain-comparison)
+6. [PNS — Proof-Number Search](#pns--proof-number-search)
+7. [Execution Pipeline](#execution-pipeline)
+8. [Parameters](#parameters)
+9. [Example Scenarios](#example-scenarios)
+10. [Configuration & Usage](#configuration--usage)
+11. [Brain Comparison](#brain-comparison)
 
 ---
 
 ## Overview
 
-| Property      | Value                                      |
-| ------------- | ------------------------------------------ |
-| Brain name    | `threat`                                   |
-| Algorithm     | VCF + VCT with alpha-beta fallback         |
-| Default depth | `vcf_depth=20`, `vct_depth=8`, `depth=4`  |
-| Strength      | Strongest brain in the workspace           |
-| Best at       | Endgame / tactical positions               |
+| Property        | Value                                             |
+| --------------- | ------------------------------------------------- |
+| Brain name      | `threat`                                          |
+| Algorithm       | VCF + (PNS or VCT) with alpha-beta fallback       |
+| Default search  | `threat_search=pns` (configurable: `pns` or `vct`)|
+| Default params  | `vcf_depth=20`, `vct_depth=12`, `pns_nodes=10000`, `pns_time_s=5.0`, `depth=4` |
+| Strength        | Strongest brain in the workspace                  |
+| Best at         | Endgame / tactical positions                      |
 
-The threat brain runs three phases on every turn:
+The threat brain runs four phases on every turn, stopping at the first hit:
 
 ```
-VCF  ──▶  VCT  ──▶  Opponent-VCF check  ──▶  Alpha-beta fallback
-fast       moderate   fast                     general
+VCF  ──▶  PNS/VCT  ──▶  VCF-aware search  ──▶  Alpha-beta fallback
+fast       moderate     smart defence          general
 ```
 
 ---
@@ -148,31 +150,54 @@ VCT extends VCF by **also** considering live-three threats.  This finds more
 forced wins but is slower because the defender has multiple responses to a
 three-threat.
 
+### Defence enumeration
+
+When the attacker plays a three-threat, the defender's response set includes:
+
+1. **End cells** — the two open ends of the live three (direct blocks).
+2. **Counter-threat moves** — any candidate cell that, when played by the
+   defender, creates a new four-threat.  This catches moves like creating a
+   counter-four from a distant cell, which the original VCT missed.
+
+The expanded defence set is computed by `_vct_defence_moves()`.
+
+> **History:** The original VCT only considered the two end cells.  In a real
+> game (threat vs alphabeta), VCT declared G11 a forced win at move 43, but
+> White replied K8 — not an end cell — creating an unblockable four at K5.
+> Black spent 22 moves defending and lost.  The fix adds counter-threat moves
+> to the defence set, making VCT sound against this class of refutation.
+
 ### Algorithm
 
 ```
 function VCT(board, attacker, depth):
-    if depth ≤ 0: return None
+    if depth <= 0: return None
 
     # Phase 1 — try VCF first (stronger, faster)
     result = VCF(board, attacker, depth)
-    if result ≠ None: return result
+    if result != None: return result
 
     # Phase 2 — try three-threats
-    for each three-threat (attack, defences[]) of attacker:
+    for each three-threat (attack) of attacker:
         board' = board + attack
 
-        if attack wins → return attack
+        if attack wins: return attack
+
+        # Compute full defence set (end cells + counter-threat moves)
+        defences = end_cells(attack) ∪ counter_threat_moves(board', opponent)
 
         proven = true
-        for each defence in defences[]:
+        for each defence in defences:
             board'' = board' + defence
 
-            if opponent has counter four-threat:
-                proven = false; break            # Can't refute
+            if opponent has unblockable counter-four:
+                proven = false; break
 
-            if VCT(board'', attacker, depth-2) = None:
-                proven = false; break            # Can't continue
+            if opponent has blockable counter-fours:
+                block them all (costs extra depth)
+
+            if VCT(board_after, attacker, depth - 2 - cost) = None:
+                proven = false; break
 
         if proven: return attack
     
@@ -184,10 +209,103 @@ function VCT(board, attacker, depth):
 | Property          | Value                                  |
 | ----------------- | -------------------------------------- |
 | Branching factor  | Attacker: four-threats + three-threats |
-|                   | Defender: **2+** per three-threat      |
-| Typical depth     | 8 plies (4 attack + 4 response)        |
+|                   | Defender: end cells + counter-threats  |
+| Typical depth     | 12 plies (6 attack + 6 response)       |
 | Speed             | Moderate                               |
 | Completeness      | Finds wins via four- and three-chains  |
+| Soundness         | Sound against counter-four refutations |
+
+---
+
+## PNS — Proof-Number Search
+
+PNS (Allis 1994) is an alternative to VCT for the broader threat search
+phase.  Instead of depth-limited DFS, it uses **proof numbers** to guide a
+best-first search through the threat-space tree.
+
+### Key advantage over VCT
+
+At **AND nodes** (defender to move), PNS considers **all threat-relevant
+defensive moves** — direct blocks of attacker threats plus counter-threats
+(defender fours and threes).  This covers the same refutations as all-candidate
+expansion in practice while keeping branching tractable (~15 moves instead
+of ~100+).
+
+### Node types
+
+| Node type | Who moves | Children | Win condition |
+|-----------|-----------|----------|---------------|
+| **OR**  (attacker) | Attacker | Four-threats + three-threats | *Any* child proved |
+| **AND** (defender) | Defender | Blocks + counter-threats | *Every* child proved |
+
+### How proof numbers work
+
+Each node has two numbers:
+
+- **Proof number (PN)**: minimum leaves to examine to *prove* this node (attacker wins).
+- **Disproof number (DN)**: minimum leaves to examine to *disprove* this node.
+
+| Node state | PN | DN |
+|------------|------|------|
+| Proved (attacker wins) | 0 | ∞ |
+| Disproved (no win) | ∞ | 0 |
+| Unknown | ≥ 1 | ≥ 1 |
+
+For OR nodes: `PN = min(children.PN)`, `DN = sum(children.DN)`.
+For AND nodes: `PN = sum(children.PN)`, `DN = min(children.DN)`.
+
+### Algorithm
+
+```
+function PNS(board, attacker, max_nodes):
+    root = OR_node(board)
+    evaluate(root)
+
+    while root is neither proved nor disproved and nodes < max_nodes:
+        mpn, path = select_most_proving_node(root)  # walk to best leaf
+        expand(mpn)                                  # generate children
+        backpropagate_path(path)                     # update PN/DN along path
+
+    if root is proved:
+        return root's proved child's move
+    return None
+```
+
+### Optimisations
+
+- **Path-based backpropagation**: Only nodes on the selection path are updated
+  after each expansion — O(depth) per iteration instead of O(tree_size).
+- **No-copy immediate-win check** (`_can_win_immediately`): Counts neighbours
+  in-place instead of deep-copying the board per candidate (~100× faster).
+- **Smart defence moves**: AND nodes expand blocks + counter-threats (~15 moves)
+  instead of all candidates (~100+), keeping the tree tractable.
+- **Immediate-win pruning**: If any child is an immediate five-in-a-row,
+  expansion stops early.
+- **Defender-win pruning**: At AND nodes, if a defender move creates an
+  immediate five for the defender, that single child disproves the subtree.
+
+### Properties
+
+| Property          | Value                                  |
+| ----------------- | -------------------------------------- |
+| Branching factor  | Attacker: four-threats + three-threats |
+|                   | Defender: blocks + counter-threats     |
+| Budget            | Node count (default 10,000)            |
+| Speed             | Fast (budget-bounded, path backprop)   |
+| Soundness         | Sound against blocks & counter-threats |
+| Completeness      | Within budget; may not prove/disprove  |
+
+### PNS vs VCT comparison
+
+| Aspect | VCT | PNS |
+|--------|-----|-----|
+| Search strategy | Depth-limited DFS | Best-first (proof numbers) |
+| Defender moves | End cells + counter-four moves | Blocks + counter-threats |
+| Termination | Depth exhausted | Node budget exhausted |
+| Soundness | Sound against counter-fours | Sound against blocks & counter-threats |
+| Speed on simple positions | Faster | Slightly slower |
+| Speed on complex positions | May miss refutations | More reliable |
+| Memory | O(depth) stack | O(nodes) tree |
 
 ---
 
@@ -200,32 +318,71 @@ On each turn, the brain runs four phases in order, stopping at the first hit:
 │                      get_move()                          │
 ├──────────┬───────────┬──────────────────┬────────────────┤
 │ Phase 1  │ Phase 2   │ Phase 3          │ Phase 4        │
-│ VCF      │ VCT       │ Opponent VCF     │ Alpha-beta     │
+│ VCF      │ PNS / VCT │ VCF-aware search │ Alpha-beta     │
 │          │           │ (defensive)      │ (fallback)     │
 ├──────────┼───────────┼──────────────────┼────────────────┤
-│ Find own │ Find own  │ Check if oppnt   │ General search │
-│ forced   │ forced    │ has a VCF; if so │ when no threat │
-│ win via  │ win via   │ block the first  │ sequence found │
-│ fours    │ fours +   │ attack move      │                │
-│ only     │ threes    │                  │                │
+│ Find own │ Find own  │ Opponent has VCF │ General search │
+│ forced   │ forced    │ → find all      │ when no threat │
+│ win via  │ win via   │ candidate moves  │ sequence found │
+│ fours    │ all threat│ that break it;   │                │
+│ only     │ types     │ pick the best    │                │
+│          │           │ one positionally │                │
 ├──────────┼───────────┼──────────────────┼────────────────┤
-│ depth=20 │ depth=8   │ depth=20         │ depth=4        │
-│ ~μs      │ ~ms       │ ~μs              │ ~100ms         │
+│ depth=20 │ PNS:10k  │ N x VCF(depth=20)│ depth=4        │
+│          │ VCT:12    │                  │                │
+│ ~us      │ ~ms-s     │ ~30-60ms         │ ~100ms         │
 └──────────┴───────────┴──────────────────┴────────────────┘
-     fast      moderate       fast              slow
+     fast      moderate      smart defence       slow
 ```
+
+Before any of the four phases, the brain also checks for immediate wins and
+forced blocks:
+
+1. **Immediate win** — if the current player can complete five-in-a-row, play it.
+2. **Forced block** — if the opponent can win next move, block that cell.
+
+The `threat_search` parameter selects which algorithm runs in Phase 2:
+- `"pns"` (default) — Proof-Number Search with a node budget.
+- `"vct"` — depth-limited VCT with expanded defence enumeration.
+
+### Phase 3 — VCF-aware search
+
+When the opponent has a VCF (forced win via four-threats), the brain does
+**not** blindly block at the VCF's first attack cell.  Instead it runs a
+*VCF-aware search*:
+
+1. For every candidate move, play it and re-check whether the opponent still
+   has a VCF on the resulting board.
+2. Collect all **VCF-breakers** — moves that eliminate the opponent's VCF.
+3. Among the breakers, pick the one with the highest positional evaluation
+   score (via `evaluate_board`).
+4. If **no** candidate breaks the VCF, fall back to blocking at the VCF's
+   first attack cell (same as the old behaviour).
+
+This allows the brain to choose a move that both neutralises the opponent's
+tactical threat *and* improves its own position — for example blocking a
+growing row instead of a low-urgency deep VCF.
+
+> **History:** In game 3 (threat-Black vs alphabeta-White), the old pipeline
+> unconditionally blocked White's VCF at step 4, ignoring White's gradual
+> build-up on row 7.  Because the VCF was deep (many plies), almost any
+> positional move would have disrupted it.  The VCF-aware search would have
+> chosen a move that both broke the VCF and blocked the row.
 
 ---
 
-## Depth Parameters
+## Parameters
 
-The brain exposes three depth knobs:
+The brain exposes six knobs:
 
-| Parameter    | Default | Controls                     | Effect of increasing          |
-| ------------ | ------- | ---------------------------- | ----------------------------- |
-| `vcf_depth`  | 20      | Max plies for VCF search     | Finds longer four-chains      |
-| `vct_depth`  | 8       | Max plies for VCT search     | Finds longer three/four-chains|
-| `depth`      | 4       | Alpha-beta fallback depth    | Better positional play        |
+| Parameter       | Default  | Controls                        | Effect of increasing           |
+| --------------- | -------- | ------------------------------- | ------------------------------ |
+| `vcf_depth`     | 20       | Max plies for VCF search        | Finds longer four-chains       |
+| `vct_depth`     | 12       | Max plies for VCT search        | Finds longer three/four-chains |
+| `pns_nodes`     | 10,000   | Node budget for PNS             | Deeper/wider proof search      |
+| `pns_time_s`    | 5.0      | Time budget for PNS (seconds)   | Allows longer proof search     |
+| `threat_search` | `"pns"`  | Algorithm: `"pns"` or `"vct"`  | Selects Phase 2 algorithm      |
+| `depth`         | 4        | Alpha-beta fallback depth       | Better positional play         |
 
 ### How depth is consumed
 
@@ -252,17 +409,18 @@ and `vct_depth=8` means up to **4 mixed threats**.
 
 ### Tuning guidelines
 
-| Scenario                        | Recommendation                  |
-| ------------------------------- | ------------------------------- |
-| Fast play / low resources       | `vcf_depth=12, vct_depth=4`    |
-| Default / balanced              | `vcf_depth=20, vct_depth=8`    |
-| Maximum tactical strength       | `vcf_depth=30, vct_depth=12`   |
-| Better fallback positional play | Increase `depth` (e.g. 5-6)    |
+| Scenario                        | Recommendation                                          |
+| ------------------------------- | ------------------------------------------------------- |
+| Fast play / low resources       | `vcf_depth=12, threat_search=vct, vct_depth=6`         |
+| Default / balanced              | `threat_search=pns, pns_nodes=10000, pns_time_s=5.0, vcf_depth=20` |
+| Maximum tactical strength       | `threat_search=pns, pns_nodes=50000, pns_time_s=15.0, vcf_depth=30` |
+| Better fallback positional play | Increase `depth` (e.g. 5-6)                            |
 
 > **Note:** `vcf_depth` is cheap to increase (narrow tree). `vct_depth` is
-> expensive (exponential branching). Increasing `depth` affects only the
-> alpha-beta fallback and has the same cost profile as the standalone
-> `alphabeta` brain.
+> expensive (exponential branching). `pns_nodes` scales linearly with memory
+> but search time depends on position complexity; `pns_time_s` provides a hard
+> wall-clock cap.  Increasing `depth` affects only the alpha-beta fallback and
+> has the same cost profile as the standalone `alphabeta` brain.
 
 ---
 
@@ -320,6 +478,27 @@ Board state:  early game, scattered stones, no forcing sequences
   → Alpha-beta evaluates all candidate moves at depth=4
 ```
 
+### Example 5 — VCF-aware search picks positional defence
+
+```
+Board state (Black to move):
+  Row 7:  . . O O O . .      White has 3-in-a-row, building toward five
+  White also has a deep VCF (needing 8+ plies to execute)
+
+Old behaviour:
+  VCF-aware search did not exist — brain blindly blocked at White's
+  first VCF attack cell, ignoring the growing row-7 threat.
+
+New behaviour:
+  Phase 3 (VCF-aware search):
+    1. Enumerate all candidate moves.
+    2. For each, check if White still has a VCF on the resulting board.
+    3. Most candidates near row 7 break the deep VCF (it was fragile).
+    4. Among VCF-breakers, evaluate_board picks blocking row 7 as the
+       positionally best move.
+    → Brain blocks row 7 AND breaks the VCF in one move.
+```
+
 ---
 
 ## Configuration & Usage
@@ -327,18 +506,24 @@ Board state:  early game, scattered stones, no forcing sequences
 ### CLI
 
 ```bash
-# Default settings (vcf_depth=20, vct_depth=8, fallback depth=3)
+# Default settings (PNS mode, pns_nodes=10000, vcf_depth=20, fallback depth=4)
 uv run gomoku play --black threat --white alphabeta
-
-# Increase fallback search depth
-uv run gomoku play --black threat --white random --depth 5
 
 # Custom board size
 uv run gomoku play --black threat --white minimax --board-size 9
 ```
 
-The `--depth` flag controls the alpha-beta fallback depth.  VCF and VCT depths
-use their built-in defaults (20 and 8 respectively).
+### gomoku.toml
+
+```toml
+[brains.threat]
+depth = 4
+vcf_depth = 20
+vct_depth = 12
+threat_search = "pns"   # "pns" (default) or "vct"
+pns_nodes = 10_000      # node budget for PNS
+pns_time_s = 5.0        # time budget for PNS (seconds)
+```
 
 ### Python API
 
@@ -346,14 +531,24 @@ use their built-in defaults (20 and 8 respectively).
 from gomoku_brain import get_brain
 from gomoku_brain.threat import ThreatBrain
 
-# Via registry (uses --depth from CLI kwargs)
+# Via registry (uses settings from gomoku.toml)
 brain = get_brain("threat", depth=4)
 
-# Direct construction with full control
+# Direct construction — PNS mode (default)
 brain = ThreatBrain(
-    depth=5,         # alpha-beta fallback depth
-    vcf_depth=24,    # deeper four-threat search
-    vct_depth=10,    # deeper three-threat search
+    depth=5,             # alpha-beta fallback depth
+    vcf_depth=24,        # deeper four-threat search
+    threat_search="pns", # use proof-number search
+    pns_nodes=50_000,    # larger node budget
+    pns_time_s=10.0,     # larger time budget
+)
+
+# Direct construction — VCT mode
+brain = ThreatBrain(
+    depth=4,
+    vcf_depth=20,
+    threat_search="vct",
+    vct_depth=12,
 )
 
 # Use it
@@ -364,9 +559,12 @@ move = brain.get_move(board, stone)
 
 ```python
 ThreatBrain(
-    depth: int = 4,         # Alpha-beta fallback depth
-    vcf_depth: int = 20,    # VCF search depth (plies)
-    vct_depth: int = 8,     # VCT search depth (plies)
+    depth: int = 4,              # Alpha-beta fallback depth
+    vcf_depth: int = 20,         # VCF search depth (plies)
+    vct_depth: int = 12,         # VCT search depth (plies)
+    threat_search: str = "pns",  # "pns" or "vct"
+    pns_nodes: int = 10_000,     # PNS node budget
+    pns_time_s: float = 5.0,     # PNS time budget (seconds)
 )
 ```
 
@@ -376,15 +574,15 @@ ThreatBrain(
 
 ### Complexity
 
-| Brain       | Algorithm             | Branching Factor | Typical Depth | Nodes Explored    |
-| ----------- | --------------------- | ---------------- | ------------- | ----------------- |
-| `random`    | Uniform random        | 1                | 0             | 1                 |
-| `minimax`   | Classic minimax       | ~50              | 3             | ~125,000          |
-| `negamax`   | Negamax               | ~50              | 3             | ~125,000          |
-| `alphabeta` | Alpha-beta pruning    | ~7 (with cutoff) | 4             | ~2,400            |
-| **`threat`**| **VCF/VCT + AB**      | **1–5**          | **20 / 8 / 4**| **~100–2,500**    |
+| Brain       | Algorithm               | Branching Factor | Typical Depth/Budget | Nodes Explored    |
+| ----------- | ----------------------- | ---------------- | -------------------- | ----------------- |
+| `random`    | Uniform random          | 1                | 0                    | 1                 |
+| `minimax`   | Classic minimax         | ~50              | 3                    | ~125,000          |
+| `negamax`   | Negamax                 | ~50              | 3                    | ~125,000          |
+| `alphabeta` | Alpha-beta pruning      | ~7 (with cutoff) | 4                    | ~2,400            |
+| **`threat`**| **VCF + PNS + AB**      | **1-5 / all**    | **20 / 50k / 4**    | **~100-50,000**   |
 
-> Node counts are approximate for a mid-game 15×15 board.
+> Node counts are approximate for a mid-game 15x15 board.
 
 ### Strength Ranking
 
@@ -406,7 +604,7 @@ Strongest ───────────────────────�
 | `minimax`   | Simple, correct                        | Slow, explores redundant branches     |
 | `negamax`   | Cleaner than minimax, same strength    | Same exponential cost                 |
 | `alphabeta` | Prunes well, good move ordering        | Misses long tactical sequences        |
-| **`threat`**| **Finds forced wins 10+ moves ahead**  | **Relies on fallback for positional play; VCT can be slow with high depth** |
+| **`threat`**| **Finds forced wins 10+ moves ahead; VCF-aware defence balances tactics and position**  | **Relies on fallback for positional play; VCT can be slow with high depth** |
 
 ### When to use `threat`
 
