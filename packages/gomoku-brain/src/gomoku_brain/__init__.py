@@ -6,12 +6,14 @@ from gomoku_brain.alphabeta import AlphaBetaBrain
 from gomoku_brain.minimax import MinimaxBrain
 from gomoku_brain.negamax import NegamaxBrain
 from gomoku_brain.random import RandomBrain
+from gomoku_brain.threat import ThreatBrain
 
 BRAINS: dict[str, type] = {
     "random": RandomBrain,
     "minimax": MinimaxBrain,
     "negamax": NegamaxBrain,
     "alphabeta": AlphaBetaBrain,
+    "threat": ThreatBrain,
 }
 
 
@@ -30,5 +32,6 @@ __all__ = [
     "MinimaxBrain",
     "NegamaxBrain",
     "RandomBrain",
+    "ThreatBrain",
     "get_brain",
 ]
