@@ -14,11 +14,16 @@ class Board(BaseModel):
 
     size: int = Field(default=15, ge=5, le=25)
     grid: list[list[Stone]] = Field(default_factory=list)
+    occupied: set[tuple[int, int]] = Field(default_factory=set)
 
     @model_validator(mode="after")
     def _init_grid(self) -> Board:
         if not self.grid:
             self.grid = [[Stone.EMPTY] * self.size for _ in range(self.size)]
+        if not self.occupied:
+            self.occupied = {
+                (r, c) for r in range(self.size) for c in range(self.size) if self.grid[r][c] is not Stone.EMPTY
+            }
         return self
 
     def at(self, row: int, col: int) -> Stone:
@@ -35,13 +40,14 @@ class Board(BaseModel):
         ]
 
     def is_full(self) -> bool:
-        return all(self.grid[r][c] is not Stone.EMPTY for r in range(self.size) for c in range(self.size))
+        return len(self.occupied) == self.size * self.size
 
     def place_stone(self, move: Move, stone: Stone) -> Board:
         """Return a new Board with the stone placed. Does not mutate self."""
         new_grid = copy.deepcopy(self.grid)
         new_grid[move.row][move.col] = stone
-        return Board(size=self.size, grid=new_grid)
+        new_occupied = self.occupied | {(move.row, move.col)}
+        return Board(size=self.size, grid=new_grid, occupied=new_occupied)
 
     def stone_count(self) -> int:
-        return sum(1 for r in range(self.size) for c in range(self.size) if self.grid[r][c] is not Stone.EMPTY)
+        return len(self.occupied)

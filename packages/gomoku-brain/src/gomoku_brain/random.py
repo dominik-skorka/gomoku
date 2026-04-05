@@ -7,14 +7,16 @@ import random as _random
 from gomoku.board import Board
 from gomoku.models import Move, Stone
 
+from gomoku_brain.candidates import get_candidate_moves
+
 
 class RandomBrain:
-    """MoveProvider that chooses a random valid move."""
+    """MoveProvider that chooses a random valid move near existing stones."""
 
     @property
     def name(self) -> str:
         return "random"
 
     def get_move(self, board: Board, stone: Stone) -> Move:
-        valid = board.get_valid_moves()
-        return _random.choice(valid)
+        candidates = get_candidate_moves(board)
+        return _random.choice(candidates)

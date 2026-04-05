@@ -53,19 +53,19 @@ def _score_direction(board: Board, row: int, col: int, dr: int, dc: int, stone: 
 
 
 def evaluate_board(board: Board, stone: Stone) -> float:
-    """Evaluate the board from ``stone``'s perspective. Higher is better."""
+    """Evaluate the board from ``stone``'s perspective. Higher is better.
+
+    Iterates only over ``board.occupied`` instead of scanning the full grid.
+    """
     score = 0.0
     opponent = stone.opponent()
 
-    for r in range(board.size):
-        for c in range(board.size):
-            cell = board.at(r, c)
-            if cell is Stone.EMPTY:
-                continue
-            for dr, dc in _DIRECTIONS:
-                if cell is stone:
-                    score += _score_direction(board, r, c, dr, dc, stone)
-                else:
-                    score -= _score_direction(board, r, c, dr, dc, opponent)
+    for r, c in board.occupied:
+        cell = board.at(r, c)
+        for dr, dc in _DIRECTIONS:
+            if cell is stone:
+                score += _score_direction(board, r, c, dr, dc, stone)
+            else:
+                score -= _score_direction(board, r, c, dr, dc, opponent)
 
     return score
