@@ -128,9 +128,7 @@ class GameRecorder:
         if self._path is not None:
             self._path.write_text(record.model_dump_json(indent=2), encoding="utf-8")
             md5 = hashlib.md5(self._path.read_bytes()).hexdigest()
-            self._path.with_suffix(".md5sum").write_text(
-                f"{md5}  {self._path.name}\n", encoding="utf-8"
-            )
+            self._path.with_suffix(".md5sum").write_text(f"{md5}  {self._path.name}\n", encoding="utf-8")
         return record
 
     # -- private helpers -----------------------------------------------------

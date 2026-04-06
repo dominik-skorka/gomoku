@@ -396,14 +396,170 @@ class ThreatBrain:
             if opp_vcf is not None:
                 return self._vcf_aware_search(board, stone, opp_vcf)
 
-            # 5) Fallback to alpha-beta
+            # 5) Check if opponent has a VCT / PNS threat
+            opp_vct_move = self._check_opponent_vct(board, stone)
+            if opp_vct_move is not None:
+                return opp_vct_move
+
+            # 6) Check for opponent fork points (converging threat lines)
+            fork_move = self._block_fork(board, stone)
+            if fork_move is not None:
+                return fork_move
+
+            # 7) Fallback to alpha-beta
             logfire.info("No threat sequence found, falling back to alpha-beta")
             return self._fallback.get_move(board, stone)
+
+    # -- Opponent VCT detection ---------------------------------------------
+
+    def _check_opponent_vct(
+        self,
+        board: Board,
+        stone: Stone,
+    ) -> Move | None:
+        """Check if the opponent has a forced VCT win and try to break it.
+
+        Runs the same threat search (PNS or VCT) from the opponent's
+        perspective.  If a forced win is found, restrict candidates to
+        moves that break it and pick the best positionally.
+        """
+        opp = stone.opponent()
+
+        if self.threat_search == "pns":
+            from gomoku_brain.pns import pns_threat_search
+
+            opp_threat = pns_threat_search(
+                board, opp,
+                max_nodes=self.pns_nodes,
+                max_time_s=self.pns_time_s,
+            )
+        else:
+            opp_threat = _vct(board, opp, self.vct_depth, is_attacker=True)
+
+        if opp_threat is None:
+            return None
+
+        logfire.info(
+            "Opponent has VCT/PNS threat starting at: {move}",
+            move=str(opp_threat),
+        )
+        return self._vct_aware_search(board, stone, opp_threat)
+
+    def _vct_aware_search(
+        self,
+        board: Board,
+        stone: Stone,
+        opp_threat_move: Move,
+    ) -> Move:
+        """Pick the best move when the opponent has a VCT/PNS forced win.
+
+        Test every candidate: does our move break the opponent's threat
+        sequence?  Among breakers, pick the positionally strongest.
+        Falls back to blocking the threat start cell.
+        """
+        from gomoku_brain.evaluate import evaluate_board
+
+        opp = stone.opponent()
+        candidates = get_candidate_moves(board, radius=2)
+
+        breakers: list[Move] = []
+        for move in candidates:
+            trial = board.place_stone(move, stone)
+            # Check VCF first (fast)
+            if _vcf(trial, opp, self.vcf_depth, is_attacker=True) is not None:
+                continue
+            # Then check VCT/PNS
+            if self.threat_search == "pns":
+                from gomoku_brain.pns import pns_threat_search
+
+                opp_result = pns_threat_search(
+                    trial, opp,
+                    max_nodes=self.pns_nodes // 2,
+                    max_time_s=self.pns_time_s / 2,
+                )
+                if opp_result is not None:
+                    continue
+            else:
+                if _vct(trial, opp, self.vct_depth, is_attacker=True) is not None:
+                    continue
+            breakers.append(move)
+
+        if not breakers:
+            logfire.info(
+                "No VCT breaker found, blocking opponent threat at: {move}",
+                move=str(opp_threat_move),
+            )
+            if board.is_valid_move(opp_threat_move):
+                return opp_threat_move
+            return self._fallback.get_move(board, stone)
+
+        if len(breakers) == 1:
+            logfire.info("Single VCT breaker: {move}", move=str(breakers[0]))
+            return breakers[0]
+
+        logfire.info(
+            "VCT-aware search: {n} breakers, picking best positionally",
+            n=len(breakers),
+        )
+        best_score = float("-inf")
+        best_move = breakers[0]
+        for move in breakers:
+            trial = board.place_stone(move, stone)
+            score = evaluate_board(trial, stone)
+            if score > best_score:
+                best_score = score
+                best_move = move
+
+        return best_move
+
+    # -- Fork detection -----------------------------------------------------
+
+    def _block_fork(
+        self,
+        board: Board,
+        stone: Stone,
+    ) -> Move | None:
+        """Block opponent fork points — cells where >= 2 threat lines converge.
+
+        If the opponent has a fork cell, blocking it is urgent.  Among
+        multiple fork cells, pick the one that scores best for us.
+        """
+        from gomoku_brain.evaluate import evaluate_board, find_fork_cells
+
+        opp = stone.opponent()
+        forks = find_fork_cells(board, opp)
+
+        if not forks:
+            return None
+
+        logfire.info(
+            "Opponent fork cells detected: {n} cells",
+            n=len(forks),
+        )
+
+        if len(forks) == 1:
+            return forks[0]
+
+        # Multiple fork cells — block the most dangerous one
+        # (the one giving opponent the highest eval after placing there)
+        best_score = float("-inf")
+        best_move = forks[0]
+        for move in forks:
+            trial = board.place_stone(move, stone)
+            score = evaluate_board(trial, stone)
+            if score > best_score:
+                best_score = score
+                best_move = move
+
+        return best_move
 
     # -- VCF-aware search ---------------------------------------------------
 
     def _vcf_aware_search(
-        self, board: Board, stone: Stone, opp_vcf_move: Move,
+        self,
+        board: Board,
+        stone: Stone,
+        opp_vcf_move: Move,
     ) -> Move:
         """Pick the best move when the opponent has a VCF.
 

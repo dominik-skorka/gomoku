@@ -189,9 +189,7 @@ def _pns_defence_moves(board: Board, attacker: Stone) -> list[Move]:
     for attack, _defs in _find_three_threats(board, defender):
         cells.add((attack.row, attack.col))
 
-    return [
-        Move(row=r, col=c) for r, c in sorted(cells) if board.at(r, c) is Stone.EMPTY
-    ]
+    return [Move(row=r, col=c) for r, c in sorted(cells) if board.at(r, c) is Stone.EMPTY]
 
 
 # ---------------------------------------------------------------------------

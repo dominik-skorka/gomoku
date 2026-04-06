@@ -18,23 +18,18 @@ from gomoku_cli.keyboard import KeyboardProvider
 
 console = Console()
 
-_ALL_PROVIDERS = sorted([*BRAINS, "keyboard"])
+# Register the keyboard provider so it's resolved like any other brain.
+BRAINS["keyboard"] = KeyboardProvider
 
 
 def _make_provider(name: str, settings: GomokuSettings) -> object:
-    if name == "keyboard":
-        return KeyboardProvider()
     return get_brain_from_settings(name, settings.brains)
 
 
 def _player_settings(name: str, settings: GomokuSettings) -> dict:
     """Extract the brain settings dict for a given provider name."""
-    if name == "keyboard":
-        return {}
-    section = getattr(settings.brains, name, None)
-    if section is None:
-        return {}
-    return section.model_dump()
+    _brain_type, kwargs = settings.brains.resolve(name)
+    return kwargs
 
 
 @click.group()
@@ -47,18 +42,18 @@ def cli() -> None:
 @click.option(
     "--black",
     "black_name",
-    type=click.Choice(_ALL_PROVIDERS, case_sensitive=False),
+    type=str,
     default="keyboard",
     show_default=True,
-    help="Move provider for Black.",
+    help="Move provider for Black (brain name or alias from gomoku.toml).",
 )
 @click.option(
     "--white",
     "white_name",
-    type=click.Choice(_ALL_PROVIDERS, case_sensitive=False),
+    type=str,
     default="random",
     show_default=True,
-    help="Move provider for White.",
+    help="Move provider for White (brain name or alias from gomoku.toml).",
 )
 @click.option("--board-size", type=click.IntRange(5, 25), default=None, help="Board size (NxN). [default: from config]")
 @click.option(
@@ -86,6 +81,15 @@ def play(
     """Start a Gomoku game."""
     settings = _load_settings(config_path)
 
+    # Validate provider names early.
+    available = settings.brains.all_names()
+    for name, label in [(black_name, "--black"), (white_name, "--white")]:
+        if name not in available:
+            raise click.BadParameter(
+                f"Unknown provider {name!r}. Available: {', '.join(available)}",
+                param_hint=f"'{label}'",
+            )
+
     if board_size is not None:
         settings.game.board_size = board_size
 
@@ -108,15 +112,18 @@ def play(
         on_move = recorder.record_move
 
     console.print(f"\n[bold]Gomoku {config.board_size}x{config.board_size}[/bold]")
-    console.print(f"  Black: {black_name}  |  White: {white_name}")
-    if do_record:
-        console.print(f"  Recording to: {rec_dir}/")
+    console.print(f"  Black: {black_name}")
+    console.print(f"  White: {white_name}")
+    if do_record and recorder is not None and recorder.path is not None:
+        console.print(f"  Recording to: {recorder.path}")
     console.print()
 
     game = Game(config, black, white, on_move=on_move)  # type: ignore[arg-type]
-    render_board(game.board, current_stone=Stone.BLACK)
 
     while True:
+        move_number = len(game.move_history) + 1
+        console.print(f"\nMove #{move_number} \u2014 {game.current_stone} to play", style="bold")
+
         try:
             result = game.play_turn()
         except InvalidMoveError as e:
@@ -126,7 +133,14 @@ def play(
         _last_stone, last_move = game.move_history[-1]
         turn = len(game.move_history)
 
-        render_board(game.board, last_move=last_move, turn=turn, current_stone=game.current_stone)
+        winning_moves = result.winning_moves if result is not None else None
+        render_board(
+            game.board,
+            last_move=last_move,
+            turn=turn,
+            current_stone=game.current_stone,
+            winning_moves=winning_moves,
+        )
 
         if result is not None:
             render_result(result, turn)

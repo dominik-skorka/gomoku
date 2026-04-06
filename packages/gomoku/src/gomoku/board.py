@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import copy
-
 from pydantic import BaseModel, Field, model_validator
 
 from gomoku.models import Move, Stone
@@ -44,10 +42,10 @@ class Board(BaseModel):
 
     def place_stone(self, move: Move, stone: Stone) -> Board:
         """Return a new Board with the stone placed. Does not mutate self."""
-        new_grid = copy.deepcopy(self.grid)
+        new_grid = [row[:] for row in self.grid]
         new_grid[move.row][move.col] = stone
         new_occupied = self.occupied | {(move.row, move.col)}
-        return Board(size=self.size, grid=new_grid, occupied=new_occupied)
+        return Board.model_construct(size=self.size, grid=new_grid, occupied=new_occupied)
 
     def stone_count(self) -> int:
         return len(self.occupied)

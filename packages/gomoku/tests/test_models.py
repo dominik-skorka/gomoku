@@ -26,6 +26,14 @@ class TestMove:
         assert str(Move(row=0, col=0)) == "A1"
         assert str(Move(row=14, col=14)) == "O15"
 
+    def test_position_field(self):
+        m = Move(row=7, col=7)
+        assert m.position == "H8"
+
+    def test_position_in_serialized_output(self):
+        data = Move(row=0, col=0).model_dump()
+        assert data["position"] == "A1"
+
     def test_frozen(self):
         m = Move(row=0, col=0)
         try:

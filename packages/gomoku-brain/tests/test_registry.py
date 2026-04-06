@@ -6,7 +6,8 @@ from gomoku_brain.random import RandomBrain
 
 class TestRegistry:
     def test_all_brains_registered(self):
-        assert set(BRAINS) == {"random", "minimax", "negamax", "alphabeta", "threat"}
+        expected = {"random", "minimax", "negamax", "alphabeta", "threat", "mcts"}
+        assert expected <= set(BRAINS)
 
     def test_get_brain_random(self):
         brain = get_brain("random")

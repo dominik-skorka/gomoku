@@ -22,9 +22,11 @@ def render_board(
     last_move: Move | None = None,
     turn: int = 0,
     current_stone: Stone | None = None,
+    winning_moves: list[Move] | None = None,
 ) -> None:
     """Print the board to the console with labels and highlighting."""
     size = board.size
+    win_cells: set[tuple[int, int]] = {(m.row, m.col) for m in winning_moves} if winning_moves else set()
 
     # Header
     header = Text("   ")
@@ -40,7 +42,9 @@ def render_board(
             stone = board.at(r, c)
             char = _STONE_CHARS[stone]
 
-            if last_move and last_move.row == r and last_move.col == c:
+            if (r, c) in win_cells:
+                line.append(f" {char}", style="bold bright_yellow")
+            elif last_move and last_move.row == r and last_move.col == c:
                 if stone is Stone.BLACK:
                     line.append(f" {char}", style="bold red")
                 else:
@@ -61,8 +65,6 @@ def render_board(
         footer.append(f" {chr(ord('A') + c)}", style="bold cyan")
     console.print(footer)
 
-    if current_stone and turn > 0:
-        console.print(f"\nTurn {turn} — {current_stone} to play", style="bold")
 
 
 def render_result(result: GameResult, total_turns: int) -> None:

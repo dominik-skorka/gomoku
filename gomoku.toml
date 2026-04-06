@@ -3,21 +3,44 @@ board_size = 15
 win_length = 5
 
 [brains.minimax]
+type = "minimax"
 depth = 3
 
 [brains.negamax]
+type = "negamax"
 depth = 3
 
 [brains.alphabeta]
+type = "alphabeta"
 depth = 4
+vcf_depth = 20          # 0 = disabled; set e.g. 20 to enable root-level VCF
+qs_vcf_depth = 12       # 0 = disabled; VCF depth limit inside quiescence search
+threat_ordering = true  # promote four-threat moves in move ordering
+threat_extensions = 2   # 0 = disabled; max extra plies on forcing moves
+
+[brains.alphabeta_depth_6]
+type = "alphabeta"
+depth = 6
+vcf_depth = 20          # 0 = disabled; set e.g. 20 to enable root-level VCF
+qs_vcf_depth = 12       # 0 = disabled; VCF depth limit inside quiescence search
+threat_ordering = true  # promote four-threat moves in move ordering
+threat_extensions = 2   # 0 = disabled; max extra plies on forcing moves
 
 [brains.threat]
+type = "threat"
 depth = 4
 vcf_depth = 20
 vct_depth = 12
 threat_search = "pns"
 pns_nodes = 10_000
 pns_time_s = 5.0
+
+[brains.mcts]
+type = "mcts"
+iterations = 10_000
+exploration = 2.0
+dirichlet_alpha = 0.03
+dirichlet_weight = 0.25
 
 [recording]
 enabled = true        # Set to true to record every game

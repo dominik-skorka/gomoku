@@ -3,6 +3,7 @@
 from gomoku.board import Board
 from gomoku.models import Move, Stone
 from gomoku_brain.alphabeta import AlphaBetaBrain
+from gomoku_brain.mcts import MCTSBrain
 from gomoku_brain.minimax import MinimaxBrain
 from gomoku_brain.negamax import NegamaxBrain
 
@@ -42,5 +43,13 @@ class TestAlphaBetaFindsWin:
     def test_finds_winning_move(self):
         b = _board_with_four_in_a_row(Stone.BLACK)
         brain = AlphaBetaBrain(depth=2)
+        move = brain.get_move(b, Stone.BLACK)
+        assert move in (Move(row=4, col=1), Move(row=4, col=6))
+
+
+class TestMCTSFindsWin:
+    def test_finds_winning_move(self):
+        b = _board_with_four_in_a_row(Stone.BLACK)
+        brain = MCTSBrain(iterations=500)
         move = brain.get_move(b, Stone.BLACK)
         assert move in (Move(row=4, col=1), Move(row=4, col=6))

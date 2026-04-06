@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from enum import IntEnum
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, computed_field, model_validator
 
 
 class Stone(IntEnum):
@@ -32,10 +32,16 @@ class Move(BaseModel, frozen=True):
     row: int = Field(ge=0)
     col: int = Field(ge=0)
 
-    def __str__(self) -> str:
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def position(self) -> str:
+        """Human-readable notation, e.g. ``H8``."""
         col_label = chr(ord("A") + self.col)
         row_label = self.row + 1
         return f"{col_label}{row_label}"
+
+    def __str__(self) -> str:
+        return self.position
 
 
 class GameConfig(BaseModel, frozen=True):

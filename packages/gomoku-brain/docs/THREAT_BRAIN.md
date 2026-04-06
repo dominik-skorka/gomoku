@@ -421,6 +421,11 @@ and `vct_depth=8` means up to **4 mixed threats**.
 > but search time depends on position complexity; `pns_time_s` provides a hard
 > wall-clock cap.  Increasing `depth` affects only the alpha-beta fallback and
 > has the same cost profile as the standalone `alphabeta` brain.
+>
+> The fallback alpha-beta engine includes Zobrist transposition table,
+> iterative deepening, principal variation search, quiescence search,
+> history heuristic, aspiration windows, futility pruning, and evaluation
+> caching.  See [ALPHABETA_BRAIN.md](ALPHABETA_BRAIN.md) for details.
 
 ---
 
@@ -475,7 +480,8 @@ Board state:  early game, scattered stones, no forcing sequences
   VCF: returns None (no four-threats chain to a win)
   VCT: returns None (no three-threat chains either)
   Opponent VCF: returns None (opponent has no forced win)
-  → Alpha-beta evaluates all candidate moves at depth=4
+  → Enhanced alpha-beta fallback (with TT, iterative deepening,
+    PVS, quiescence, etc.) evaluates all candidate moves at depth=4
 ```
 
 ### Example 5 — VCF-aware search picks positional defence

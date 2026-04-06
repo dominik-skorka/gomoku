@@ -24,6 +24,17 @@ class TestRecordedMove:
         assert m.stone is Stone.BLACK
         assert m.think_time_ms == 123
 
+    def test_move_position_in_json(self):
+        m = RecordedMove(
+            number=1,
+            stone=Stone.BLACK,
+            move=Move(row=7, col=7),
+            timestamp=datetime(2026, 4, 5, 14, 30, 0, tzinfo=UTC),
+            think_time_ms=0,
+        )
+        data = m.model_dump()
+        assert data["move"]["position"] == "H8"
+
 
 class TestPlayerInfo:
     def test_with_settings(self):

@@ -70,7 +70,14 @@ def run_playback(record: GameRecord, from_move: int = 1) -> None:
         elif current > 0:
             current_stone = moves[current - 1].stone.opponent()
 
-        render_board(board, last_move=last_move, turn=current, current_stone=current_stone)
+        winning_moves = record.result.winning_moves if current == total else None
+        render_board(
+            board,
+            last_move=last_move,
+            turn=current,
+            current_stone=current_stone,
+            winning_moves=winning_moves,
+        )
 
         # Move info line
         if current > 0:
