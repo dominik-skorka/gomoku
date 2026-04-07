@@ -28,6 +28,16 @@ _FORK_THRESHOLD = 100
 # is a multiplicative danger signal.
 _FORK_BONUS = 3_000
 
+# Bonus per distinct open-three (3 consecutive, both ends empty).
+# An open-three is one move away from an unstoppable live-4, so it
+# deserves a dedicated bonus on top of the per-stone pattern scoring.
+_OPEN_THREE_BONUS = 1_500
+
+# Hard ceiling for static evaluation.  Must stay below the win-score
+# constant (100_000) used by the search so that heuristic sums can never
+# be mistaken for a proven win/loss.
+_EVAL_CLAMP = 99_000
+
 _DIRECTIONS = [(0, 1), (1, 0), (1, 1), (1, -1)]
 
 
@@ -153,14 +163,85 @@ def find_fork_cells(board: Board, stone: Stone) -> list[Move]:
     return forks
 
 
-def evaluate_board(board: Board, stone: Stone) -> float:
-    """Evaluate the board from ``stone``'s perspective. Higher is better.
+def _open_three_score(board: Board, stone: Stone) -> float:
+    """Count distinct open-three formations for *stone* and return a bonus.
 
-    Iterates only over ``board.occupied`` instead of scanning the full grid.
-    Includes fork potential bonus/penalty.
+    An open-three is exactly 3 consecutive same-colour stones in a line
+    with both ends empty (i.e. a live-3 that can become a live-4 in one move).
+    Each formation is counted once (deduplicated by starting cell + direction).
     """
+    bonus = 0.0
+    size = board.size
+    seen: set[tuple[int, int, int, int]] = set()  # (row, col, dr, dc)
+
+    for r, c in board.occupied:
+        if board.at(r, c) is not stone:
+            continue
+        for dr, dc in _DIRECTIONS:
+            # Walk to the start of the consecutive run in this direction
+            sr, sc = r, c
+            while True:
+                pr, pc = sr - dr, sc - dc
+                if 0 <= pr < size and 0 <= pc < size and board.at(pr, pc) is stone:
+                    sr, sc = pr, pc
+                else:
+                    break
+
+            # Deduplicate: only process from the canonical start
+            key = (sr, sc, dr, dc)
+            if key in seen:
+                continue
+            seen.add(key)
+
+            # Count consecutive stones from (sr, sc)
+            count = 0
+            er, ec = sr, sc
+            while 0 <= er < size and 0 <= ec < size and board.at(er, ec) is stone:
+                count += 1
+                er += dr
+                ec += dc
+
+            if count != 3:
+                continue
+
+            # Check both ends are empty
+            # End after the run: (er, ec) is already one past
+            end_open = 0 <= er < size and 0 <= ec < size and board.at(er, ec) is Stone.EMPTY
+            # End before the run: one step before (sr, sc)
+            br, bc = sr - dr, sc - dc
+            start_open = 0 <= br < size and 0 <= bc < size and board.at(br, bc) is Stone.EMPTY
+
+            if start_open and end_open:
+                bonus += _OPEN_THREE_BONUS
+    return bonus
+
+
+# ---------------------------------------------------------------------------
+# JIT setting — resolved once on first call
+# ---------------------------------------------------------------------------
+
+_use_jit: bool | None = None
+
+
+def _should_use_jit() -> bool:
+    """Return whether JIT evaluation is enabled (cached after first call)."""
+    global _use_jit
+    if _use_jit is None:
+        from gomoku.settings import GomokuSettings
+
+        _use_jit = GomokuSettings().evaluation.use_jit
+    return _use_jit
+
+
+# ---------------------------------------------------------------------------
+# Pure-Python evaluate_board (fallback)
+# ---------------------------------------------------------------------------
+
+
+def _evaluate_board_python(board: Board, stone: Stone) -> float:
+    """Evaluate the board using pure-Python loops."""
+    opponent = Stone.WHITE if stone is Stone.BLACK else Stone.BLACK
     score = 0.0
-    opponent = stone.opponent()
 
     for r, c in board.occupied:
         cell = board.at(r, c)
@@ -170,8 +251,77 @@ def evaluate_board(board: Board, stone: Stone) -> float:
             else:
                 score -= _score_direction(board, r, c, dr, dc, opponent)
 
-    # Fork potential: bonus for our forks, penalty for opponent forks
     score += _fork_score(board, stone)
     score -= _fork_score(board, opponent)
 
+    score += _open_three_score(board, stone)
+    score -= _open_three_score(board, opponent)
     return score
+
+
+# ---------------------------------------------------------------------------
+# Public entry point
+# ---------------------------------------------------------------------------
+
+
+def evaluate_board(board: Board, stone: Stone) -> float:
+    """Evaluate the board from ``stone``'s perspective. Higher is better.
+
+    Dispatches to bitboard JIT when ``[bitboard] enabled = true``,
+    else to numpy-grid JIT when ``[evaluation] use_jit = true``,
+    otherwise uses pure Python.
+
+    The return value is clamped to [-``_EVAL_CLAMP``, ``_EVAL_CLAMP``] so that
+    heuristic sums can never be confused with the win/loss scores (±100 000)
+    used by the search.
+    """
+    from gomoku_brain.bitboard import _should_use_bitboard
+
+    if _should_use_bitboard():
+        from gomoku_brain.bitboard_jit import (
+            evaluate_bb,
+            get_fork_bonus,
+            get_fork_threshold,
+            get_open_three_bonus,
+            get_pattern_table,
+        )
+        from gomoku_brain.grid_utils import board_to_bitboard
+
+        black, white, size = board_to_bitboard(board)
+        raw = evaluate_bb(
+            black,
+            white,
+            size,
+            int(stone),
+            get_pattern_table(),
+            get_fork_threshold(),
+            get_fork_bonus(),
+            get_open_three_bonus(),
+        )
+        return max(-_EVAL_CLAMP, min(_EVAL_CLAMP, raw))
+    if _should_use_jit():
+        from gomoku_brain.evaluate_jit import (
+            evaluate_grid,
+            get_dirs,
+            get_fork_bonus,
+            get_fork_threshold,
+            get_open_three_bonus,
+            get_pattern_table,
+        )
+        from gomoku_brain.grid_utils import board_to_grid, occupied_coords
+
+        grid = board_to_grid(board)
+        occ = occupied_coords(board)
+        raw = evaluate_grid(
+            grid,
+            board.size,
+            occ,
+            int(stone),
+            get_dirs(),
+            get_pattern_table(),
+            get_fork_threshold(),
+            get_fork_bonus(),
+            get_open_three_bonus(),
+        )
+        return max(-_EVAL_CLAMP, min(_EVAL_CLAMP, raw))
+    return max(-_EVAL_CLAMP, min(_EVAL_CLAMP, _evaluate_board_python(board, stone)))

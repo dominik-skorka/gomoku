@@ -50,6 +50,13 @@ class AlphaBetaBrainSettings(BaseModel):
     qs_vcf_depth: int = Field(default=0, ge=0, le=40)
     threat_ordering: bool = Field(default=True)
     threat_extensions: int = Field(default=0, ge=0, le=8)
+    null_move_pruning: bool = Field(default=False)
+    null_move_reduction: int = Field(default=2, ge=1, le=4)
+    lmr: bool = Field(default=False)
+    lmr_threshold: int = Field(default=3, ge=2, le=10)
+    lmr_min_depth: int = Field(default=3, ge=2, le=10)
+    time_limit_s: float = Field(default=0.0, ge=0.0, le=600.0)
+    opening_book: str = Field(default="", description="Path to an opening book JSON file.")
 
 
 class ThreatBrainSettings(BaseModel):
@@ -76,11 +83,31 @@ class MCTSBrainSettings(BaseModel):
 # ── Recording settings ──────────────────────────────────────────────────────
 
 
+class EvaluationSettings(BaseModel):
+    """Settings for the board evaluation function."""
+
+    use_jit: bool = Field(default=True, description="Use Numba JIT-compiled evaluation (faster but requires numba).")
+
+
+class BitboardSettings(BaseModel):
+    """Settings for the bitboard representation."""
+
+    enabled: bool = Field(default=False, description="Use row-based uint32 bitboard representation (Numba JIT).")
+
+
 class RecordingSettings(BaseModel):
     """Settings for game recording."""
 
     enabled: bool = False
     directory: Path = Path("recordings")
+
+
+class DiagnosticsSettings(BaseModel):
+    """Settings for per-move diagnostics recording."""
+
+    enabled: bool = False
+    directory: Path = Path("recordings")
+    top_candidates: int = Field(default=10, ge=1, le=50)
 
 
 # ── Game-level settings ─────────────────────────────────────────────────────
@@ -164,7 +191,10 @@ class GomokuSettings(BaseSettings):
 
     game: GameSettings = GameSettings()
     brains: BrainSettings = BrainSettings()
+    evaluation: EvaluationSettings = EvaluationSettings()
+    bitboard: BitboardSettings = BitboardSettings()
     recording: RecordingSettings = RecordingSettings()
+    diagnostics: DiagnosticsSettings = DiagnosticsSettings()
 
     @classmethod
     def settings_customise_sources(

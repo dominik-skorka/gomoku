@@ -39,3 +39,6 @@ Thumbs.db
 
 # Logfire
 .logfire/
+
+# internal data
+recordings/

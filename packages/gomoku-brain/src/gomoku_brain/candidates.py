@@ -12,16 +12,8 @@ from gomoku.models import Move
 _RADIUS = 2
 
 
-def get_candidate_moves(board: Board, radius: int = _RADIUS) -> list[Move]:
-    """Return empty cells within ``radius`` of any placed stone.
-
-    On an empty board, returns the center cell.
-    Iterates only over ``board.occupied`` instead of scanning the full grid.
-    """
-    if not board.occupied:
-        center = board.size // 2
-        return [Move(row=center, col=center)]
-
+def _get_candidates_python(board: Board, radius: int) -> list[Move]:
+    """Pure-Python candidate generation."""
     size = board.size
     candidates: set[tuple[int, int]] = set()
     for r, c in board.occupied:
@@ -30,5 +22,38 @@ def get_candidate_moves(board: Board, radius: int = _RADIUS) -> list[Move]:
                 nr, nc = r + dr, c + dc
                 if 0 <= nr < size and 0 <= nc < size and (nr, nc) not in board.occupied:
                     candidates.add((nr, nc))
-
     return [Move(row=r, col=c) for r, c in sorted(candidates)]
+
+
+def get_candidate_moves(board: Board, radius: int = _RADIUS) -> list[Move]:
+    """Return empty cells within ``radius`` of any placed stone.
+
+    On an empty board, returns the center cell.
+    Dispatches to bitboard JIT, numpy-grid JIT, or pure Python.
+    """
+    if not board.occupied:
+        center = board.size // 2
+        return [Move(row=center, col=center)]
+
+    from gomoku_brain.bitboard import _should_use_bitboard
+
+    if _should_use_bitboard():
+        from gomoku_brain.bitboard_jit import get_candidates_bb
+        from gomoku_brain.grid_utils import board_to_bitboard
+
+        black, white, size = board_to_bitboard(board)
+        result = get_candidates_bb(black, white, size, radius)
+        return [Move(row=int(result[i, 0]), col=int(result[i, 1])) for i in range(result.shape[0])]
+
+    from gomoku_brain.evaluate import _should_use_jit
+
+    if _should_use_jit():
+        from gomoku_brain.evaluate_jit import get_candidates_grid
+        from gomoku_brain.grid_utils import board_to_grid, occupied_coords
+
+        grid = board_to_grid(board)
+        occ = occupied_coords(board)
+        result = get_candidates_grid(grid, board.size, occ, radius)
+        return [Move(row=int(result[i, 0]), col=int(result[i, 1])) for i in range(result.shape[0])]
+
+    return _get_candidates_python(board, radius)

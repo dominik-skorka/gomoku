@@ -310,31 +310,62 @@ separately.
 
 ## Parameters
 
-| Parameter | Default | Controls                     | Effect of increasing          |
-| --------- | ------- | ---------------------------- | ----------------------------- |
-| `depth`   | 4       | Maximum search depth (plies) | Stronger but exponentially slower |
+### Constructor / CLI parameters
+
+| Parameter | Default | Range | Controls | Effect of increasing |
+| --------- | ------- | ----- | -------- | -------------------- |
+| `depth` | 4 | 1–10 | Maximum search depth (plies) | Stronger but exponentially slower |
+| `vcf_depth` | 0 | 0–40 | Root-level VCF pre-check depth | Detects forced wins before main search |
+| `qs_vcf_depth` | 0 | 0–40 | VCF depth inside quiescence search | Adds tactical vision at leaf nodes |
+| `threat_ordering` | true | — | Promote threat moves in move ordering | Better ordering, more cutoffs |
+| `threat_extensions` | 0 | 0–8 | Extra plies for forcing moves | Deeper search on tactical lines |
+| `null_move_pruning` | false | — | Enable null-move (pass-a-turn) pruning | Reduces branching on non-PV nodes |
+| `null_move_reduction` | 2 | 1–4 | Reduction R for null-move search | Higher R = faster but riskier |
+| `lmr` | false | — | Enable Late Move Reduction | Later moves searched at reduced depth |
+| `lmr_threshold` | 3 | 2–10 | Move index where LMR starts | Lower = more aggressive pruning |
+| `lmr_min_depth` | 3 | 2–10 | Minimum depth to apply LMR | Lower = LMR at shallower nodes too |
+| `time_limit_s` | 0.0 | 0–600 | Hard wall-clock cap per move (seconds) | 0 = unlimited; aborts ID early |
+| `opening_book` | `""` | — | Path to opening book JSON file | Book lookup before main search |
+
+### Early-game parameters
+
+When the board has few stones (≤ `early_game_threshold` occupied cells), the
+brain uses tighter settings to save time in sparse positions where distant
+cells add little value.
+
+| Parameter | Default | Range | Controls |
+| --------- | ------- | ----- | -------- |
+| `early_game_radius` | 1 | 1–2 | Candidate generation radius in the opening |
+| `early_game_threshold` | 6 | 2–15 | Max occupied cells for reduced-radius mode |
+| `early_game_max_candidates` | 10 | 5–20 | Max candidates per node in early game |
+| `early_game_lmr_threshold` | 2 | 1–10 | LMR kick-in index during early game |
+| `early_game_futility_margin` | 800 | 200–1500 | Futility margin in early game (tighter) |
 
 ### Internal constants
 
 | Constant            | Value  | Purpose                                     |
 | ------------------- | ------ | ------------------------------------------- |
 | `_KILLER_SLOTS`     | 2      | Killer moves per depth level                |
-| `_MAX_CANDIDATES`   | 20     | Branching factor cap                        |
+| `_MAX_CANDIDATES`   | 20     | Branching factor cap (mid/late game)        |
 | `_MAX_QS_DEPTH`     | 4      | Extra plies in quiescence                   |
 | `_ASPIRATION_WINDOW`| 50     | Half-width of aspiration window             |
-| `_FUTILITY_MARGIN`  | 1,500  | Futility pruning threshold                  |
+| `_FUTILITY_MARGIN`  | 1,500  | Futility pruning threshold (mid/late game)  |
 
 ### Tuning guidelines
 
 | Scenario                  | Recommendation                                    |
 | ------------------------- | ------------------------------------------------- |
 | Fast play / low resources | `depth=2` — uses quiescence for tactical safety   |
-| Default / balanced        | `depth=4` — good balance of speed and strength    |
-| Maximum strength          | `depth=6` — significantly deeper, much slower     |
+| Default / balanced        | `depth=4, vcf_depth=20, threat_ordering=true`     |
+| Tactical strength         | `depth=4, vcf_depth=20, qs_vcf_depth=12, threat_extensions=2` |
+| Maximum strength          | `depth=6, vcf_depth=20, qs_vcf_depth=6, lmr=true, null_move_pruning=true, time_limit_s=120` |
+| Timed tournament          | Set `time_limit_s` to ensure moves finish within budget |
 
 > **Note:** Each additional depth level roughly multiplies search time by the
 > effective branching factor (~8–15 with pruning).  The improvements (TT,
-> move ordering, PVS, futility) keep this manageable up to depth 5-6.
+> move ordering, PVS, futility, LMR, null-move) keep this manageable up to
+> depth 5-6.  `threat_extensions` adds depth only on forcing lines, so its
+> cost is bounded.
 
 ---
 
@@ -411,17 +442,72 @@ eval + FUTILITY_MARGIN = -1500 + 1500 = 0 < 300 (= α)
 
 ## Configuration & Usage
 
+### Python API
+
 ```python
 from gomoku_brain.alphabeta import AlphaBetaBrain
 
+# Basic usage
 brain = AlphaBetaBrain(depth=4)
 move = brain.get_move(board, stone)
+
+# Full construction with all enhancements
+brain = AlphaBetaBrain(
+    depth=6,
+    vcf_depth=20,
+    qs_vcf_depth=12,
+    threat_ordering=True,
+    threat_extensions=2,
+    null_move_pruning=True,
+    null_move_reduction=2,
+    lmr=True,
+    lmr_threshold=3,
+    lmr_min_depth=3,
+    time_limit_s=120.0,
+    opening_book="opening_book.json",
+)
 ```
 
-CLI usage:
+### CLI
 
 ```bash
-uv run gomoku-cli play --black alphabeta --white threat --depth 4
+# Default settings
+uv run gomoku-cli play --black alphabeta --white threat
+
+# With a file-based opening book
+uv run gomoku-cli play --black alphabeta --white threat --opening-book books/15x15.json
+```
+
+### gomoku.toml
+
+```toml
+[brains.alphabeta]
+type = "alphabeta"
+depth = 4
+vcf_depth = 20
+qs_vcf_depth = 12
+threat_ordering = true
+threat_extensions = 2
+null_move_pruning = true
+null_move_reduction = 2
+lmr = true
+lmr_threshold = 3
+lmr_min_depth = 3
+time_limit_s = 120.0
+
+# Deeper variant as a named alias
+[brains.alphabeta_depth_6]
+type = "alphabeta"
+depth = 6
+vcf_depth = 20
+qs_vcf_depth = 6
+threat_ordering = true
+threat_extensions = 2
+null_move_pruning = true
+lmr = true
+lmr_threshold = 2
+lmr_min_depth = 2
+time_limit_s = 120.0
 ```
 
 ---

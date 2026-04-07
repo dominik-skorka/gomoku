@@ -358,10 +358,36 @@ class ThreatBrain:
             pns_nodes=self.pns_nodes,
             stone=str(stone),
         ):
+            import time as _time
+
+            from gomoku.diagnostics import ThreatInfo, current_move_diagnostics
+
+            diag = current_move_diagnostics()
+            _t0 = _time.monotonic()
+
+            # Collect threat landscape for diagnostics.
+            if diag is not None:
+                opp = stone.opponent()
+                our_fours = _find_four_threats(board, stone)
+                our_threes = _find_three_threats(board, stone)
+                opp_fours = _find_four_threats(board, opp)
+                opp_threes = _find_three_threats(board, opp)
+                diag.our_threats = ThreatInfo(
+                    four_threats=len(our_fours),
+                    three_threats=len(our_threes),
+                )
+                diag.opp_threats = ThreatInfo(
+                    four_threats=len(opp_fours),
+                    three_threats=len(opp_threes),
+                )
+
             # 0) If we can win immediately, do it
             win = _find_winning_move(board, stone)
             if win is not None:
                 logfire.info("Immediate win: {move}", move=str(win))
+                if diag is not None:
+                    diag.decision_path = "immediate_win"
+                    diag.chosen_move = win
                 return win
 
             # 1) If opponent can win next turn, we must block
@@ -369,12 +395,19 @@ class ThreatBrain:
             opp_win = _find_winning_move(board, opp)
             if opp_win is not None:
                 logfire.info("Blocking opponent immediate win at: {move}", move=str(opp_win))
+                if diag is not None:
+                    diag.decision_path = "block_immediate_win"
+                    diag.chosen_move = opp_win
                 return opp_win
 
             # 2) Try VCF — very fast, deep search
             move = _vcf(board, stone, self.vcf_depth, is_attacker=True)
             if move is not None:
                 logfire.info("VCF found winning move: {move}", move=str(move))
+                if diag is not None:
+                    diag.decision_path = "vcf_win"
+                    diag.chosen_move = move
+                    diag.our_threats = diag.our_threats.model_copy(update={"vcf_result": "win"})
                 return move
 
             # 3) Try broader threat search (PNS or VCT)
@@ -384,30 +417,56 @@ class ThreatBrain:
                 move = pns_threat_search(board, stone, max_nodes=self.pns_nodes, max_time_s=self.pns_time_s)
                 if move is not None:
                     logfire.info("PNS found winning move: {move}", move=str(move))
+                    if diag is not None:
+                        diag.decision_path = "pns_win"
+                        diag.chosen_move = move
                     return move
             else:
                 move = _vct(board, stone, self.vct_depth, is_attacker=True)
                 if move is not None:
                     logfire.info("VCT found winning move: {move}", move=str(move))
+                    if diag is not None:
+                        diag.decision_path = "vct_win"
+                        diag.chosen_move = move
+                        diag.our_threats = diag.our_threats.model_copy(update={"vct_result": "win"})
                     return move
+
+            if diag is not None:
+                diag.notes.append("No forced win found (VCF/PNS/VCT)")
 
             # 4) Check if opponent has a VCF threat
             opp_vcf = _vcf(board, opp, self.vcf_depth, is_attacker=True)
             if opp_vcf is not None:
-                return self._vcf_aware_search(board, stone, opp_vcf)
+                if diag is not None:
+                    diag.opp_threats = diag.opp_threats.model_copy(update={"vcf_result": "win"})
+                    diag.notes.append(f"Opponent has VCF at {opp_vcf}")
+                result = self._vcf_aware_search(board, stone, opp_vcf)
+                if diag is not None:
+                    diag.decision_path = diag.decision_path or "vcf_aware_search"
+                    diag.chosen_move = result
+                return result
 
             # 5) Check if opponent has a VCT / PNS threat
             opp_vct_move = self._check_opponent_vct(board, stone)
             if opp_vct_move is not None:
+                if diag is not None:
+                    diag.decision_path = "vct_aware_search"
+                    diag.chosen_move = opp_vct_move
                 return opp_vct_move
 
             # 6) Check for opponent fork points (converging threat lines)
             fork_move = self._block_fork(board, stone)
             if fork_move is not None:
+                if diag is not None:
+                    diag.decision_path = "block_fork"
+                    diag.chosen_move = fork_move
                 return fork_move
 
             # 7) Fallback to alpha-beta
             logfire.info("No threat sequence found, falling back to alpha-beta")
+            if diag is not None:
+                diag.notes.append("Falling back to alpha-beta")
+                # Don't set decision_path here — alpha-beta will set its own
             return self._fallback.get_move(board, stone)
 
     # -- Opponent VCT detection ---------------------------------------------
@@ -429,7 +488,8 @@ class ThreatBrain:
             from gomoku_brain.pns import pns_threat_search
 
             opp_threat = pns_threat_search(
-                board, opp,
+                board,
+                opp,
                 max_nodes=self.pns_nodes,
                 max_time_s=self.pns_time_s,
             )
@@ -473,7 +533,8 @@ class ThreatBrain:
                 from gomoku_brain.pns import pns_threat_search
 
                 opp_result = pns_threat_search(
-                    trial, opp,
+                    trial,
+                    opp,
                     max_nodes=self.pns_nodes // 2,
                     max_time_s=self.pns_time_s / 2,
                 )

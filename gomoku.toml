@@ -1,47 +1,303 @@
+# =============================================================================
+# Gomoku Configuration
+# =============================================================================
+# Settings priority (highest → lowest):
+#   1. CLI flags / programmatic overrides
+#   2. Environment variables (GOMOKU_* prefix, __ for nesting)
+#   3. This file (gomoku.toml)
+#   4. Built-in defaults
+#
+# Brain aliases are defined under [brains.<name>]. Each alias specifies a
+# "type" (brain engine) and optional parameter overrides. Valid brain types:
+#   keyboard, random, minimax, negamax, alphabeta, threat, mcts
+# =============================================================================
+
 [game]
+# Board dimensions (NxN grid).
+# Default: 15 | Valid range: 5–25
 board_size = 15
+
+# Number of consecutive stones needed to win.
+# Default: 5 | Valid range: 3–board_size
 win_length = 5
 
+# -----------------------------------------------------------------------------
+# Brain: minimax — Classic minimax search (educational, no pruning)
+# -----------------------------------------------------------------------------
 [brains.minimax]
+# Brain engine to use.
+# Valid values: "minimax", "negamax", "alphabeta", "threat", "mcts", "random"
 type = "minimax"
+
+# Search depth in plies (half-moves).
+# Default: 3 | Valid range: 1–10 | Higher = stronger but exponentially slower
 depth = 3
 
+# -----------------------------------------------------------------------------
+# Brain: negamax — Negamax simplification of minimax with alpha-beta pruning
+# -----------------------------------------------------------------------------
 [brains.negamax]
+# Brain engine to use.
 type = "negamax"
+
+# Search depth in plies.
+# Default: 3 | Valid range: 1–10
 depth = 3
 
+# -----------------------------------------------------------------------------
+# Brain: alphabeta — Negamax + alpha-beta pruning, move ordering, killer
+# heuristic, VCF pre-checks, threat extensions, null-move pruning, LMR
+# -----------------------------------------------------------------------------
 [brains.alphabeta]
+# Brain engine to use.
 type = "alphabeta"
-depth = 4
-vcf_depth = 20          # 0 = disabled; set e.g. 20 to enable root-level VCF
-qs_vcf_depth = 12       # 0 = disabled; VCF depth limit inside quiescence search
-threat_ordering = true  # promote four-threat moves in move ordering
-threat_extensions = 2   # 0 = disabled; max extra plies on forcing moves
 
+# Main search depth in plies.
+# Default: 4 | Valid range: 1–10
+depth = 4
+
+# Root-level VCF (Victory by Continuous Fours) search depth.
+# Checks for forced wins via four-threats before alpha-beta.
+# Default: 0 (disabled) | Valid range: 0–40 | Typical: 20
+vcf_depth = 20
+
+# VCF depth limit inside quiescence search (at frontier nodes).
+# Default: 0 (disabled) | Valid range: 0–40 | Typical: 12
+qs_vcf_depth = 12
+
+# Promote four-threat and three-threat moves to head of move ordering.
+# Default: true | Valid values: true, false
+threat_ordering = true
+
+# Max extra plies to search on forcing (threat) moves.
+# Default: 0 (disabled) | Valid range: 0–8 | Typical: 2
+threat_extensions = 2
+
+# Enable pass-a-turn (null-move) pruning on non-PV nodes.
+# Reduces branching factor by assuming the opponent can't improve by passing.
+# Default: false | Valid values: true, false
+null_move_pruning = true
+
+# Depth reduction R for null-move search (search at depth − R after a pass).
+# Default: 2 | Valid range: 1–4
+null_move_reduction = 2
+
+# Enable Late Move Reduction — search later moves in move order at reduced depth.
+# Assumes moves ordered later are less likely to be best.
+# Default: false | Valid values: true, false
+lmr = true
+
+# Move index (0-based) from which LMR kicks in.
+# First N moves are always searched at full depth.
+# Default: 3 | Valid range: 2–10
+lmr_threshold = 3
+
+# Minimum remaining depth to apply LMR.
+# Default: 3 | Valid range: 2–10
+lmr_min_depth = 3
+
+# Candidate generation radius in the opening (fewer occupied cells).
+# Reduces branching factor when stones are sparse and distant cells add no value.
+# Default: 1 | Valid range: 1–2
+early_game_radius = 1
+
+# Maximum number of occupied cells to use the reduced early-game radius.
+# Once the board has more stones, the full radius (2) is used.
+# Default: 6 | Valid range: 2–15
+early_game_threshold = 6
+
+# Maximum candidate moves to evaluate per node during the early game
+# (when occupied cells <= early_game_threshold). Mid-game uses 20.
+# Default: 10 | Valid range: 5–20
+early_game_max_candidates = 10
+
+# LMR move index threshold during the early game.
+# Lower than the normal threshold to start reducing moves earlier when
+# evaluations cluster tightly.
+# Default: 2 | Valid range: 1–10
+early_game_lmr_threshold = 2
+
+# Futility pruning margin during the early game.
+# Smaller than the normal margin (1500) because opening evaluations are
+# tightly grouped — a narrower window prunes more aggressively.
+# Default: 800 | Valid range: 200–1500
+early_game_futility_margin = 800
+
+# Hard time limit per move in seconds. 0 = unlimited.
+# Ensures the brain always returns within this budget by aborting deeper
+# iterative-deepening passes and returning the best move found so far.
+# Default: 0 | Valid range: 0–600
+time_limit_s = 120.0
+
+# -----------------------------------------------------------------------------
+# Brain: alphabeta_depth_6 — Deeper alpha-beta variant (stronger, slower)
+# -----------------------------------------------------------------------------
 [brains.alphabeta_depth_6]
 type = "alphabeta"
-depth = 6
-vcf_depth = 20          # 0 = disabled; set e.g. 20 to enable root-level VCF
-qs_vcf_depth = 12       # 0 = disabled; VCF depth limit inside quiescence search
-threat_ordering = true  # promote four-threat moves in move ordering
-threat_extensions = 2   # 0 = disabled; max extra plies on forcing moves
 
+# Default: 4 | Overridden here to 6 for deeper search
+depth = 6
+
+# Root-level VCF depth. Default: 0 | Typical: 20
+vcf_depth = 20
+
+# Quiescence VCF depth. Default: 0
+# Compromise: 6 gives meaningful tactical vision without blowing the time budget.
+qs_vcf_depth = 6
+
+# Promote threat moves in move ordering. Default: true
+threat_ordering = true
+
+# Extra plies on forcing moves. Default: 0
+# Raised from 1 → 2: effective depth 8 on forcing lines; bounded cost.
+threat_extensions = 2
+
+# Null-move pruning. Default: false
+null_move_pruning = true
+
+# Null-move depth reduction R. Default: 2
+# R=2 is stable; R=3 caused eval instability via too-shallow null probes.
+null_move_reduction = 2
+
+# Late Move Reduction. Default: false
+lmr = true
+
+# LMR move index threshold. Default: 3
+# Lowered from 3 → 2: start reducing earlier to save time budget.
+lmr_threshold = 2
+
+# LMR minimum depth. Default: 3
+# Lowered from 3 → 2: apply LMR at shallower nodes too.
+lmr_min_depth = 2
+
+# Early-game candidate radius. Default: 1
+early_game_radius = 1
+
+# Max occupied cells for reduced radius. Default: 6
+early_game_threshold = 6
+
+# Early-game max candidates per node. Default: 10
+# Lowered from 10 → 8: tighter cap saves time in sparse positions.
+early_game_max_candidates = 8
+
+# Early-game LMR threshold. Default: 2
+early_game_lmr_threshold = 2
+
+# Early-game futility margin. Default: 800
+# Lowered from 800 → 600: narrower window prunes more in opening.
+early_game_futility_margin = 600
+
+# Hard time limit per move in seconds. 0 = unlimited.
+time_limit_s = 120.0
+
+# -----------------------------------------------------------------------------
+# Brain: threat — VCF/VCT search with PNS or depth-limited VCT fallback,
+# plus alpha-beta as final fallback
+# -----------------------------------------------------------------------------
 [brains.threat]
 type = "threat"
+
+# Alpha-beta fallback depth (used when threat search finds no forced win).
+# Default: 4 | Valid range: 1–10
 depth = 4
+
+# VCF (Victory by Continuous Fours) search depth.
+# Only attacker plays four-threats; defender forced to block single gap.
+# Very forcing — allows deep search.
+# Default: 20 | Valid range: 1–40
 vcf_depth = 20
+
+# VCT (Victory by Continuous Threats) search depth.
+# Extends VCF to include live-three threats; defender has more options.
+# Default: 12 | Valid range: 1–30
 vct_depth = 12
+
+# Algorithm for threat search after VCF fails.
+# "pns" = Proof-Number Search (sound, slower)
+# "vct" = depth-limited VCT (faster, may miss)
+# Default: "pns" | Valid values: "pns", "vct"
 threat_search = "pns"
+
+# Max nodes explored by PNS before giving up.
+# Default: 10_000 | Valid range: 1_000–10_000_000
 pns_nodes = 10_000
+
+# Max wall-clock seconds for PNS search.
+# Default: 5.0 | Valid range: 0.1–60.0
 pns_time_s = 5.0
 
+# -----------------------------------------------------------------------------
+# Brain: mcts — Monte Carlo Tree Search with PUCT formula, heuristic priors,
+# Dirichlet noise, and heuristic leaf evaluation (AlphaGo Zero-inspired,
+# no neural network)
+# -----------------------------------------------------------------------------
 [brains.mcts]
 type = "mcts"
+
+# Number of MCTS simulation iterations per move.
+# Default: 10_000 | Valid range: 100–1_000_000 | Higher = stronger but slower
 iterations = 10_000
+
+# PUCT exploration constant (c) in: Q + c·P·√N/(n+1).
+# Controls exploitation vs exploration balance.
+# Default: 2.0 | Valid range: 0.1–5.0 | Lower = more exploitative
 exploration = 2.0
+
+# Dirichlet distribution parameter for noise injection at root.
+# Controls noise shape — lower = more concentrated.
+# Default: 0.03 | Valid range: 0.0–1.0
 dirichlet_alpha = 0.03
+
+# Mixing weight for Dirichlet noise: (1−weight)·prior + weight·noise.
+# 0.0 = no noise (deterministic); 1.0 = pure noise (fully random).
+# Default: 0.25 | Valid range: 0.0–1.0
 dirichlet_weight = 0.25
 
+# =============================================================================
+# Evaluation Settings
+# =============================================================================
+[evaluation]
+# Use Numba JIT-compiled evaluation for faster board scoring.
+# Falls back to pure Python if numba is not installed.
+# Default: true | Valid values: true, false
+use_jit = true
+
+# =============================================================================
+# Bitboard Settings
+# =============================================================================
+[bitboard]
+# Use bitboard representation (row-based uint32 arrays with Numba JIT).
+# Provides faster board operations when enabled.
+# Default: false | Valid values: true, false
+enabled = true
+
+# =============================================================================
+# Recording Settings
+# =============================================================================
 [recording]
-enabled = true        # Set to true to record every game
+# Enable automatic game recording — writes JSON + MD5 checksum after each move.
+# Default: false | Valid values: true, false
+enabled = false
+
+# Directory where recorded game files are saved (relative or absolute path).
+# Default: "recordings"
 directory = "recordings"
+
+# =============================================================================
+# Diagnostics Settings
+# =============================================================================
+[diagnostics]
+# Enable per-move diagnostics recording — writes a .diag.jsonl file with
+# brain internals (decision path, search stats, threats, candidates) for
+# post-game investigation.
+# Default: false | Valid values: true, false
+enabled = false
+
+# Directory where diagnostics files are saved (relative or absolute path).
+# Uses the same gomoku_{timestamp} naming convention as recordings.
+# Default: "recordings"
+directory = "recordings"
+
+# Maximum number of top candidate moves to record per move entry.
+# Default: 10 | Valid range: 1–50
+top_candidates = 10

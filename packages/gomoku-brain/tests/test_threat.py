@@ -376,8 +376,8 @@ class TestForkBlocking:
         b = Board(size=15)
         # White: horizontal pair (7,5)-(7,6) and vertical pair (6,7)-(5,7)
         # Fork cell for White at (7,7): extends horizontal AND touches vertical
-        b = _place(b, [(7, 5), (7, 6)], Stone.WHITE)   # horizontal pair
-        b = _place(b, [(6, 7), (5, 7)], Stone.WHITE)   # vertical pair
+        b = _place(b, [(7, 5), (7, 6)], Stone.WHITE)  # horizontal pair
+        b = _place(b, [(6, 7), (5, 7)], Stone.WHITE)  # vertical pair
         # Black: scattered, no own threats
         b = _place(b, [(0, 0), (0, 14), (14, 0)], Stone.BLACK)
 
@@ -388,6 +388,7 @@ class TestForkBlocking:
         # (7,7) is the convergence cell — the brain should strongly prefer it
         # We accept any move that occupies the fork cell
         from gomoku_brain.evaluate import find_fork_cells
+
         opp_forks_before = find_fork_cells(b, Stone.WHITE)
         trial = b.place_stone(move, Stone.BLACK)
         opp_forks_after = find_fork_cells(trial, Stone.WHITE)

@@ -363,8 +363,18 @@ class MCTSBrain:
             exploration=self.exploration,
             stone=str(stone),
         ):
+            import time as _time
+
+            from gomoku.diagnostics import current_move_diagnostics
+
+            diag = current_move_diagnostics()
+            _t0 = _time.monotonic()
+
             candidates = get_candidate_moves(board)
             if len(candidates) == 1:
+                if diag is not None:
+                    diag.decision_path = "single_candidate"
+                    diag.chosen_move = candidates[0]
                 return candidates[0]
 
             # Convert to raw grid once — all MCTS work uses this
@@ -379,6 +389,9 @@ class MCTSBrain:
                 board_grid[r][c] = stone_val
                 if _fast_check_winner(board_grid, size, r, c, stone_val, 5):
                     board_grid[r][c] = 0
+                    if diag is not None:
+                        diag.decision_path = "instant_win"
+                        diag.chosen_move = move
                     return move
                 board_grid[r][c] = 0
 
@@ -387,10 +400,15 @@ class MCTSBrain:
             raw_cands = [(m.row, m.col) for m in candidates]
             opp_winning = _find_winning_move(board_grid, size, raw_cands, opp_val, 5)
             if opp_winning is not None:
-                return Move(row=opp_winning[0], col=opp_winning[1])
+                result_move = Move(row=opp_winning[0], col=opp_winning[1])
+                if diag is not None:
+                    diag.decision_path = "instant_block"
+                    diag.chosen_move = result_move
+                return result_move
 
             # VCF safety gate: if opponent has a proven forced win,
             # restrict MCTS candidates to blocking cells only
+            vcf_gated = False
             if self.vcf_depth > 0:
                 opp = stone.opponent()
                 vcf_move = _vcf(board, opp, self.vcf_depth, is_attacker=True)
@@ -404,11 +422,18 @@ class MCTSBrain:
                     restricted = [m for m in candidates if (m.row, m.col) in blocking]
                     if restricted:
                         logfire.info(
-                            "VCF safety gate: opponent has forced win, "
-                            "restricting to {n} blocking candidates",
+                            "VCF safety gate: opponent has forced win, restricting to {n} blocking candidates",
                             n=len(restricted),
                         )
                         candidates = restricted
+                        vcf_gated = True
+                    if diag is not None:
+                        diag.opp_threats = diag.opp_threats.model_copy(update={"vcf_result": "win"})
+                        diag.notes.append(
+                            f"Opponent VCF at {vcf_move}, restricted to {len(restricted)} blocking candidates"
+                            if vcf_gated
+                            else f"Opponent VCF at {vcf_move}, no blocking candidates found"
+                        )
 
             root_untried = [(m.row, m.col) for m in candidates]
             root_priors = _compute_priors(
@@ -447,7 +472,35 @@ class MCTSBrain:
                 total=root.visits,
                 wr=best.wins / best.visits if best.visits else 0,
             )
-            return Move(row=br, col=bc)
+
+            chosen = Move(row=br, col=bc)
+
+            if diag is not None:
+                from gomoku.diagnostics import CandidateInfo, SearchStats
+
+                search_ms = int((_time.monotonic() - _t0) * 1000)
+                diag.decision_path = diag.decision_path or ("mcts_vcf_gated" if vcf_gated else "mcts")
+                diag.chosen_move = chosen
+                diag.search_stats = SearchStats(
+                    iterations=self.iterations,
+                    time_ms=search_ms,
+                )
+                # Top children by visits (most informative for MCTS).
+                children_sorted = sorted(root.children, key=lambda c: c.visits, reverse=True)
+                diag.top_candidates = [
+                    CandidateInfo(
+                        move=Move(row=c.move[0], col=c.move[1]),
+                        score=round(c.wins / c.visits, 4) if c.visits else 0.0,
+                    )
+                    for c in children_sorted[:10]
+                ]
+                diag.notes.append(
+                    f"Best: {chosen} visits={best.visits}/{root.visits} wr={best.wins / best.visits:.1%}"
+                    if best.visits
+                    else f"Best: {chosen} visits=0"
+                )
+
+            return chosen
 
     # -- Core MCTS loop (operates entirely on raw int grids) -----------------
 

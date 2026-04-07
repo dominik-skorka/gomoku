@@ -105,6 +105,4 @@ class TestFindForkCells:
             pass
         # The main assertion: single straight line has no obvious fork
         # (cells extending in only 1 direction won't count as fork)
-        assert len(forks) == 0 or all(
-            f not in (Move(row=4, col=2), Move(row=4, col=6)) for f in forks
-        )
+        assert len(forks) == 0 or all(f not in (Move(row=4, col=2), Move(row=4, col=6)) for f in forks)

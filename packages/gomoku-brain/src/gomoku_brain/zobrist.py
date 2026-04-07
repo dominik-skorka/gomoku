@@ -57,6 +57,7 @@ def incremental_hash(h: int, row: int, col: int, stone: Stone) -> int:
 # Transposition-table entry
 # ---------------------------------------------------------------------------
 
+
 class BoundType(IntEnum):
     EXACT = 0
     LOWER = 1  # score is a lower bound (failed high / beta cutoff)

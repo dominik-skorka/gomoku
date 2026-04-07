@@ -66,7 +66,6 @@ def render_board(
     console.print(footer)
 
 
-
 def render_result(result: GameResult, total_turns: int) -> None:
     """Print the game result."""
 
