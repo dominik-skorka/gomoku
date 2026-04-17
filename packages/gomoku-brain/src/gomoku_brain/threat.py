@@ -148,12 +148,29 @@ def _find_three_threats(board: Board, stone: Stone) -> list[tuple[Move, list[Mov
 
 
 def _find_winning_move(board: Board, stone: Stone) -> Move | None:
-    """Return a move that immediately completes five-in-a-row, or ``None``."""
+    """Return a move that immediately completes five-in-a-row, or ``None``.
+
+    Scans neighbours of each candidate cell in place: no board copies, no
+    ``check_winner`` call.  Matches the ``check_winner`` freestyle rule
+    (``count >= 5`` wins).
+    """
+    size = board.size
     for move in get_candidate_moves(board, radius=2):
-        trial = board.place_stone(move, stone)
-        result = check_winner(trial, move)
-        if result is not None and result.winner is stone:
-            return move
+        r, c = move.row, move.col
+        for dr, dc in _DIRECTIONS:
+            count = 1  # the stone we would place
+            nr, nc = r + dr, c + dc
+            while 0 <= nr < size and 0 <= nc < size and board.at(nr, nc) is stone:
+                count += 1
+                nr += dr
+                nc += dc
+            nr, nc = r - dr, c - dc
+            while 0 <= nr < size and 0 <= nc < size and board.at(nr, nc) is stone:
+                count += 1
+                nr -= dr
+                nc -= dc
+            if count >= 5:
+                return move
     return None
 
 

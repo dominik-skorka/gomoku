@@ -23,10 +23,10 @@ from gomoku.board import Board
 from gomoku.models import Move, Stone
 from gomoku.rules import check_winner
 
-from gomoku_brain.candidates import get_candidate_moves
 from gomoku_brain.threat import (
     _find_four_threats,
     _find_three_threats,
+    _find_winning_move,
 )
 
 # ---------------------------------------------------------------------------
@@ -34,8 +34,6 @@ from gomoku_brain.threat import (
 # ---------------------------------------------------------------------------
 
 INF = 1_000_000_000  # Practical infinity for proof/disproof numbers
-
-_DIRECTIONS = [(0, 1), (1, 0), (1, 1), (1, -1)]
 
 
 class _NodeType(Enum):
@@ -89,38 +87,6 @@ class _PNSNode:
 
 
 # ---------------------------------------------------------------------------
-# Cheap immediate-win check (no board copies)
-# ---------------------------------------------------------------------------
-
-
-def _can_win_immediately(board: Board, stone: Stone) -> Move | None:
-    """Check if *stone* can complete five-in-a-row in one move.
-
-    Counts neighbours in-place without copying the board, making it
-    ~100x faster than ``_find_winning_move`` (which deep-copies per
-    candidate).
-    """
-    size = board.size
-    for move in get_candidate_moves(board, radius=2):
-        r, c = move.row, move.col
-        for dr, dc in _DIRECTIONS:
-            count = 1  # the stone we would place
-            nr, nc = r + dr, c + dc
-            while 0 <= nr < size and 0 <= nc < size and board.at(nr, nc) is stone:
-                count += 1
-                nr += dr
-                nc += dc
-            nr, nc = r - dr, c - dc
-            while 0 <= nr < size and 0 <= nc < size and board.at(nr, nc) is stone:
-                count += 1
-                nr -= dr
-                nc -= dc
-            if count >= 5:
-                return move
-    return None
-
-
-# ---------------------------------------------------------------------------
 # Evaluation of leaf nodes
 # ---------------------------------------------------------------------------
 
@@ -137,12 +103,12 @@ def _evaluate_leaf(node: _PNSNode) -> None:
     board = node.board
 
     if node.node_type is _NodeType.OR:
-        if _can_win_immediately(board, attacker) is not None:
+        if _find_winning_move(board, attacker) is not None:
             node.proof = 0
             node.disproof = INF
             return
     else:
-        if _can_win_immediately(board, defender) is not None:
+        if _find_winning_move(board, defender) is not None:
             node.proof = INF
             node.disproof = 0
             return
@@ -208,7 +174,7 @@ def _expand(node: _PNSNode) -> None:
         # Attacker moves: four-threats and three-threats only
 
         # Immediate win
-        win_move = _can_win_immediately(board, attacker)
+        win_move = _find_winning_move(board, attacker)
         if win_move is not None:
             child = _PNSNode(
                 board.place_stone(win_move, attacker),
@@ -223,7 +189,7 @@ def _expand(node: _PNSNode) -> None:
             return
 
         # If defender has an immediate win, attacker must block it
-        def_win = _can_win_immediately(board, defender)
+        def_win = _find_winning_move(board, defender)
         if def_win is not None:
             if board.is_valid_move(def_win):
                 new_board = board.place_stone(def_win, attacker)
@@ -254,7 +220,7 @@ def _expand(node: _PNSNode) -> None:
                 _update_ancestors(node)
                 return
 
-            if _can_win_immediately(new_board, defender) is not None:
+            if _find_winning_move(new_board, defender) is not None:
                 continue
 
             child = _PNSNode(new_board, attacker, _NodeType.AND, move=attack)
@@ -278,7 +244,7 @@ def _expand(node: _PNSNode) -> None:
                 _update_ancestors(node)
                 return
 
-            if _can_win_immediately(new_board, defender) is not None:
+            if _find_winning_move(new_board, defender) is not None:
                 continue
 
             child = _PNSNode(new_board, attacker, _NodeType.AND, move=attack)
@@ -296,12 +262,12 @@ def _expand(node: _PNSNode) -> None:
         # If attacker can win immediately, defender MUST block at that cell.
         # If attacker has multiple winning cells (e.g. live four), the
         # node is effectively proved — defender can only block one.
-        atk_win = _can_win_immediately(board, attacker)
+        atk_win = _find_winning_move(board, attacker)
         if atk_win is not None:
             # Try blocking at the winning cell
             new_board = board.place_stone(atk_win, defender)
             # Check if attacker still has an immediate win after the block
-            if _can_win_immediately(new_board, attacker) is not None:
+            if _find_winning_move(new_board, attacker) is not None:
                 # Multiple winning cells — defender can't block all → proved
                 node.proof = 0
                 node.disproof = INF
@@ -423,7 +389,7 @@ def pns_threat_search(
     _evaluate_leaf(root)
 
     if root.proved:
-        return _can_win_immediately(board, stone)
+        return _find_winning_move(board, stone)
     if root.disproved:
         return None
 
