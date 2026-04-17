@@ -41,6 +41,8 @@ class SearchState:
     """
 
     __slots__ = (
+        "_grid",
+        "_occ",
         "_undo_col",
         "_undo_row",
         "_undo_stone",
@@ -75,6 +77,11 @@ class SearchState:
         self._undo_row = np.empty(cap, dtype=np.int32)
         self._undo_col = np.empty(cap, dtype=np.int32)
         self._undo_stone = np.empty(cap, dtype=np.int8)
+        # Lazy caches — both invalidated by make/unmake.  Unused on the pure
+        # bitboard path (which consumes .black/.white directly), but keeps
+        # the grid-JIT path fast when bitboard mode is disabled.
+        self._occ: set[tuple[int, int]] | None = None
+        self._grid = None
 
     # ------------------------------------------------------------------
     # Construction
@@ -156,6 +163,8 @@ class SearchState:
         self._undo_stone[p] = stone_int
         self.ply = p + 1
         self.occ_count += 1
+        self._occ = None
+        self._grid = None
 
     def unmake(self) -> None:
         """Undo the most recent :meth:`make`.
@@ -177,6 +186,8 @@ class SearchState:
         self.zobrist ^= SIDE_KEY
         self.ply = p
         self.occ_count -= 1
+        self._occ = None
+        self._grid = None
 
     # ------------------------------------------------------------------
     # Read-only accessors
@@ -193,6 +204,35 @@ class SearchState:
     def is_empty(self, row: int, col: int) -> bool:
         bit = np.uint32(1) << np.uint32(col)
         return not (self.black[row] & bit) and not (self.white[row] & bit)
+
+    @property
+    def occupied(self) -> set[tuple[int, int]]:
+        """Lazy set of occupied ``(row, col)`` coords — duck-type for Board/_GridBoard.
+
+        Not used on the hot path (which consumes ``.black``/``.white`` directly),
+        but kept so helpers that accept any board-like object keep working.
+        """
+        if self._occ is None:
+            from gomoku_brain.bitboard_jit import occupied_from_bb
+
+            arr = occupied_from_bb(self.black, self.white, self.size)
+            self._occ = {(int(arr[i, 0]), int(arr[i, 1])) for i in range(arr.shape[0])}
+        return self._occ
+
+    @property
+    def grid(self):
+        """Return an int8[size, size] grid view — duck-type for BitboardState.
+
+        Cached per node (invalidated by make/unmake), so repeated calls from
+        different helpers at the same search node reuse the same array.
+        JIT helpers that go through ``board_to_bitboard`` never hit this path
+        since ``grid_utils`` reads ``.black``/``.white`` directly.
+        """
+        if self._grid is None:
+            from gomoku_brain.bitboard_jit import bitboard_to_grid
+
+            self._grid = bitboard_to_grid(self.black, self.white, self.size)
+        return self._grid
 
     def last_move(self) -> tuple[int, int, Stone] | None:
         """Return the most recent move on the undo stack, or ``None`` at root."""

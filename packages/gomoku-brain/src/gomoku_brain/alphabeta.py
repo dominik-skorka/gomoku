@@ -12,12 +12,11 @@ from gomoku.rules import check_winner
 from gomoku_brain.candidates import get_candidate_moves
 from gomoku_brain.evaluate import evaluate_board
 from gomoku_brain.opening import deduplicate_by_symmetry, lookup_opening_book
+from gomoku_brain.search_state import SearchState
 from gomoku_brain.zobrist import (
     SIDE_KEY,
     BoundType,
     TranspositionTable,
-    hash_board,
-    incremental_hash,
 )
 
 # Number of killer-move slots per depth level.
@@ -59,12 +58,13 @@ _FUTILITY_MARGIN = 1500
 def _check_win(board: Board, move: Move) -> bool:
     """Return True if *move* creates a winning line on *board*.
 
-    Dispatches to JIT ``check_winner_grid`` when *board* is a ``_GridBoard``,
-    otherwise falls back to ``check_winner``.
+    Dispatches to JIT ``check_winner_grid`` when *board* is a ``_GridBoard``
+    or a ``SearchState``, otherwise falls back to ``check_winner``.
     """
     from gomoku_brain.grid_utils import _GridBoard
+    from gomoku_brain.search_state import SearchState
 
-    if isinstance(board, _GridBoard):
+    if isinstance(board, _GridBoard | SearchState):
         from gomoku_brain.evaluate_jit import check_winner_grid, get_dirs
 
         return check_winner_grid(board.grid, board.size, move.row, move.col, 5, get_dirs())
@@ -184,15 +184,15 @@ def _split_threats(
 
 
 def _is_four_threat_move(
-    new_board: Board,
-    old_board: Board,
+    board: Board,
     move: Move,
     stone: Stone,
 ) -> bool:
     """Return True if *move* creates a four-threat for *stone* or blocks one for opponent.
 
-    *new_board* is the board after placing *stone* at *move*.
-    *old_board* is the board before the move (used for opponent check).
+    *board* may be either the pre- or post-move view: the line scanners only
+    look at cells strictly adjacent to (``move.row``, ``move.col``), never at
+    the centre itself, so both views give the same answer.
     """
     from gomoku_brain.evaluate import _should_use_jit
 
@@ -201,22 +201,19 @@ def _is_four_threat_move(
         from gomoku_brain.grid_utils import board_to_grid
 
         dirs = get_dirs()
-        # Our stone creates 4+: check on new_board (stone is placed)
-        new_grid = board_to_grid(new_board)
-        size = new_board.size
-        if is_four_threat(new_grid, size, move.row, move.col, int(stone), dirs):
+        grid = board_to_grid(board)
+        size = board.size
+        if is_four_threat(grid, size, move.row, move.col, int(stone), dirs):
             return True
-        # Opponent's line through this cell: check on old_board
-        old_grid = board_to_grid(old_board)
-        return is_four_threat(old_grid, size, move.row, move.col, int(stone.opponent()), dirs)
+        return is_four_threat(grid, size, move.row, move.col, int(stone.opponent()), dirs)
 
     # Pure-Python fallback
-    size = new_board.size
+    size = board.size
     for dr, dc in _DIRECTIONS:
         cnt = 1
         for sign in (1, -1):
             r, c = move.row + dr * sign, move.col + dc * sign
-            while 0 <= r < size and 0 <= c < size and new_board.at(r, c) is stone:
+            while 0 <= r < size and 0 <= c < size and board.at(r, c) is stone:
                 cnt += 1
                 r += dr * sign
                 c += dc * sign
@@ -227,7 +224,7 @@ def _is_four_threat_move(
         cnt = 1
         for sign in (1, -1):
             r, c = move.row + dr * sign, move.col + dc * sign
-            while 0 <= r < size and 0 <= c < size and old_board.at(r, c) is opp:
+            while 0 <= r < size and 0 <= c < size and board.at(r, c) is opp:
                 cnt += 1
                 r += dr * sign
                 c += dc * sign
@@ -236,9 +233,9 @@ def _is_four_threat_move(
 
     # Fork detection: move creates a double-three (2+ open threes) for
     # either side — nearly as forcing as a four-threat.
-    if _count_open_threes_at(old_board, move.row, move.col, stone) >= 2:
+    if _count_open_threes_at(board, move.row, move.col, stone) >= 2:
         return True
-    if _count_open_threes_at(old_board, move.row, move.col, opp) >= 2:
+    if _count_open_threes_at(board, move.row, move.col, opp) >= 2:
         return True
     return False
 
@@ -338,18 +335,13 @@ class AlphaBetaBrain:
                         diag.notes.append(f"VCF found at depth {self.vcf_depth}")
                     return vcf_move
 
-            # -- Convert to lightweight grid-backed board for JIT search -----
-            from gomoku_brain.evaluate import _should_use_jit
-
-            if _should_use_jit():
-                from gomoku_brain.grid_utils import _GridBoard, board_to_grid
-
-                search_board: Board | _GridBoard = _GridBoard(board_to_grid(board), board.size)
-            else:
-                search_board = board
+            # -- Build the mutable SearchState used throughout the search ---
+            # make/unmake on this single object replaces per-node Board /
+            # _GridBoard allocations.  All helpers duck-type it via
+            # ``grid_utils``.
+            state = SearchState.from_board(board, stone)
 
             tt = TranspositionTable()
-            zh = hash_board(board, stone)
             best_move: Move | None = None
             # Reset per-move node counters for benchmarks / diagnostics.
             self.node_count = 0
@@ -382,14 +374,13 @@ class AlphaBetaBrain:
                         a = prev_score - _ASPIRATION_WINDOW
                         b = prev_score + _ASPIRATION_WINDOW
                         score, move = self._alphabeta(
-                            search_board,
+                            state,
                             d,
                             a,
                             b,
                             stone,
                             killers,
                             tt,
-                            zh,
                             history,
                             eval_cache,
                             self.threat_extensions,
@@ -399,14 +390,13 @@ class AlphaBetaBrain:
                         if score <= a or score >= b:
                             aspiration_resets += 1
                             score, move = self._alphabeta(
-                                search_board,
+                                state,
                                 d,
                                 float("-inf"),
                                 float("inf"),
                                 stone,
                                 killers,
                                 tt,
-                                zh,
                                 history,
                                 eval_cache,
                                 self.threat_extensions,
@@ -414,14 +404,13 @@ class AlphaBetaBrain:
                             )
                     else:
                         score, move = self._alphabeta(
-                            search_board,
+                            state,
                             d,
                             float("-inf"),
                             float("inf"),
                             stone,
                             killers,
                             tt,
-                            zh,
                             history,
                             eval_cache,
                             self.threat_extensions,
@@ -489,24 +478,34 @@ class AlphaBetaBrain:
 
     @staticmethod
     def _find_urgent_move(
-        board: Board,
+        state: SearchState,
         candidates: list[Move],
         stone: Stone,
     ) -> Move | None:
         """Return an immediate winning move for *stone*, or a move that blocks
-        the opponent's immediate win.  Returns ``None`` if no urgent move."""
+        the opponent's immediate win.  Returns ``None`` if no urgent move.
+
+        Uses :meth:`SearchState.make` / :meth:`SearchState.unmake` for zero
+        allocation per candidate.
+        """
         opponent = stone.opponent()
         block: Move | None = None
         for move in candidates:
             # Check our win
-            new_board = board.place_stone(move, stone)
-            if _check_win(new_board, move):
-                return move
+            state.make(move.row, move.col, stone)
+            try:
+                if _check_win(state, move):
+                    return move
+            finally:
+                state.unmake()
             # Check opponent's win (only need to find first one)
             if block is None:
-                opp_board = board.place_stone(move, opponent)
-                if _check_win(opp_board, move):
-                    block = move
+                state.make(move.row, move.col, opponent)
+                try:
+                    if _check_win(state, move):
+                        block = move
+                finally:
+                    state.unmake()
         return block
 
     # -- Root-level VCF pre-check -------------------------------------------
@@ -634,7 +633,7 @@ class AlphaBetaBrain:
 
     def _order_moves(
         self,
-        board: Board,
+        state: SearchState,
         candidates: list[Move],
         stone: Stone,
         depth: int,
@@ -669,7 +668,7 @@ class AlphaBetaBrain:
         # 3. Threat-tier (optional): moves that create a four or five for us,
         #    or block one for the opponent.  Cheap inline scan.
         if self.threat_ordering:
-            threat_moves, non_threat = _split_threats(board, rest, stone, include_forks=True)
+            threat_moves, non_threat = _split_threats(state, rest, stone, include_forks=True)
         else:
             threat_moves = []
             non_threat = rest
@@ -678,8 +677,11 @@ class AlphaBetaBrain:
         stone_int = int(stone)
         scored = []
         for move in non_threat:
-            new_board = board.place_stone(move, stone)
-            score = evaluate_board(new_board, stone)
+            state.make(move.row, move.col, stone)
+            try:
+                score = evaluate_board(state, stone)
+            finally:
+                state.unmake()
             if history:
                 score += history.get((stone_int, move.row, move.col), 0)
             scored.append((score, move))
@@ -690,37 +692,37 @@ class AlphaBetaBrain:
     # -- Quiescence search ---------------------------------------------------
 
     @staticmethod
-    def _get_threat_moves(board: Board, stone: Stone) -> list[Move]:
+    def _get_threat_moves(state: SearchState, stone: Stone) -> list[Move]:
         """Return moves that create a four-in-a-row for *stone* or block one for the opponent.
 
         Only considers candidates within radius 2 of occupied stones.
         This is a lightweight detector for quiescence — not exhaustive.
         """
-        candidates = get_candidate_moves(board)
-        threats, _ = _split_threats(board, candidates, stone)
+        candidates = get_candidate_moves(state)
+        threats, _ = _split_threats(state, candidates, stone)
         return threats
 
     def _quiesce(
         self,
-        board: Board,
+        state: SearchState,
         alpha: float,
         beta: float,
         stone: Stone,
         tt: TranspositionTable,
-        zh: int,
         qs_depth: int,
         eval_cache: EvalCache,
     ) -> float:
         """Quiescence search: extend leaves for forcing (four-threat) moves."""
         self.qs_node_count += 1
+        zh = state.zobrist
         # -- VCF probe: detect multi-move forced wins that the one-ply
         #    threat loop would miss.
         if self.qs_vcf_depth > 0:
-            from gomoku_brain.grid_utils import _GridBoard, grid_to_board
+            from gomoku_brain.grid_utils import grid_to_board
             from gomoku_brain.threat import _find_winning_move, _vcf
 
-            # _vcf requires a Pydantic Board — reconstruct if necessary.
-            vcf_board = grid_to_board(board.grid, board.size) if isinstance(board, _GridBoard) else board
+            # _vcf requires a Pydantic Board — reconstruct from bitboards.
+            vcf_board = grid_to_board(state.grid, state.size)
 
             # Guard: if the opponent already has a winning move (four/five
             # on the board), we must block — we cannot freely start our own
@@ -735,7 +737,7 @@ class AlphaBetaBrain:
         if zh in eval_cache:
             stand_pat = eval_cache[zh]
         else:
-            stand_pat = evaluate_board(board, stone)
+            stand_pat = evaluate_board(state, stone)
             eval_cache[zh] = stand_pat
         if stand_pat >= beta:
             return stand_pat
@@ -746,27 +748,27 @@ class AlphaBetaBrain:
             return stand_pat
 
         # Only search forcing moves.
-        threats = self._get_threat_moves(board, stone)
+        threats = self._get_threat_moves(state, stone)
         if not threats:
             return stand_pat
 
         for move in threats:
-            new_board = board.place_stone(move, stone)
-            child_zh = incremental_hash(zh, move.row, move.col, stone)
+            state.make(move.row, move.col, stone)
+            try:
+                if _check_win(state, move):
+                    return 100_000.0
 
-            if _check_win(new_board, move):
-                return 100_000.0
-
-            score = -self._quiesce(
-                new_board,
-                -beta,
-                -alpha,
-                stone.opponent(),
-                tt,
-                child_zh,
-                qs_depth - 1,
-                eval_cache,
-            )
+                score = -self._quiesce(
+                    state,
+                    -beta,
+                    -alpha,
+                    stone.opponent(),
+                    tt,
+                    qs_depth - 1,
+                    eval_cache,
+                )
+            finally:
+                state.unmake()
 
             if score >= beta:
                 return score
@@ -789,14 +791,13 @@ class AlphaBetaBrain:
 
     def _alphabeta(
         self,
-        board: Board,
+        state: SearchState,
         depth: int,
         alpha: float,
         beta: float,
         stone: Stone,
         killers: dict[int, list[Move]],
         tt: TranspositionTable,
-        zh: int,
         history: HistoryTable,
         eval_cache: EvalCache,
         ext_left: int = 0,
@@ -807,6 +808,8 @@ class AlphaBetaBrain:
         # -- Time check (skip at shallow depths to limit overhead) -----------
         if deadline and depth >= 2 and time.monotonic() >= deadline:
             raise _SearchTimeout
+
+        zh = state.zobrist
 
         # -- Transposition-table probe ---------------------------------------
         alpha_orig = alpha
@@ -832,62 +835,64 @@ class AlphaBetaBrain:
         # free move, prune this branch.
         # Guards: enabled, not consecutive (allow_null), sufficient depth,
         # non-PV node (zero-window), and board has enough pieces.
-        if self.null_move_pruning and allow_null and depth >= 3 and (beta - alpha) == 1 and len(board.occupied) >= 4:
+        if self.null_move_pruning and allow_null and depth >= 3 and (beta - alpha) == 1 and state.occ_count >= 4:
             # Use cached static eval when available.
             if zh in eval_cache:
                 null_eval = eval_cache[zh]
             else:
-                null_eval = evaluate_board(board, stone)
+                null_eval = evaluate_board(state, stone)
                 eval_cache[zh] = null_eval
 
             if null_eval >= beta:
                 r = self.null_move_reduction
                 null_depth = max(depth - 1 - r, 0)
-                # Pass the turn: search from the opponent's perspective without
-                # placing a stone.  Flip the Zobrist side-to-move bit only.
-                null_zh = zh ^ SIDE_KEY
-                if null_depth <= 0:
-                    null_score = -self._quiesce(
-                        board,
-                        -beta,
-                        -beta + 1,
-                        stone.opponent(),
-                        tt,
-                        null_zh,
-                        _MAX_QS_DEPTH,
-                        eval_cache,
-                    )
-                else:
-                    null_score, _ = self._alphabeta(
-                        board,
-                        null_depth,
-                        -beta,
-                        -beta + 1,
-                        stone.opponent(),
-                        killers,
-                        tt,
-                        null_zh,
-                        history,
-                        eval_cache,
-                        ext_left,
-                        allow_null=False,
-                        deadline=deadline,
-                    )
-                    null_score = -null_score
+                # Pass the turn: flip the Zobrist side-to-move bit only.
+                # We toggle it on the state in place and restore it after
+                # the recursive call so the child sees the correct hash.
+                state.zobrist ^= SIDE_KEY
+                try:
+                    if null_depth <= 0:
+                        null_score = -self._quiesce(
+                            state,
+                            -beta,
+                            -beta + 1,
+                            stone.opponent(),
+                            tt,
+                            _MAX_QS_DEPTH,
+                            eval_cache,
+                        )
+                    else:
+                        null_score, _ = self._alphabeta(
+                            state,
+                            null_depth,
+                            -beta,
+                            -beta + 1,
+                            stone.opponent(),
+                            killers,
+                            tt,
+                            history,
+                            eval_cache,
+                            ext_left,
+                            allow_null=False,
+                            deadline=deadline,
+                        )
+                        null_score = -null_score
+                finally:
+                    state.zobrist ^= SIDE_KEY
                 if null_score >= beta:
                     return beta, None
 
         # -- Candidate generation --------------------------------------------
-        occ_count = len(board.occupied)
+        occ_count = state.occ_count
         is_early = occ_count <= self.early_game_threshold
         radius = self.early_game_radius if is_early else 2
-        candidates = get_candidate_moves(board, radius=radius)
+        candidates = get_candidate_moves(state, radius=radius)
         if not candidates:
             return 0.0, None
 
         # Symmetry dedup: remove equivalent moves in early game.
         if occ_count <= 8:
-            candidates = deduplicate_by_symmetry(board, candidates)
+            candidates = deduplicate_by_symmetry(state, candidates)
 
         # Resolve early-game adaptive parameters once.
         futility_margin = self.early_game_futility_margin if is_early else _FUTILITY_MARGIN
@@ -897,15 +902,19 @@ class AlphaBetaBrain:
         # Fast path: check for an instant win or a forced block before the
         # expensive evaluation-based sort.  When urgent is found, play it
         # immediately (winning) or promote it (blocking).
-        urgent = self._find_urgent_move(board, candidates, stone)
+        urgent = self._find_urgent_move(state, candidates, stone)
         if urgent is not None:
-            new_board = board.place_stone(urgent, stone)
-            if _check_win(new_board, urgent):
+            state.make(urgent.row, urgent.col, stone)
+            try:
+                is_win = _check_win(state, urgent)
+            finally:
+                state.unmake()
+            if is_win:
                 return 100_000.0 + depth, urgent
             # It's a block — promote it to head but still search alternatives
             candidates = [urgent, *(m for m in candidates if m != urgent)]
         elif depth >= 3:
-            candidates = self._order_moves(board, candidates, stone, depth, killers, tt_move, history)
+            candidates = self._order_moves(state, candidates, stone, depth, killers, tt_move, history)
 
         # Cap branching factor to avoid combinatorial explosion.
         cap = self.early_game_max_candidates if occ_count <= self.early_game_threshold else _MAX_CANDIDATES
@@ -918,109 +927,91 @@ class AlphaBetaBrain:
         futility_eval: float | None = None
 
         for i, move in enumerate(candidates):
-            new_board = board.place_stone(move, stone)
-            child_zh = incremental_hash(zh, move.row, move.col, stone)
+            state.make(move.row, move.col, stone)
+            try:
+                if _check_win(state, move):
+                    score = 100_000.0 + depth
+                    # Terminal — store exact and return.
+                    tt.store(zh, depth, score, BoundType.EXACT, move)
+                    return score, move
 
-            if _check_win(new_board, move):
-                score = 100_000.0 + depth
-                # Terminal — store exact and return.
-                tt.store(zh, depth, score, BoundType.EXACT, move)
-                return score, move
+                # -- Futility pruning at frontier (depth 2) ------------------
+                # If the position's static eval + margin can't reach alpha,
+                # skip non-first moves (first move is always searched fully
+                # for safety).  Evaluated on the pre-move position.
+                if depth == 2 and i > 0:
+                    if futility_eval is None:
+                        if zh in eval_cache:
+                            futility_eval = eval_cache[zh]
+                        else:
+                            # Unmake briefly to evaluate the pre-move position,
+                            # then redo.  Cheaper than an isinstance-heavy view.
+                            state.unmake()
+                            futility_eval = evaluate_board(state, stone)
+                            eval_cache[zh] = futility_eval
+                            state.make(move.row, move.col, stone)
+                    if futility_eval + futility_margin <= alpha:
+                        continue
 
-            # -- Futility pruning at frontier (depth 2) ----------------------
-            # If the position's static eval + margin can't reach alpha, skip
-            # non-first moves (first move is always searched fully for safety).
-            if depth == 2 and i > 0:
-                if futility_eval is None:
-                    if zh in eval_cache:
-                        futility_eval = eval_cache[zh]
-                    else:
-                        futility_eval = evaluate_board(board, stone)
-                        eval_cache[zh] = futility_eval
-                if futility_eval + futility_margin <= alpha:
-                    continue
+                # -- Threat extension: extend by 1 ply on forcing moves ------
+                child_depth = depth - 1
+                child_ext = ext_left
+                is_threat = False
+                if (ext_left > 0 or self.lmr) and depth >= 2:
+                    is_threat = _is_four_threat_move(state, move, stone)
+                    if is_threat and ext_left > 0:
+                        child_depth = depth  # extend: don't decrement
+                        child_ext = ext_left - 1
 
-            # -- Threat extension: extend by 1 ply on forcing moves ----------
-            child_depth = depth - 1
-            child_ext = ext_left
-            is_threat = False
-            if (ext_left > 0 or self.lmr) and depth >= 2:
-                is_threat = _is_four_threat_move(new_board, board, move, stone)
-                if is_threat and ext_left > 0:
-                    child_depth = depth  # extend: don't decrement
-                    child_ext = ext_left - 1
+                # -- Determine if this move is a known good move (skip LMR) --
+                is_tactical = is_threat or move == tt_move or (depth in killers and move in killers[depth])
 
-            # -- Determine if this move is a known good move (skip LMR) ------
-            is_tactical = is_threat or move == tt_move or (depth in killers and move in killers[depth])
-
-            if depth <= 1:
-                score = self._quiesce(
-                    new_board,
-                    -beta,
-                    -alpha,
-                    stone.opponent(),
-                    tt,
-                    child_zh,
-                    _MAX_QS_DEPTH,
-                    eval_cache,
-                )
-                score = -score
-            elif i == 0:
-                # First move (expected best): search with full window.
-                opp_score, _ = self._alphabeta(
-                    new_board,
-                    child_depth,
-                    -beta,
-                    -alpha,
-                    stone.opponent(),
-                    killers,
-                    tt,
-                    child_zh,
-                    history,
-                    eval_cache,
-                    child_ext,
-                    deadline=deadline,
-                )
-                score = -opp_score
-            else:
-                # -- Late Move Reduction (LMR) -------------------------------
-                # Later moves that aren't tactical get searched at reduced
-                # depth first.  If the reduced search beats alpha, re-search
-                # at full depth via the normal PVS fail-high path below.
-                lmr_reduced = False
-                scout_depth = child_depth
-                if self.lmr and depth >= lmr_min_depth and i >= lmr_threshold and not is_tactical:
-                    scout_depth = max(child_depth - 1, 1)
-                    lmr_reduced = True
-
-                # PVS zero-window scout (possibly at reduced depth).
-                opp_score, _ = self._alphabeta(
-                    new_board,
-                    scout_depth,
-                    -alpha - 1,
-                    -alpha,
-                    stone.opponent(),
-                    killers,
-                    tt,
-                    child_zh,
-                    history,
-                    eval_cache,
-                    child_ext,
-                    deadline=deadline,
-                )
-                score = -opp_score
-
-                # Re-search at full depth if LMR scout fails high.
-                if lmr_reduced and score > alpha:
+                if depth <= 1:
+                    score = -self._quiesce(
+                        state,
+                        -beta,
+                        -alpha,
+                        stone.opponent(),
+                        tt,
+                        _MAX_QS_DEPTH,
+                        eval_cache,
+                    )
+                elif i == 0:
+                    # First move (expected best): search with full window.
                     opp_score, _ = self._alphabeta(
-                        new_board,
+                        state,
                         child_depth,
+                        -beta,
+                        -alpha,
+                        stone.opponent(),
+                        killers,
+                        tt,
+                        history,
+                        eval_cache,
+                        child_ext,
+                        deadline=deadline,
+                    )
+                    score = -opp_score
+                else:
+                    # -- Late Move Reduction (LMR) ---------------------------
+                    # Later moves that aren't tactical get searched at reduced
+                    # depth first.  If the reduced search beats alpha, re-search
+                    # at full depth via the normal PVS fail-high path below.
+                    lmr_reduced = False
+                    scout_depth = child_depth
+                    if self.lmr and depth >= lmr_min_depth and i >= lmr_threshold and not is_tactical:
+                        scout_depth = max(child_depth - 1, 1)
+                        lmr_reduced = True
+
+                    # PVS zero-window scout (possibly at reduced depth).
+                    opp_score, _ = self._alphabeta(
+                        state,
+                        scout_depth,
                         -alpha - 1,
                         -alpha,
                         stone.opponent(),
                         killers,
                         tt,
-                        child_zh,
                         history,
                         eval_cache,
                         child_ext,
@@ -1028,23 +1019,41 @@ class AlphaBetaBrain:
                     )
                     score = -opp_score
 
-                # Re-search with full window if scout fails high.
-                if alpha < score < beta:
-                    opp_score, _ = self._alphabeta(
-                        new_board,
-                        child_depth,
-                        -beta,
-                        -score,
-                        stone.opponent(),
-                        killers,
-                        tt,
-                        child_zh,
-                        history,
-                        eval_cache,
-                        child_ext,
-                        deadline=deadline,
-                    )
-                    score = -opp_score
+                    # Re-search at full depth if LMR scout fails high.
+                    if lmr_reduced and score > alpha:
+                        opp_score, _ = self._alphabeta(
+                            state,
+                            child_depth,
+                            -alpha - 1,
+                            -alpha,
+                            stone.opponent(),
+                            killers,
+                            tt,
+                            history,
+                            eval_cache,
+                            child_ext,
+                            deadline=deadline,
+                        )
+                        score = -opp_score
+
+                    # Re-search with full window if scout fails high.
+                    if alpha < score < beta:
+                        opp_score, _ = self._alphabeta(
+                            state,
+                            child_depth,
+                            -beta,
+                            -score,
+                            stone.opponent(),
+                            killers,
+                            tt,
+                            history,
+                            eval_cache,
+                            child_ext,
+                            deadline=deadline,
+                        )
+                        score = -opp_score
+            finally:
+                state.unmake()
 
             if score > best_score:
                 best_score = score
