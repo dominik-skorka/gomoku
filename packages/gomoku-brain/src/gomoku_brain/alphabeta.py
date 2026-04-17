@@ -640,6 +640,7 @@ class AlphaBetaBrain:
         killers: dict[int, list[Move]],
         tt_move: Move | None = None,
         history: HistoryTable | None = None,
+        eval_cache: EvalCache | None = None,
     ) -> list[Move]:
         """Sort candidates by shallow evaluation for better pruning.
 
@@ -679,7 +680,13 @@ class AlphaBetaBrain:
         for move in non_threat:
             state.make(move.row, move.col, stone)
             try:
-                score = evaluate_board(state, stone)
+                zh = state.zobrist
+                if eval_cache is not None and zh in eval_cache:
+                    score = eval_cache[zh]
+                else:
+                    score = evaluate_board(state, stone)
+                    if eval_cache is not None:
+                        eval_cache[zh] = score
             finally:
                 state.unmake()
             if history:
@@ -914,7 +921,7 @@ class AlphaBetaBrain:
             # It's a block — promote it to head but still search alternatives
             candidates = [urgent, *(m for m in candidates if m != urgent)]
         elif depth >= 3:
-            candidates = self._order_moves(state, candidates, stone, depth, killers, tt_move, history)
+            candidates = self._order_moves(state, candidates, stone, depth, killers, tt_move, history, eval_cache)
 
         # Cap branching factor to avoid combinatorial explosion.
         cap = self.early_game_max_candidates if occ_count <= self.early_game_threshold else _MAX_CANDIDATES

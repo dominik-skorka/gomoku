@@ -72,38 +72,47 @@ def _find_four_threats(board: Board, stone: Stone) -> list[tuple[Move, Move | No
     - Gap fours: placing a stone fills a gap inside a would-be five
       (e.g. XX_XX pattern).
     """
-    threats: list[tuple[Move, Move | None]] = []
-    seen_attacks: set[tuple[int, int, int, int]] = set()  # (row, col, dr, dc)
-
+    # Per-move aggregation: a single move can generate multiple four-threats
+    # across different directions.  If it produces an unblockable (five or
+    # live-four) in any direction, it's unblockable overall.  If it produces
+    # two or more distinct dead-fours, the defender can only block one — it's
+    # effectively unblockable (classic double-four).
+    by_move: dict[tuple[int, int], tuple[Move, list[Move | None]]] = {}
     candidates = get_candidate_moves(board, radius=2)
 
     for move in candidates:
         r, c = move.row, move.col
         trial = board.place_stone(move, stone)
-
         for dr, dc in _DIRECTIONS:
-            key = (r, c, dr, dc)
-            if key in seen_attacks:
-                continue
-
-            # Count the line through the placed stone
             count, open_ends, end_cells = _line_cells(trial, r, c, dr, dc, stone)
             total = count + 1  # +1 for the placed stone itself
 
+            defence: Move | None
             if total == 5:
-                # Immediate five — not a threat, it's a win
-                threats.append((move, None))
-                seen_attacks.add(key)
-            elif total == 4:
-                if open_ends == 2:
-                    # Live four → two ways to complete → unblockable
-                    threats.append((move, None))
-                elif open_ends == 1 and end_cells:
-                    # Dead four → exactly one cell the opponent must block
-                    dr2, dc2 = end_cells[0]
-                    threats.append((move, Move(row=dr2, col=dc2)))
-                seen_attacks.add(key)
+                defence = None
+            elif total == 4 and open_ends == 2:
+                defence = None
+            elif total == 4 and open_ends == 1 and end_cells:
+                dr2, dc2 = end_cells[0]
+                defence = Move(row=dr2, col=dc2)
+            else:
+                continue
 
+            key = (r, c)
+            if key not in by_move:
+                by_move[key] = (move, [])
+            by_move[key][1].append(defence)
+
+    threats: list[tuple[Move, Move | None]] = []
+    for move, defences in by_move.values():
+        if any(d is None for d in defences):
+            threats.append((move, None))
+        elif len(defences) >= 2:
+            # Two or more dead-fours from the same cell — opponent can only
+            # block one, so this is effectively unblockable.
+            threats.append((move, None))
+        else:
+            threats.append((move, defences[0]))
     return threats
 
 
@@ -165,6 +174,7 @@ def _vcf(
 
     if is_attacker:
         threats = _find_four_threats(board, stone)
+        opp = stone.opponent()
         for attack, defence in threats:
             # Check immediate win
             trial = board.place_stone(attack, stone)
@@ -173,15 +183,23 @@ def _vcf(
                 return attack
 
             # Opponent gets to respond — can they win first?
-            if _find_winning_move(trial, stone.opponent()) is not None:
+            if _find_winning_move(trial, opp) is not None:
                 continue
 
             if defence is None:
                 # Unblockable four (live-four or five) → win
                 return attack
 
+            # Before assuming the defender is forced to block, verify the
+            # defender cannot instead play an unblockable four (live-four)
+            # elsewhere.  Without this check, VCF can return false positives
+            # when the opponent has a counter-live-four refutation.
+            opp_threats = _find_four_threats(trial, opp)
+            if any(d is None for _, d in opp_threats):
+                continue
+
             # Defender is forced to block
-            trial2 = trial.place_stone(defence, stone.opponent())
+            trial2 = trial.place_stone(defence, opp)
 
             # Recurse: attacker tries another four-threat
             if _vcf(trial2, stone, depth - 2, is_attacker=True) is not None:

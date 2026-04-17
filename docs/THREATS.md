@@ -82,10 +82,11 @@ The evaluation function scores patterns by `(consecutive_count, open_ends)`:
 
 - Patterns are scanned in **four directions** (horizontal, vertical, two
   diagonals) from each occupied cell.
-- Own patterns are summed normally.
-- **Opponent patterns** are scored at **0.8×** (defensive value) — blocking
-  the opponent's threats is important but slightly less valuable than building
-  your own.
+- Own patterns are summed normally, opponent patterns are subtracted
+  symmetrically (1.0×).
+- A per-side **open-three bonus** (`_OPEN_THREE_BONUS = 1,500`) is added for
+  each distinct open-three formation, and a per-cell **fork bonus** rewards
+  empty cells where multiple threat lines converge.
 - The total is **clamped** to ±99,000 to stay below the 100,000 win constant.
 
 ---
@@ -118,11 +119,13 @@ This is an immediate win.
 ### Gap four
 
 ```
-Before:    . . X X . X .
-After ★:   . . X X ★ X .        ← fills the gap → 4 in a row
+Before:    . X X . X . .
+After ★:   . X X ★ X . .        ← fills the gap → 4 in a row
 ```
 
-Detected by `_find_four_threats()` which also handles `XX_XX` patterns.
+Detected by `_find_four_threats()`.  Note that a fully symmetric `X X _ X X`
+gap, once filled, yields **five** in a row and is reported as an immediate win
+(`total == 5`), not as a four-threat.
 
 ---
 
