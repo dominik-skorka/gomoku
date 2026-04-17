@@ -39,6 +39,10 @@ testpaths = [
     "packages/gomoku-brain/tests",
     "packages/gomoku-cli/tests",
 ]
+markers = [
+    "bench: slow benchmarks (opt-in via `-m bench`)",
+]
+addopts = "-m 'not bench'"
 
 [dependency-groups]
 dev = [
