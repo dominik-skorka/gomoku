@@ -283,6 +283,11 @@ class AlphaBetaBrain:
         self.early_game_lmr_threshold = early_game_lmr_threshold
         self.early_game_futility_margin = early_game_futility_margin
         self.time_limit_s = time_limit_s
+        # Benchmark instrumentation — reset on each get_move, updated inside
+        # _alphabeta / _quiesce.  Read by bench_alphabeta.py.  Zero overhead
+        # when ignored (one int increment per node).
+        self.node_count = 0
+        self.qs_node_count = 0
         self._file_book = None
         if opening_book:
             from pathlib import Path
@@ -346,6 +351,9 @@ class AlphaBetaBrain:
             tt = TranspositionTable()
             zh = hash_board(board, stone)
             best_move: Move | None = None
+            # Reset per-move node counters for benchmarks / diagnostics.
+            self.node_count = 0
+            self.qs_node_count = 0
             # History table shared across all ID iterations so it accumulates.
             history: HistoryTable = {}
             eval_cache: EvalCache = {}
@@ -704,6 +712,7 @@ class AlphaBetaBrain:
         eval_cache: EvalCache,
     ) -> float:
         """Quiescence search: extend leaves for forcing (four-threat) moves."""
+        self.qs_node_count += 1
         # -- VCF probe: detect multi-move forced wins that the one-ply
         #    threat loop would miss.
         if self.qs_vcf_depth > 0:
@@ -794,6 +803,7 @@ class AlphaBetaBrain:
         allow_null: bool = True,
         deadline: float = 0.0,
     ) -> tuple[float, Move | None]:
+        self.node_count += 1
         # -- Time check (skip at shallow depths to limit overhead) -----------
         if deadline and depth >= 2 and time.monotonic() >= deadline:
             raise _SearchTimeout
