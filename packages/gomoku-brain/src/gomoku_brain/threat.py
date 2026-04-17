@@ -77,14 +77,18 @@ def _find_four_threats(board: Board, stone: Stone) -> list[tuple[Move, Move | No
     # live-four) in any direction, it's unblockable overall.  If it produces
     # two or more distinct dead-fours, the defender can only block one — it's
     # effectively unblockable (classic double-four).
+    #
+    # ``_line_cells`` scans outward from (r, c) and never reads the centre,
+    # so it is invariant to whether the stone has actually been placed there
+    # — the pre-move board gives the same answer and saves one full board
+    # copy per candidate.
     by_move: dict[tuple[int, int], tuple[Move, list[Move | None]]] = {}
     candidates = get_candidate_moves(board, radius=2)
 
     for move in candidates:
         r, c = move.row, move.col
-        trial = board.place_stone(move, stone)
         for dr, dc in _DIRECTIONS:
-            count, open_ends, end_cells = _line_cells(trial, r, c, dr, dc, stone)
+            count, open_ends, end_cells = _line_cells(board, r, c, dr, dc, stone)
             total = count + 1  # +1 for the placed stone itself
 
             defence: Move | None
@@ -123,15 +127,16 @@ def _find_three_threats(board: Board, stone: Stone) -> list[tuple[Move, list[Mov
     the opponent could play to neutralise the threat (the two open ends plus
     any adjacent cells that break the line).
     """
+    # See _find_four_threats: _line_cells is invariant to whether the
+    # hypothetical stone has been placed at (r, c), so we avoid the
+    # per-candidate board copy.
     threats: list[tuple[Move, list[Move]]] = []
     candidates = get_candidate_moves(board, radius=2)
 
     for move in candidates:
         r, c = move.row, move.col
-        trial = board.place_stone(move, stone)
-
         for dr, dc in _DIRECTIONS:
-            count, open_ends, end_cells = _line_cells(trial, r, c, dr, dc, stone)
+            count, open_ends, end_cells = _line_cells(board, r, c, dr, dc, stone)
             total = count + 1
 
             if total == 3 and open_ends == 2:
