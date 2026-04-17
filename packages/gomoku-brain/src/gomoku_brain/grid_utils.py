@@ -49,8 +49,9 @@ class _GridBoard:
 def board_to_grid(board: Board | _GridBoard) -> NDArray[np.int8]:
     """Convert a Board (or _GridBoard) to a numpy int8 2-D array (size x size)."""
     from gomoku_brain.bitboard import BitboardState
+    from gomoku_brain.search_state import SearchState
 
-    if isinstance(board, BitboardState):
+    if isinstance(board, BitboardState | SearchState):
         return board.grid
     if isinstance(board, _GridBoard):
         return board.grid
@@ -64,8 +65,9 @@ def occupied_coords(board: Board | _GridBoard) -> NDArray[np.int32]:
     board is empty.
     """
     from gomoku_brain.bitboard import BitboardState
+    from gomoku_brain.search_state import SearchState
 
-    if isinstance(board, BitboardState):
+    if isinstance(board, BitboardState | SearchState):
         from gomoku_brain.bitboard_jit import occupied_from_bb
 
         return occupied_from_bb(board.black, board.white, board.size)
@@ -83,8 +85,9 @@ def board_to_bitboard(board: Board | _GridBoard) -> tuple[NDArray[np.uint32], ND
     """Convert any board type to bitboard arrays ``(black, white, size)``."""
     from gomoku_brain.bitboard import BitboardState
     from gomoku_brain.bitboard_jit import grid_to_bitboard
+    from gomoku_brain.search_state import SearchState
 
-    if isinstance(board, BitboardState):
+    if isinstance(board, BitboardState | SearchState):
         return board.black, board.white, board.size
     grid = board_to_grid(board)
     size = board.size
