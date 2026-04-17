@@ -674,10 +674,14 @@ class AlphaBetaBrain:
             threat_moves = []
             non_threat = rest
 
-        # 4. Eval + history sorted remainder (non-threat moves only).
+        # 4. Eval + history sorted remainder.  Score threats and non-threats
+        #    the same way, but keep them in separate tiers so the threat tier
+        #    always precedes non-threats.  Within each tier we sort by score
+        #    so strong threats (create-five, block-four) come before weaker
+        #    ones (fork) and strong positional moves before weak ones.
         stone_int = int(stone)
-        scored = []
-        for move in non_threat:
+
+        def _score_move(move: Move) -> float:
             state.make(move.row, move.col, stone)
             try:
                 zh = state.zobrist
@@ -691,10 +695,14 @@ class AlphaBetaBrain:
                 state.unmake()
             if history:
                 score += history.get((stone_int, move.row, move.col), 0)
-            scored.append((score, move))
-        scored.sort(key=lambda x: x[0], reverse=True)
+            return score
 
-        return promoted + threat_moves + [m for _, m in scored]
+        scored_threats = [(_score_move(m), m) for m in threat_moves]
+        scored_threats.sort(key=lambda x: x[0], reverse=True)
+        scored_rest = [(_score_move(m), m) for m in non_threat]
+        scored_rest.sort(key=lambda x: x[0], reverse=True)
+
+        return promoted + [m for _, m in scored_threats] + [m for _, m in scored_rest]
 
     # -- Quiescence search ---------------------------------------------------
 

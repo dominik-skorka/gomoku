@@ -295,32 +295,33 @@ def _vct(
                     # Defender may also play a counter four-threat
                     opponent_fours = _find_four_threats(trial2, stone.opponent())
                     if opponent_fours:
-                        # Unblockable four (live four / five) → opponent wins
+                        # An unblockable counter (live-four / five) refutes
+                        # the attack outright.
                         if any(d is None for _, d in opponent_fours):
                             all_refuted = False
                             break
 
-                        # All counter-fours are dead fours (blockable).
-                        # Attacker must block each one before continuing.
-                        board_after_counters = trial2
-                        depth_cost = 0
-                        countered = True
-                        for _, block_move in opponent_fours:
-                            if not board_after_counters.is_valid_move(block_move):
-                                countered = False
-                                break
-                            board_after_counters = board_after_counters.place_stone(
-                                block_move,
-                                stone,
-                            )
-                            depth_cost += 2  # opponent four + our block
-
-                        if not countered:
+                        # Two or more *independent* counter dead-fours mean
+                        # the attacker can only neutralise one — the defender
+                        # presses the other.  Treat as a refutation.
+                        unique_blocks = {
+                            (m.row, m.col) for _, m in opponent_fours if m is not None
+                        }
+                        if len(unique_blocks) >= 2:
                             all_refuted = False
                             break
 
-                        # Continue the attack after blocking the dead fours
-                        if _vct(board_after_counters, stone, depth - 2 - depth_cost, is_attacker=True) is None:
+                        # Exactly one dead-four: attacker blocks it, then
+                        # recurse.  (Old code assumed the attacker has to
+                        # block every listed counter sequentially with a
+                        # per-counter depth_cost — that was both unsound
+                        # and depth-inflated.)
+                        _, block_move = opponent_fours[0]
+                        if block_move is None or not trial2.is_valid_move(block_move):
+                            all_refuted = False
+                            break
+                        board_after_block = trial2.place_stone(block_move, stone)
+                        if _vct(board_after_block, stone, depth - 2, is_attacker=True) is None:
                             all_refuted = False
                             break
                     elif _vct(trial2, stone, depth - 2, is_attacker=True) is None:
