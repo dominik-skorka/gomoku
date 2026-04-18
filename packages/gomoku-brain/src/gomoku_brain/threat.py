@@ -112,10 +112,12 @@ def _find_four_threats_python(board: Board, stone: Stone) -> list[tuple[Move, Mo
 def _find_four_threats(board: Board, stone: Stone) -> list[tuple[Move, Move | None]]:
     """Find all moves that create a four-in-a-row for ``stone``.
 
-    Returns a list of ``(attack_move, defence_move | None)``.
-    ``defence_move`` is the single cell the opponent *must* play to block, or
-    ``None`` when the four is a *double-four* (two open ends → unblockable,
-    i.e. immediate win).
+    Returns a list of ``(attack_move, defence_move | None)`` sorted by
+    *strength*: unblockable fours (``defence is None`` — live-fours,
+    double-fours, or completed fives) come first, blockable dead-fours
+    after.  Callers that iterate (VCF attacker loop, counter-threat
+    scan) therefore hit wins and refutations earliest, maximising
+    VCF / alpha-beta early termination.
 
     Detects:
     - Straight fours: placing a stone extends three-in-a-row to four.
@@ -151,9 +153,12 @@ def _find_four_threats(board: Board, stone: Stone) -> list[tuple[Move, Move | No
                 threats.append((atk, None))
             else:
                 threats.append((atk, Move(row=dr_end, col=int(result[i, 3]))))
-        return threats
+    else:
+        threats = _find_four_threats_python(board, stone)
 
-    return _find_four_threats_python(board, stone)
+    # Stable sort by strength: unblockables (defence is None) first.
+    threats.sort(key=lambda t: 0 if t[1] is None else 1)
+    return threats
 
 
 def _find_three_threats_python(board: Board, stone: Stone) -> list[tuple[Move, list[Move]]]:
@@ -175,13 +180,16 @@ def _find_three_threats_python(board: Board, stone: Stone) -> list[tuple[Move, l
 def _find_three_threats(board: Board, stone: Stone) -> list[tuple[Move, list[Move]]]:
     """Find moves that create a *live* three (open at both ends).
 
-    Returns ``(attack_move, defence_moves)`` — the defence moves are the cells
-    the opponent could play to neutralise the threat (the two open ends plus
-    any adjacent cells that break the line).
+    Returns ``(attack_move, defence_moves)`` — ``defence_moves`` are the
+    two open-end cells of the threat.  (The full defence expansion,
+    including counter-four cells, lives in :func:`_vct_defence_moves`.)
 
-    Dispatches to a Numba JIT kernel when available.  The JIT path returns
-    one entry per ``(candidate, direction)`` pair, matching the pure-Python
-    behaviour (callers dedupe by attack cell if needed).
+    Results are sorted by *strength*: moves that create multiple live
+    threes (double- / triple-threes — i.e. forks that converge toward
+    unblockable follow-ups) come first.  Both the JIT and Python paths
+    emit one entry per ``(candidate, direction)`` pair, so the number of
+    entries per attack cell is the fork degree and provides a natural
+    strength proxy for the VCT attacker loop.
     """
     from gomoku_brain.evaluate import _should_use_jit
 
@@ -204,9 +212,17 @@ def _find_three_threats(board: Board, stone: Stone) -> list[tuple[Move, list[Mov
                 Move(row=int(result[i, 4]), col=int(result[i, 5])),
             ]
             threats.append((atk, defence))
-        return threats
+    else:
+        threats = _find_three_threats_python(board, stone)
 
-    return _find_three_threats_python(board, stone)
+    # Stable sort: attacks with higher fork degree (more directions
+    # producing a live-three) first.
+    counts: dict[tuple[int, int], int] = {}
+    for atk, _ in threats:
+        k = (atk.row, atk.col)
+        counts[k] = counts.get(k, 0) + 1
+    threats.sort(key=lambda t: -counts[(t[0].row, t[0].col)])
+    return threats
 
 
 def _find_winning_move(board: Board, stone: Stone) -> Move | None:
