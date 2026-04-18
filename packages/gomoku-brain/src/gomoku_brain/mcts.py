@@ -483,6 +483,7 @@ class MCTSBrain:
                 diag.chosen_move = chosen
                 diag.search_stats = SearchStats(
                     iterations=self.iterations,
+                    nodes_searched=root.visits,
                     time_ms=search_ms,
                 )
                 # Top children by visits (most informative for MCTS).
@@ -491,9 +492,12 @@ class MCTSBrain:
                     CandidateInfo(
                         move=Move(row=c.move[0], col=c.move[1]),
                         score=round(c.wins / c.visits, 4) if c.visits else 0.0,
+                        score_type="winrate",
                     )
                     for c in children_sorted[:10]
                 ]
+                if diag.top_candidates and diag.top_candidates[0].move != chosen:
+                    diag.alternative_best = diag.top_candidates[0]
                 diag.notes.append(
                     f"Best: {chosen} visits={best.visits}/{root.visits} wr={best.wins / best.visits:.1%}"
                     if best.visits

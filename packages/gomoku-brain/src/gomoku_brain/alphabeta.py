@@ -446,14 +446,20 @@ class AlphaBetaBrain:
             assert best_move is not None
 
             if diag is not None:
-                from gomoku.diagnostics import CandidateInfo, SearchStats
+                from gomoku.diagnostics import CandidateInfo, SearchStats, ThreatInfo
+
+                from gomoku_brain.threat import _find_four_threats, _find_three_threats
 
                 search_ms = int((time.monotonic() - search_start) * 1000)
                 diag.decision_path = diag.decision_path or "alphabeta"
                 diag.chosen_move = best_move
                 diag.search_stats = SearchStats(
                     depth_reached=depth_reached,
+                    nodes_searched=self.node_count,
+                    qs_nodes_searched=self.qs_node_count,
                     tt_size=len(tt),
+                    tt_hits=tt.hits,
+                    tt_probes=tt.probes,
                     time_ms=search_ms,
                     aspiration_resets=aspiration_resets,
                 )
@@ -467,7 +473,27 @@ class AlphaBetaBrain:
                     sc = evaluate_board(trial, stone)
                     scored_cands.append((sc, m))
                 scored_cands.sort(key=lambda x: x[0], reverse=True)
-                diag.top_candidates = [CandidateInfo(move=m, score=sc) for sc, m in scored_cands[:10]]
+                diag.top_candidates = [
+                    CandidateInfo(move=m, score=sc, score_type="eval") for sc, m in scored_cands[:10]
+                ]
+                # Alternative-best: the top-ranked candidate when it differs
+                # from the move we actually chose.  Analyzers flag this as a
+                # potential blunder when the gap is large.
+                if diag.top_candidates and diag.top_candidates[0].move != best_move:
+                    diag.alternative_best = diag.top_candidates[0]
+                # Threat landscape before the move — populate only when a
+                # downstream layer (threat.py) didn't already.
+                opp = Stone.BLACK if stone is Stone.WHITE else Stone.WHITE
+                if diag.our_threats == ThreatInfo():
+                    diag.our_threats = ThreatInfo(
+                        four_threats=len(_find_four_threats(board, stone)),
+                        three_threats=len(_find_three_threats(board, stone)),
+                    )
+                if diag.opp_threats == ThreatInfo():
+                    diag.opp_threats = ThreatInfo(
+                        four_threats=len(_find_four_threats(board, opp)),
+                        three_threats=len(_find_three_threats(board, opp)),
+                    )
                 # Eval after the chosen move.
                 after_board = board.place_stone(best_move, stone)
                 diag.eval_after = evaluate_board(after_board, stone)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 import click
@@ -181,12 +182,14 @@ def play(
 
         # Set up diagnostics context for this move.
         diag_entry = None
+        move_start: float | None = None
         if diag_recorder is not None:
             board_stones = [
                 f"{'B' if game.board.at(r, c) == Stone.BLACK else 'W'} {Move(row=r, col=c)}"
                 for r, c in sorted(game.board.occupied)
             ]
             diag_entry = diag_recorder.begin_move(move_number, game.current_stone, board_stones)
+            move_start = time.monotonic()
 
         try:
             result = game.play_turn()
@@ -194,6 +197,8 @@ def play(
             console.print(f"[red]Error:[/red] {e}")
             if diag_entry is not None:
                 diag_entry.notes.append(f"InvalidMoveError: {e}")
+                if move_start is not None:
+                    diag_entry.think_time_ms = int((time.monotonic() - move_start) * 1000)
                 diag_recorder.end_move(diag_entry)  # type: ignore[union-attr]
             break
 
@@ -202,6 +207,8 @@ def play(
 
         # Finalise diagnostics for this move.
         if diag_entry is not None:
+            if move_start is not None:
+                diag_entry.think_time_ms = int((time.monotonic() - move_start) * 1000)
             if diag_entry.chosen_move is None:
                 diag_entry.chosen_move = last_move
             diag_recorder.end_move(diag_entry)  # type: ignore[union-attr]
@@ -247,11 +254,54 @@ def playback(file: Path, from_move: int) -> None:
     """Replay a recorded game from a JSON file.
 
     Navigate with arrow keys: ← previous, → next, q quit.
+    If a companion ``.diag.jsonl`` file is found next to *file* it is
+    loaded automatically and per-move diagnostics are overlaid.
     """
     from gomoku_cli.playback import run_playback
 
     record = load_record(file)
-    run_playback(record, from_move=from_move)
+    run_playback(record, from_move=from_move, diagnostics_path=_find_diagnostics(file))
+
+
+@cli.command()
+@click.argument("file", type=click.Path(exists=True, dir_okay=False, path_type=Path))
+@click.option(
+    "--json",
+    "as_json",
+    is_flag=True,
+    default=False,
+    help="Emit the analysis report as a single JSON document (for scripting).",
+)
+def analyze(file: Path, as_json: bool) -> None:
+    """Analyse a ``.diag.jsonl`` diagnostics file for blunders and perf issues."""
+    import json as _json
+
+    from gomoku_cli.analyze import analyze_diagnostics, render_report
+
+    report = analyze_diagnostics(file)
+    if as_json:
+        click.echo(_json.dumps(report.to_json(), indent=2, default=str))
+        return
+    render_report(report, console)
+
+
+def _find_diagnostics(record_path: Path) -> Path | None:
+    """Locate the companion ``.diag.jsonl`` file next to a ``.json`` recording.
+
+    Game recordings are named ``gomoku_YYYYMMDD_HHMMSS.json`` and their
+    diagnostics twin is ``gomoku_YYYYMMDD_HHMMSS.diag.jsonl`` in the same
+    directory.  We also try ``<stem>.diag.jsonl`` as a fallback when the
+    user uses a custom filename.
+    """
+    candidates: list[Path] = []
+    if record_path.suffix == ".json":
+        candidates.append(record_path.with_suffix(".diag.jsonl"))
+    stem = record_path.name.removesuffix(".json")
+    candidates.append(record_path.with_name(f"{stem}.diag.jsonl"))
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    return None
 
 
 def _load_settings(config_path: Path | None) -> GomokuSettings:
