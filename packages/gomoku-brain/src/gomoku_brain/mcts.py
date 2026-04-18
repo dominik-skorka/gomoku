@@ -12,11 +12,19 @@ Gomoku **without** neural networks.  Key ideas borrowed from the book
   standing in for the neural-network prior used in AGZ.
 * **Dirichlet noise** at the root ensures exploration breadth and
   prevents the search from developing blind spots (AGZ §14.4).
+  Skipped when a VCF safety gate has already restricted the root to a
+  handful of forced-defence candidates.
 * **Heuristic leaf evaluation** replaces random rollouts.  Instead of
   playing random moves to a terminal state, we score the leaf position
-  using the pattern table and map the net advantage through a sigmoid.
-  This eliminates the O(depth) rollout cost per iteration, giving a
-  ~30-60x speedup on sparse early-game boards.
+  with :func:`gomoku_brain.evaluate.evaluate_board` (shared with
+  alpha-beta) and map the net advantage through a sigmoid.  This
+  eliminates the O(depth) rollout cost per iteration and reuses the
+  single static evaluator across brains.
+
+The search operates on a mutable :class:`SearchState` with O(1)
+``make`` / ``unmake`` — each iteration walks down, optionally expands
+one child, evaluates, and walks back up — with no per-iteration grid
+or occupied-set copies.
 """
 
 from __future__ import annotations
@@ -25,158 +33,97 @@ import math
 import random as _random
 
 import logfire
+import numpy as np
 from gomoku.board import Board
 from gomoku.models import Move, Stone
 
 from gomoku_brain.candidates import get_candidate_moves
-from gomoku_brain.threat import _find_four_threats, _vcf
-
-# ---------------------------------------------------------------------------
-# Directions for win-checking / pattern scoring on raw grids
-# ---------------------------------------------------------------------------
-_DIRECTIONS = [(0, 1), (1, 0), (1, 1), (1, -1)]
+from gomoku_brain.search_state import SearchState
+from gomoku_brain.threat import classify_vcf_breakers, probe_immediate
 
 
 # ---------------------------------------------------------------------------
-# Lightweight helpers operating on raw int grids
+# Heuristic prior scoring (JIT-backed, with Python fallback)
 # ---------------------------------------------------------------------------
-
-
-def _fast_check_winner(
-    grid: list[list[int]],
-    size: int,
-    row: int,
-    col: int,
-    stone_val: int,
-    win_length: int,
-) -> bool:
-    """Check whether *stone_val* at (row, col) creates a winning line."""
-    for dr, dc in _DIRECTIONS:
-        count = 1
-        for sign in (1, -1):
-            r, c = row + dr * sign, col + dc * sign
-            while 0 <= r < size and 0 <= c < size and grid[r][c] == stone_val:
-                count += 1
-                r += dr * sign
-                c += dc * sign
-        if count >= win_length:
-            return True
-    return False
-
-
-def _find_winning_move(
-    grid: list[list[int]],
-    size: int,
-    candidates: list[tuple[int, int]],
-    stone_val: int,
-    win_length: int,
-) -> tuple[int, int] | None:
-    """Return a candidate that wins immediately, or None."""
-    for r, c in candidates:
-        grid[r][c] = stone_val
-        won = _fast_check_winner(grid, size, r, c, stone_val, win_length)
-        grid[r][c] = 0
-        if won:
-            return (r, c)
-    return None
-
-
-def _candidate_moves(
-    occupied: set[tuple[int, int]],
-    size: int,
-    radius: int = 2,
-) -> list[tuple[int, int]]:
-    """Empty cells within *radius* of any occupied cell (raw-grid version)."""
-    if not occupied:
-        center = size // 2
-        return [(center, center)]
-    cands: set[tuple[int, int]] = set()
-    for r, c in occupied:
-        for dr in range(-radius, radius + 1):
-            for dc in range(-radius, radius + 1):
-                nr, nc = r + dr, c + dc
-                if 0 <= nr < size and 0 <= nc < size and (nr, nc) not in occupied:
-                    cands.add((nr, nc))
-    return list(cands)
-
-
-# ---------------------------------------------------------------------------
-# Heuristic prior scoring on raw int grids
-# ---------------------------------------------------------------------------
-
-# (consecutive, open_ends) → raw score  (mirrors evaluate.py but works on
-# raw grids so we avoid constructing Board objects in the hot path).
-_PRIOR_PATTERN_SCORES: dict[tuple[int, int], float] = {
-    (4, 2): 10_000.0,  # live-4
-    (4, 1): 1_000.0,  # dead-4
-    (3, 2): 1_000.0,  # live-3
-    (3, 1): 100.0,  # dead-3
-    (2, 2): 100.0,  # live-2
-    (2, 1): 10.0,  # dead-2
-    (1, 2): 10.0,
-    (1, 1): 1.0,
-}
-
-
-def _score_move_prior(
-    grid: list[list[int]],
-    size: int,
-    row: int,
-    col: int,
-    stone_val: int,
-    opp_val: int,
-) -> float:
-    """Score how tactically promising placing *stone_val* at (row, col) is.
-
-    Considers both our own patterns (offensive) and opponent patterns we
-    would disrupt (defensive), weighted 1.0 and 0.8 respectively.
-    """
-    score = 1.0  # baseline so no move gets zero prior
-
-    for dr, dc in _DIRECTIONS:
-        # --- offensive: how many of *our* stones line up through (row,col)
-        count = 0
-        open_ends = 0
-        for sign in (1, -1):
-            r, c = row + dr * sign, col + dc * sign
-            while 0 <= r < size and 0 <= c < size and grid[r][c] == stone_val:
-                count += 1
-                r += dr * sign
-                c += dc * sign
-            if 0 <= r < size and 0 <= c < size and grid[r][c] == 0:
-                open_ends += 1
-        score += _PRIOR_PATTERN_SCORES.get((count, open_ends), 0.0)
-
-        # --- defensive: how many *opponent* stones line up through (row,col)
-        count = 0
-        open_ends = 0
-        for sign in (1, -1):
-            r, c = row + dr * sign, col + dc * sign
-            while 0 <= r < size and 0 <= c < size and grid[r][c] == opp_val:
-                count += 1
-                r += dr * sign
-                c += dc * sign
-            if 0 <= r < size and 0 <= c < size and grid[r][c] == 0:
-                open_ends += 1
-        score += 0.8 * _PRIOR_PATTERN_SCORES.get((count, open_ends), 0.0)
-
-    return score
 
 
 def _compute_priors(
-    grid: list[list[int]],
-    size: int,
+    state: SearchState,
     candidates: list[tuple[int, int]],
     stone_val: int,
     opp_val: int,
 ) -> list[float]:
-    """Return normalised prior probabilities for *candidates*."""
-    raw = [_score_move_prior(grid, size, r, c, stone_val, opp_val) for r, c in candidates]
+    """Return normalised MCTS prior probabilities for *candidates*.
+
+    Delegates to the Numba ``compute_priors_grid`` kernel on the JIT path;
+    falls back to a compact pure-Python scan otherwise.  The Python path
+    is only hit when JIT evaluation is disabled via
+    :class:`~gomoku.settings.GomokuSettings`.
+    """
+    if not candidates:
+        return []
+
+    from gomoku_brain.evaluate import _should_use_jit
+
+    if _should_use_jit():
+        from gomoku_brain.evaluate_jit import (
+            compute_priors_grid,
+            get_dirs,
+            get_pattern_table,
+        )
+
+        cand_arr = np.asarray(candidates, dtype=np.int32).reshape(-1, 2)
+        result = compute_priors_grid(
+            state.grid,
+            state.size,
+            cand_arr,
+            stone_val,
+            opp_val,
+            get_dirs(),
+            get_pattern_table(),
+        )
+        return [float(x) for x in result]
+
+    from gomoku_brain.directions import DIRECTIONS
+
+    size = state.size
+    grid = state.grid
+    raw = []
+    for row, col in candidates:
+        score = 1.0
+        for dr, dc in DIRECTIONS:
+            for scanned, weight in ((stone_val, 1.0), (opp_val, 0.8)):
+                count = 0
+                open_ends = 0
+                for sign in (1, -1):
+                    r, c = row + dr * sign, col + dc * sign
+                    while 0 <= r < size and 0 <= c < size and grid[r, c] == scanned:
+                        count += 1
+                        r += dr * sign
+                        c += dc * sign
+                    if 0 <= r < size and 0 <= c < size and grid[r, c] == 0:
+                        open_ends += 1
+                score += weight * _PY_PATTERN_SCORES.get((count, open_ends), 0.0)
+        raw.append(score)
     total = sum(raw)
     if total == 0:
         uniform = 1.0 / len(candidates)
         return [uniform] * len(candidates)
     return [s / total for s in raw]
+
+
+# Pure-Python fallback table — mirrors ``evaluate_jit._PATTERN_TABLE`` except
+# the hot JIT path uses the numpy table directly.
+_PY_PATTERN_SCORES: dict[tuple[int, int], float] = {
+    (4, 2): 10_000.0,
+    (4, 1): 1_000.0,
+    (3, 2): 1_000.0,
+    (3, 1): 100.0,
+    (2, 2): 100.0,
+    (2, 1): 10.0,
+    (1, 2): 10.0,
+    (1, 1): 1.0,
+}
 
 
 def _apply_dirichlet_noise(
@@ -188,8 +135,6 @@ def _apply_dirichlet_noise(
 
     ``new_prior = (1 - noise_weight) * prior + noise_weight * noise``
     """
-    # Use the Gamma-function trick to sample Dirichlet without numpy:
-    # Dir(alpha) ~ normalise(Gamma(alpha, 1) for each dim).
     noise = [_random.gammavariate(alpha, 1.0) for _ in priors]
     noise_total = sum(noise) or 1.0
     noise = [n / noise_total for n in noise]
@@ -197,55 +142,22 @@ def _apply_dirichlet_noise(
 
 
 # ---------------------------------------------------------------------------
-# Heuristic leaf evaluation (replaces random rollout)
+# Heuristic leaf value — sigmoid over the shared static evaluator
 # ---------------------------------------------------------------------------
 
 
-def _evaluate_position(
-    grid: list[list[int]],
-    size: int,
-    occupied: set[tuple[int, int]],
-    root_stone_val: int,
-) -> float:
-    """Heuristic board evaluation → value in [0, 1] for *root_stone_val*.
+def _leaf_value(state: SearchState, root_stone: Stone) -> float:
+    """Return a leaf value in [0, 1] from *root_stone*'s perspective.
 
-    Scans every consecutive-stone line on the board, scores patterns using
-    ``_PRIOR_PATTERN_SCORES``, and maps the net advantage through a sigmoid.
+    Uses the same :func:`gomoku_brain.evaluate.evaluate_board` as
+    alpha-beta — keeping MCTS and AB aligned on what a "good" position
+    means — and maps the signed heuristic score through a sigmoid.
+    ``k = 1000`` so a live-3 advantage (~1000 pts) maps to ~0.73.
     """
-    score = 0.0
-    for r, c in occupied:
-        sv = grid[r][c]
-        if sv == 0:
-            continue
-        for dr, dc in _DIRECTIONS:
-            # Only process lines starting at this cell (avoid double-counting)
-            pr, pc = r - dr, c - dc
-            if 0 <= pr < size and 0 <= pc < size and grid[pr][pc] == sv:
-                continue
+    from gomoku_brain.evaluate import evaluate_board
 
-            # Count consecutive stones in the positive direction
-            count = 1
-            nr, nc = r + dr, c + dc
-            while 0 <= nr < size and 0 <= nc < size and grid[nr][nc] == sv:
-                count += 1
-                nr += dr
-                nc += dc
-
-            # Count open ends
-            open_ends = 0
-            if 0 <= nr < size and 0 <= nc < size and grid[nr][nc] == 0:
-                open_ends += 1
-            if 0 <= pr < size and 0 <= pc < size and grid[pr][pc] == 0:
-                open_ends += 1
-
-            pattern_score = _PRIOR_PATTERN_SCORES.get((count, open_ends), 0.0)
-            if sv == root_stone_val:
-                score += pattern_score
-            else:
-                score -= 0.8 * pattern_score
-
-    # Sigmoid: k=1000 so a live-3 advantage (≈1000 pts) ≈ 0.73.
-    clamped = max(-10.0, min(10.0, score / 1000.0))
+    raw = evaluate_board(state, root_stone)
+    clamped = max(-10.0, min(10.0, raw / 1000.0))
     return 1.0 / (1.0 + math.exp(-clamped))
 
 
@@ -286,14 +198,11 @@ class _Node:
         self.wins: float = 0.0
         self.visits: int = 0
         self._untried = untried
-        # Per-move priors aligned with _untried; uniform if not supplied
         if untried_priors is not None:
             self._untried_priors = untried_priors
         else:
             n = len(untried)
             self._untried_priors = [1.0 / n] * n if n else []
-
-    # -- PUCT (Predictor + UCT) -----------------------------------------------
 
     def puct(self, exploration: float) -> float:
         """AGZ-style PUCT score: Q + c · P · √N / (n + 1)."""
@@ -301,12 +210,8 @@ class _Node:
         parent_visits = self.parent.visits if self.parent else 1
         return q + exploration * self.prior * math.sqrt(parent_visits) / (self.visits + 1)
 
-    # -- Selection -----------------------------------------------------------
-
     def best_child(self, exploration: float) -> _Node:
         return max(self.children, key=lambda c: c.puct(exploration))
-
-    # -- Expansion -----------------------------------------------------------
 
     def has_untried(self) -> bool:
         return len(self._untried) > 0
@@ -314,7 +219,6 @@ class _Node:
     def pop_untried(self) -> tuple[tuple[int, int], float]:
         """Remove and return a random untried move together with its prior."""
         idx = _random.randrange(len(self._untried))
-        # Swap-and-pop for O(1) removal (both lists in sync)
         self._untried[idx], self._untried[-1] = self._untried[-1], self._untried[idx]
         self._untried_priors[idx], self._untried_priors[-1] = (
             self._untried_priors[-1],
@@ -334,7 +238,7 @@ class _Node:
 
 
 class MCTSBrain:
-    """MoveProvider using Monte Carlo Tree Search with UCT."""
+    """MoveProvider using Monte Carlo Tree Search with PUCT."""
 
     def __init__(
         self,
@@ -377,91 +281,83 @@ class MCTSBrain:
                     diag.chosen_move = candidates[0]
                 return candidates[0]
 
-            # Convert to raw grid once — all MCTS work uses this
-            size = board.size
-            board_grid: list[list[int]] = [[int(board.grid[r][c]) for c in range(size)] for r in range(size)]
-            board_occupied: frozenset[tuple[int, int]] = frozenset(board.occupied)
-            stone_val = int(stone)
+            # One shared SearchState for the whole search — make/unmake
+            # threads it through every iteration without copying.
+            state = SearchState.from_board(board, stone)
 
-            # Instant-win check on raw grid (no Board.place_stone overhead)
-            for move in candidates:
-                r, c = move.row, move.col
-                board_grid[r][c] = stone_val
-                if _fast_check_winner(board_grid, size, r, c, stone_val, 5):
-                    board_grid[r][c] = 0
-                    if diag is not None:
-                        diag.decision_path = "instant_win"
-                        diag.chosen_move = move
-                    return move
-                board_grid[r][c] = 0
-
-            # Instant-block: if opponent wins in 1 ply, we must block
-            opp_val = int(stone.opponent())
-            raw_cands = [(m.row, m.col) for m in candidates]
-            opp_winning = _find_winning_move(board_grid, size, raw_cands, opp_val, 5)
-            if opp_winning is not None:
-                result_move = Move(row=opp_winning[0], col=opp_winning[1])
+            # Instant win / instant block shortcut, shared with the other brains.
+            shortcut_move, shortcut_tag = probe_immediate(state, stone)
+            if shortcut_move is not None:
                 if diag is not None:
-                    diag.decision_path = "instant_block"
-                    diag.chosen_move = result_move
-                return result_move
+                    diag.decision_path = shortcut_tag
+                    diag.chosen_move = shortcut_move
+                return shortcut_move
 
-            # VCF safety gate: if opponent has a proven forced win,
-            # restrict MCTS candidates to blocking cells only
+            # VCF safety gate: if the opponent has a proven forced VCF win,
+            # restrict the root candidate set to *durable* breakers (moves
+            # that don't hand the win back via a counter-threat).  Matches
+            # the semantics enforced in AlphaBeta and ThreatBrain via
+            # :func:`classify_vcf_breakers`.
             vcf_gated = False
             if self.vcf_depth > 0:
-                opp = stone.opponent()
-                vcf_move = _vcf(board, opp, self.vcf_depth, is_attacker=True)
-                if vcf_move is not None:
-                    opp_fours = _find_four_threats(board, opp)
-                    blocking: set[tuple[int, int]] = {(vcf_move.row, vcf_move.col)}
-                    for attack, defence in opp_fours:
-                        blocking.add((attack.row, attack.col))
-                        if defence is not None:
-                            blocking.add((defence.row, defence.col))
-                    restricted = [m for m in candidates if (m.row, m.col) in blocking]
+                from gomoku_brain.threat import _vcf
+
+                opp_vcf = _vcf(board, stone.opponent(), self.vcf_depth, is_attacker=True)
+                if opp_vcf is not None:
+                    durable, breakers = classify_vcf_breakers(
+                        board, candidates, stone, self.vcf_depth
+                    )
+                    restricted = durable if durable else breakers
                     if restricted:
                         logfire.info(
-                            "VCF safety gate: opponent has forced win, restricting to {n} blocking candidates",
+                            "VCF safety gate: opponent VCF at {vcf}, restricting to "
+                            "{n} breakers ({durable} durable)",
+                            vcf=str(opp_vcf),
                             n=len(restricted),
+                            durable=len(durable),
                         )
                         candidates = restricted
                         vcf_gated = True
-                    if diag is not None:
-                        diag.opp_threats = diag.opp_threats.model_copy(update={"vcf_result": "win"})
-                        diag.notes.append(
-                            f"Opponent VCF at {vcf_move}, restricted to {len(restricted)} blocking candidates"
-                            if vcf_gated
-                            else f"Opponent VCF at {vcf_move}, no blocking candidates found"
+                        note = (
+                            f"Opponent VCF at {opp_vcf}, restricted to "
+                            f"{len(restricted)} breakers ({len(durable)} durable)"
                         )
+                    else:
+                        note = f"Opponent VCF at {opp_vcf}, no breakers found"
+                    if diag is not None:
+                        diag.opp_threats = diag.opp_threats.model_copy(
+                            update={"vcf_result": "win"}
+                        )
+                        diag.notes.append(note)
+
+            stone_val = int(stone)
+            opp_val = int(stone.opponent())
 
             root_untried = [(m.row, m.col) for m in candidates]
-            root_priors = _compute_priors(
-                board_grid,
-                size,
-                root_untried,
-                stone_val,
-                opp_val,
-            )
-            # Dirichlet noise for exploration breadth (AGZ §14.4)
-            if self.dirichlet_alpha > 0 and self.dirichlet_weight > 0:
+            root_priors = _compute_priors(state, root_untried, stone_val, opp_val)
+
+            # Dirichlet noise for exploration breadth (AGZ §14.4).  Skipped
+            # on a VCF-gated root — the candidate set is tiny and every move
+            # is a near-mandatory defence, so uniform noise only dilutes the
+            # heuristic signal.
+            if not vcf_gated and self.dirichlet_alpha > 0 and self.dirichlet_weight > 0:
                 root_priors = _apply_dirichlet_noise(
                     root_priors,
                     self.dirichlet_alpha,
                     self.dirichlet_weight,
                 )
+
             root = _Node(
                 move=None,
-                stone=stone.opponent(),  # "opponent placed last" to reach root
+                stone=stone.opponent(),
                 parent=None,
                 untried=root_untried,
                 untried_priors=root_priors,
             )
 
             for _ in range(self.iterations):
-                self._run_iteration(root, board_grid, board_occupied, size, stone)
+                self._run_iteration(root, state, stone)
 
-            # Choose the child with the most visits (most robust choice)
             best = max(root.children, key=lambda c: c.visits)
             assert best.move is not None
             br, bc = best.move
@@ -479,14 +375,17 @@ class MCTSBrain:
                 from gomoku.diagnostics import CandidateInfo, SearchStats
 
                 search_ms = int((_time.monotonic() - _t0) * 1000)
-                diag.decision_path = diag.decision_path or ("mcts_vcf_gated" if vcf_gated else "mcts")
+                diag.decision_path = diag.decision_path or (
+                    "mcts_vcf_gated" if vcf_gated else "mcts"
+                )
                 diag.chosen_move = chosen
                 diag.search_stats = SearchStats(
                     iterations=self.iterations,
                     time_ms=search_ms,
                 )
-                # Top children by visits (most informative for MCTS).
-                children_sorted = sorted(root.children, key=lambda c: c.visits, reverse=True)
+                children_sorted = sorted(
+                    root.children, key=lambda c: c.visits, reverse=True
+                )
                 diag.top_candidates = [
                     CandidateInfo(
                         move=Move(row=c.move[0], col=c.move[1]),
@@ -495,86 +394,120 @@ class MCTSBrain:
                     for c in children_sorted[:10]
                 ]
                 diag.notes.append(
-                    f"Best: {chosen} visits={best.visits}/{root.visits} wr={best.wins / best.visits:.1%}"
+                    f"Best: {chosen} visits={best.visits}/{root.visits} "
+                    f"wr={best.wins / best.visits:.1%}"
                     if best.visits
                     else f"Best: {chosen} visits=0"
                 )
 
             return chosen
 
-    # -- Core MCTS loop (operates entirely on raw int grids) -----------------
+    # -- Core MCTS loop (operates entirely on one SearchState) ---------------
 
     def _run_iteration(
         self,
         root: _Node,
-        board_grid: list[list[int]],
-        board_occupied: frozenset[tuple[int, int]],
-        size: int,
+        state: SearchState,
         root_stone: Stone,
     ) -> None:
-        # Fresh mutable grid copy for this iteration (row[:] is ~50x faster
-        # than copy.deepcopy used by Board.place_stone)
-        grid = [row[:] for row in board_grid]
-        occupied = set(board_occupied)
+        """One select-expand-evaluate-backpropagate iteration.
 
+        The shared ``state`` is mutated via ``make`` while descending and
+        restored via ``unmake`` on the way back out, so every iteration
+        starts and ends on the same position with zero allocations on the
+        hot path.
+        """
         node = root
+        depth = 0
 
-        # 1. Selection — descend using UCB1, applying moves on the raw grid
+        # 1. Selection — descend using PUCT, replaying moves into state.
         while not node.has_untried() and not node.is_leaf():
             node = node.best_child(self.exploration)
             r, c = node.move  # type: ignore[misc]
-            grid[r][c] = int(node.stone)
-            occupied.add((r, c))
+            state.make(r, c, node.stone)
+            depth += 1
 
-        # 2. Expansion — add one child
+        # 2. Expansion — add one child.
         if node.has_untried():
             move_rc, move_prior = node.pop_untried()
-            child_stone = root_stone if node.stone is not root_stone else root_stone.opponent()
+            child_stone = (
+                root_stone if node.stone is not root_stone else root_stone.opponent()
+            )
             r, c = move_rc
-            sv = int(child_stone)
-            grid[r][c] = sv
-            occupied.add((r, c))
+            state.make(r, c, child_stone)
+            depth += 1
 
-            child_candidates = _candidate_moves(occupied, size)
-            child_opp_val = int(child_stone.opponent())
+            child_moves = get_candidate_moves(state, radius=2)
+            child_untried = [(m.row, m.col) for m in child_moves]
             child_priors = _compute_priors(
-                grid,
-                size,
-                child_candidates,
-                child_opp_val,
-                sv,
+                state,
+                child_untried,
+                int(child_stone.opponent()),
+                int(child_stone),
             )
             child = _Node(
                 move=move_rc,
                 stone=child_stone,
                 parent=node,
-                untried=child_candidates,
+                untried=child_untried,
                 prior=move_prior,
                 untried_priors=child_priors,
             )
             node.children.append(child)
             node = child
 
-            # Check if the expansion move wins immediately
-            if _fast_check_winner(grid, size, r, c, sv, 5):
-                value = 1.0 if child_stone is root_stone else 0.0
-                self._backpropagate(node, value, root_stone)
+            # Terminal check at the expansion ply.
+            terminal_value = self._terminal_value(state, r, c, child_stone, root_stone)
+            if terminal_value is not None:
+                self._backpropagate(node, terminal_value, root_stone)
+                self._restore(state, depth)
                 return
 
-            # Decisive move: if opponent can win immediately, treat as loss
-            opp_sv = int(child_stone.opponent())
-            if _find_winning_move(grid, size, child_candidates, opp_sv, 5) is not None:
-                value = 0.0 if child_stone is root_stone else 1.0
-                self._backpropagate(node, value, root_stone)
-                return
+        # 3. Heuristic leaf evaluation (replaces random rollout).
+        value = _leaf_value(state, root_stone)
 
-        # 3. Heuristic leaf evaluation (replaces random rollout)
-        value = _evaluate_position(grid, size, occupied, int(root_stone))
-
-        # 4. Backpropagation
+        # 4. Backpropagation + restore the shared state to the root position.
         self._backpropagate(node, value, root_stone)
+        self._restore(state, depth)
 
-    # -- Backpropagation -----------------------------------------------------
+    @staticmethod
+    def _restore(state: SearchState, depth: int) -> None:
+        """Pop *depth* ``make`` records off ``state``'s undo stack."""
+        for _ in range(depth):
+            state.unmake()
+
+    @staticmethod
+    def _terminal_value(
+        state: SearchState,
+        row: int,
+        col: int,
+        mover: Stone,
+        root_stone: Stone,
+    ) -> float | None:
+        """Return a terminal value in [0, 1] (from *root_stone*'s perspective).
+
+        * *mover* just placed at (row, col).  If that move wins, return 1.0
+          for root_stone or 0.0 otherwise.
+        * If the *opponent* of *mover* can win immediately on the next ply,
+          the position is a decisive loss for *mover* (who has no time to
+          respond) — report that value.
+        * Otherwise return ``None`` (non-terminal leaf).
+        """
+        from gomoku_brain.evaluate import _should_use_jit
+        from gomoku_brain.threat import _find_winning_move
+
+        if _should_use_jit():
+            from gomoku_brain.evaluate_jit import check_winner_grid, get_dirs
+
+            if check_winner_grid(state.grid, state.size, row, col, 5, get_dirs()):
+                return 1.0 if mover is root_stone else 0.0
+        elif _fast_check_winner_state(state, row, col, mover):
+            return 1.0 if mover is root_stone else 0.0
+
+        opp = mover.opponent()
+        if _find_winning_move(state, opp) is not None:
+            return 0.0 if mover is root_stone else 1.0
+        return None
 
     @staticmethod
     def _backpropagate(node: _Node, value: float, root_stone: Stone) -> None:
@@ -590,3 +523,28 @@ class MCTSBrain:
             else:
                 n.wins += 1.0 - value
             n = n.parent
+
+
+# ---------------------------------------------------------------------------
+# Non-JIT fallback win detector (used by ``_terminal_value``)
+# ---------------------------------------------------------------------------
+
+
+def _fast_check_winner_state(state: SearchState, row: int, col: int, mover: Stone) -> bool:
+    """Pure-Python 5-in-a-row check for the JIT-disabled path."""
+    from gomoku_brain.directions import DIRECTIONS
+
+    size = state.size
+    stone_val = int(mover)
+    grid = state.grid
+    for dr, dc in DIRECTIONS:
+        count = 1
+        for sign in (1, -1):
+            r, c = row + dr * sign, col + dc * sign
+            while 0 <= r < size and 0 <= c < size and grid[r, c] == stone_val:
+                count += 1
+                r += dr * sign
+                c += dc * sign
+        if count >= 5:
+            return True
+    return False
