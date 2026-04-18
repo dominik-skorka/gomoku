@@ -15,13 +15,12 @@ import random
 import pytest
 from gomoku.board import Board
 from gomoku.models import Move, Stone
-
 from gomoku_brain.zobrist import (
-    BoundType,
+    _TABLE,
     SIDE_KEY,
+    BoundType,
     TranspositionTable,
     TTEntry,
-    _TABLE,
     _stone_index,
     hash_board,
     incremental_hash,
@@ -184,6 +183,27 @@ class TestTranspositionTable:
         # Re-storing the same key (with equal depth) doesn't grow the table.
         tt.store(1, 1, 0.0, BoundType.EXACT, None)
         assert len(tt) == 3
+
+    def test_hit_counters_start_zero(self):
+        tt = TranspositionTable()
+        assert tt.hits == 0
+        assert tt.probes == 0
+
+    def test_probe_counts_hits_and_probes(self):
+        """``probe`` must increment ``probes`` always and ``hits`` only on match."""
+        tt = TranspositionTable()
+        tt.store(1, 1, 0.0, BoundType.EXACT, None)
+        tt.probe(1)  # hit
+        tt.probe(2)  # miss
+        tt.probe(1)  # hit
+        assert tt.probes == 3
+        assert tt.hits == 2
+
+    def test_store_does_not_affect_counters(self):
+        tt = TranspositionTable()
+        tt.store(1, 1, 0.0, BoundType.EXACT, None)
+        tt.store(2, 1, 0.0, BoundType.EXACT, None)
+        assert tt.probes == 0 and tt.hits == 0
 
 
 class TestBoundType:

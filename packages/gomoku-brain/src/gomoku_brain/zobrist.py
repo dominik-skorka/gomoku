@@ -75,14 +75,19 @@ class TTEntry(NamedTuple):
 class TranspositionTable:
     """Simple dict-based transposition table with depth-preferred replacement."""
 
-    __slots__ = ("_table",)
+    __slots__ = ("_table", "hits", "probes")
 
     def __init__(self) -> None:
         self._table: dict[int, TTEntry] = {}
+        # Lightweight counters for diagnostics; they never affect search behaviour.
+        self.hits: int = 0
+        self.probes: int = 0
 
     def probe(self, key: int) -> TTEntry | None:
+        self.probes += 1
         entry = self._table.get(key)
         if entry is not None and entry.key == key:
+            self.hits += 1
             return entry
         return None
 
