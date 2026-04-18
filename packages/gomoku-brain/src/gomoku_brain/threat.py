@@ -15,6 +15,7 @@ from gomoku.models import Move, Stone
 
 from gomoku_brain.alphabeta import AlphaBetaBrain
 from gomoku_brain.candidates import get_candidate_moves
+from gomoku_brain.directions import DIRECTIONS as _DIRECTIONS
 from gomoku_brain.search_state import SearchState
 
 # Cache entry: (proven, depth_searched, attack_move)
@@ -24,12 +25,6 @@ from gomoku_brain.search_state import SearchState
 #                   Valid whenever the query depth is <= depth_searched.
 _CacheEntry = tuple[bool, int, "Move | None"]
 _ThreatCache = dict[int, _CacheEntry]
-
-# ---------------------------------------------------------------------------
-# Direction vectors (horizontal, vertical, two diagonals)
-# ---------------------------------------------------------------------------
-_DIRECTIONS = [(0, 1), (1, 0), (1, 1), (1, -1)]
-
 
 # ---------------------------------------------------------------------------
 # Threat detection helpers
@@ -268,6 +263,32 @@ def _find_winning_move(board: Board, stone: Stone) -> Move | None:
             if count >= 5:
                 return move
     return None
+
+
+def probe_immediate(board: Board, stone: Stone) -> tuple[Move | None, str | None]:
+    """Return ``(move, tag)`` for a pre-search tactical shortcut.
+
+    * ``(move, "instant_win")`` — ``stone`` has a move completing
+      five-in-a-row.
+    * ``(move, "instant_block")`` — the opponent has such a move; the
+      returned cell is the block.
+    * ``(None, None)`` — no immediate tactic; the caller should run its
+      full search.
+
+    Shared between :class:`AlphaBetaBrain`, :class:`ThreatBrain`, and
+    :class:`MCTSBrain` so the three brains agree on which shortcut they
+    take and what ``decision_path`` tag they emit.  Accepts any
+    board-like object that is compatible with
+    :func:`_find_winning_move` (Pydantic :class:`Board` or
+    :class:`SearchState`).
+    """
+    ours = _find_winning_move(board, stone)
+    if ours is not None:
+        return ours, "instant_win"
+    opp = _find_winning_move(board, stone.opponent())
+    if opp is not None:
+        return opp, "instant_block"
+    return None, None
 
 
 # ---------------------------------------------------------------------------

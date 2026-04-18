@@ -5,6 +5,8 @@ from __future__ import annotations
 from gomoku.board import Board
 from gomoku.models import Move, Stone
 
+from gomoku_brain.directions import DIRECTIONS as _DIRECTIONS
+
 # Pattern scores: (count, open_ends) -> score
 # open_ends: 2 = both ends open, 1 = one end open, 0 = blocked both
 _PATTERN_SCORES: dict[tuple[int, int], int] = {
@@ -38,7 +40,6 @@ _OPEN_THREE_BONUS = 1_500
 # be mistaken for a proven win/loss.
 _EVAL_CLAMP = 99_000
 
-_DIRECTIONS = [(0, 1), (1, 0), (1, 1), (1, -1)]
 
 
 def _score_direction(board: Board, row: int, col: int, dr: int, dc: int, stone: Stone) -> int:
