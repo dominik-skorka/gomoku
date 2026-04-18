@@ -275,7 +275,7 @@ function PNS(board, attacker, max_nodes):
 
 - **Path-based backpropagation**: Only nodes on the selection path are updated
   after each expansion — O(depth) per iteration instead of O(tree_size).
-- **No-copy immediate-win check** (`_can_win_immediately`): Counts neighbours
+- **No-copy immediate-win check** (`_find_winning_move`): Counts neighbours
   in-place instead of deep-copying the board per candidate (~100× faster).
 - **Smart defence moves**: AND nodes expand blocks + counter-threats (~15 moves)
   instead of all candidates (~100+), keeping the tree tractable.

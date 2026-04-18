@@ -41,12 +41,12 @@ class SearchState:
     """
 
     __slots__ = (
-        "_grid",
         "_occ",
         "_undo_col",
         "_undo_row",
         "_undo_stone",
         "black",
+        "grid",
         "occ_count",
         "ply",
         "size",
@@ -62,6 +62,7 @@ class SearchState:
         zobrist: int,
         occ_count: int,
         max_ply: int | None = None,
+        grid: NDArray[np.int8] | None = None,
     ) -> None:
         self.size = size
         self.black = black
@@ -77,11 +78,16 @@ class SearchState:
         self._undo_row = np.empty(cap, dtype=np.int32)
         self._undo_col = np.empty(cap, dtype=np.int32)
         self._undo_stone = np.empty(cap, dtype=np.int8)
-        # Lazy caches — both invalidated by make/unmake.  Unused on the pure
-        # bitboard path (which consumes .black/.white directly), but keeps
-        # the grid-JIT path fast when bitboard mode is disabled.
+        # Eager int8 grid mirror — maintained O(1) per make/unmake so the
+        # grid-JIT path (bitboard mode off) doesn't pay an O(size*size)
+        # bitboard→grid conversion per node.
+        if grid is None:
+            from gomoku_brain.bitboard_jit import bitboard_to_grid
+
+            grid = bitboard_to_grid(black, white, size)
+        self.grid = grid
+        # Lazy set cache — off the hot path, invalidated on make/unmake.
         self._occ: set[tuple[int, int]] | None = None
-        self._grid = None
 
     # ------------------------------------------------------------------
     # Construction
@@ -156,6 +162,8 @@ class SearchState:
             self.black[row] |= bit
         else:
             self.white[row] |= bit
+        # Mirror into the int8 grid.
+        self.grid[row, col] = stone_int
         # Push undo.
         p = self.ply
         self._undo_row[p] = row
@@ -164,7 +172,6 @@ class SearchState:
         self.ply = p + 1
         self.occ_count += 1
         self._occ = None
-        self._grid = None
 
     def unmake(self) -> None:
         """Undo the most recent :meth:`make`.
@@ -181,13 +188,14 @@ class SearchState:
             self.black[row] &= bit_mask
         else:
             self.white[row] &= bit_mask
+        # Clear the grid cell too.
+        self.grid[row, col] = 0
         # Reverse the zobrist update — XOR is its own inverse.
         self.zobrist ^= _TABLE[row][col][stone_int - 1]
         self.zobrist ^= SIDE_KEY
         self.ply = p
         self.occ_count -= 1
         self._occ = None
-        self._grid = None
 
     # ------------------------------------------------------------------
     # Read-only accessors
@@ -218,21 +226,6 @@ class SearchState:
             arr = occupied_from_bb(self.black, self.white, self.size)
             self._occ = {(int(arr[i, 0]), int(arr[i, 1])) for i in range(arr.shape[0])}
         return self._occ
-
-    @property
-    def grid(self):
-        """Return an int8[size, size] grid view — duck-type for BitboardState.
-
-        Cached per node (invalidated by make/unmake), so repeated calls from
-        different helpers at the same search node reuse the same array.
-        JIT helpers that go through ``board_to_bitboard`` never hit this path
-        since ``grid_utils`` reads ``.black``/``.white`` directly.
-        """
-        if self._grid is None:
-            from gomoku_brain.bitboard_jit import bitboard_to_grid
-
-            self._grid = bitboard_to_grid(self.black, self.white, self.size)
-        return self._grid
 
     def last_move(self) -> tuple[int, int, Stone] | None:
         """Return the most recent move on the undo stack, or ``None`` at root."""

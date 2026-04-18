@@ -389,6 +389,49 @@ def get_candidates_grid(
 
 
 @njit(cache=True)
+def find_winning_move_grid(
+    grid: NDArray,  # type: ignore[type-arg]
+    size: int,
+    candidates: NDArray,  # type: ignore[type-arg]
+    stone: int,
+    dirs: NDArray,  # type: ignore[type-arg]
+) -> NDArray:  # type: ignore[type-arg]
+    """Return a ``(row, col)`` that completes 5-in-a-row for *stone*, or
+    an empty ``(0, 2)`` array if none exists.
+
+    Scans the directional neighbours of each candidate cell in place.
+    Mirrors the pure-Python ``_find_winning_move`` but uses the int8
+    grid for speed.
+    """
+    out = np.empty((1, 2), dtype=np.int32)
+    n = candidates.shape[0]
+    for i in range(n):
+        r = candidates[i, 0]
+        c = candidates[i, 1]
+        for d in range(dirs.shape[0]):
+            dr = dirs[d, 0]
+            dc = dirs[d, 1]
+            count = 1  # the stone we would place
+            nr = r + dr
+            nc = c + dc
+            while 0 <= nr < size and 0 <= nc < size and grid[nr, nc] == stone:
+                count += 1
+                nr += dr
+                nc += dc
+            nr = r - dr
+            nc = c - dc
+            while 0 <= nr < size and 0 <= nc < size and grid[nr, nc] == stone:
+                count += 1
+                nr -= dr
+                nc -= dc
+            if count >= 5:
+                out[0, 0] = r
+                out[0, 1] = c
+                return out
+    return np.empty((0, 2), dtype=np.int32)
+
+
+@njit(cache=True)
 def is_four_threat(
     grid: NDArray,  # type: ignore[type-arg]
     size: int,
@@ -449,6 +492,191 @@ def get_threat_moves_grid(
             buf[count, 1] = c
             count += 1
     return buf[:count].copy()
+
+
+@njit(cache=True)
+def find_four_threats_grid(
+    grid: NDArray,  # type: ignore[type-arg]
+    size: int,
+    candidates: NDArray,  # type: ignore[type-arg]
+    stone: int,
+    dirs: NDArray,  # type: ignore[type-arg]
+) -> NDArray:  # type: ignore[type-arg]
+    """Find four-threat moves for *stone* across *candidates*.
+
+    Returns an int32[K, 4] array; each row is ``(atk_r, atk_c, def_r, def_c)``.
+    ``def_r == -1`` (and ``def_c == -1``) means the threat is unblockable
+    (live-four, five, or a double-four from the same cell).
+
+    Mirrors the per-direction scan + per-move aggregation logic in
+    ``gomoku_brain.threat._find_four_threats``.  See that docstring for
+    classification rules.
+    """
+    n = candidates.shape[0]
+    # Per-cell aggregation.  A move can produce several (direction-specific)
+    # fours; if any is unblockable, the overall threat is unblockable; if
+    # two or more distinct dead-fours fire from the same cell, it is also
+    # effectively unblockable (double-four).
+    unblockable = np.zeros((size, size), dtype=np.bool_)
+    def_count = np.zeros((size, size), dtype=np.int32)
+    def_r = np.full((size, size), -1, dtype=np.int32)
+    def_c = np.full((size, size), -1, dtype=np.int32)
+
+    for i in range(n):
+        r = candidates[i, 0]
+        c = candidates[i, 1]
+        for d in range(dirs.shape[0]):
+            dr = dirs[d, 0]
+            dc = dirs[d, 1]
+            count = 0
+            pos_end_r = -1
+            pos_end_c = -1
+            neg_end_r = -1
+            neg_end_c = -1
+
+            # Positive direction
+            rr = r + dr
+            cc = c + dc
+            while 0 <= rr < size and 0 <= cc < size and grid[rr, cc] == stone:
+                count += 1
+                rr += dr
+                cc += dc
+            if 0 <= rr < size and 0 <= cc < size and grid[rr, cc] == 0:
+                pos_end_r = rr
+                pos_end_c = cc
+
+            # Negative direction
+            rr = r - dr
+            cc = c - dc
+            while 0 <= rr < size and 0 <= cc < size and grid[rr, cc] == stone:
+                count += 1
+                rr -= dr
+                cc -= dc
+            if 0 <= rr < size and 0 <= cc < size and grid[rr, cc] == 0:
+                neg_end_r = rr
+                neg_end_c = cc
+
+            open_ends = 0
+            if pos_end_r >= 0:
+                open_ends += 1
+            if neg_end_r >= 0:
+                open_ends += 1
+
+            total = count + 1
+
+            if total == 5:
+                unblockable[r, c] = True
+            elif total == 4 and open_ends == 2:
+                unblockable[r, c] = True
+            elif total == 4 and open_ends == 1:
+                if pos_end_r >= 0:
+                    dr_end = pos_end_r
+                    dc_end = pos_end_c
+                else:
+                    dr_end = neg_end_r
+                    dc_end = neg_end_c
+                def_count[r, c] += 1
+                def_r[r, c] = dr_end
+                def_c[r, c] = dc_end
+
+    # Emit one row per candidate that produced any threat.  Iterate the
+    # candidate list in order to preserve the caller's expected ordering.
+    out = np.empty((n, 4), dtype=np.int32)
+    out_count = 0
+    for i in range(n):
+        r = candidates[i, 0]
+        c = candidates[i, 1]
+        if unblockable[r, c] or def_count[r, c] >= 2:
+            out[out_count, 0] = r
+            out[out_count, 1] = c
+            out[out_count, 2] = -1
+            out[out_count, 3] = -1
+            out_count += 1
+        elif def_count[r, c] == 1:
+            out[out_count, 0] = r
+            out[out_count, 1] = c
+            out[out_count, 2] = def_r[r, c]
+            out[out_count, 3] = def_c[r, c]
+            out_count += 1
+    return out[:out_count].copy()
+
+
+@njit(cache=True)
+def find_three_threats_grid(
+    grid: NDArray,  # type: ignore[type-arg]
+    size: int,
+    candidates: NDArray,  # type: ignore[type-arg]
+    stone: int,
+    dirs: NDArray,  # type: ignore[type-arg]
+) -> NDArray:  # type: ignore[type-arg]
+    """Find live-three threats for *stone* across *candidates*.
+
+    Returns an int32[K, 6] array; each row is
+    ``(atk_r, atk_c, def1_r, def1_c, def2_r, def2_c)`` — the two open-end
+    defence cells of the live three.
+
+    One entry per ``(candidate, direction)`` pair that forms a live three.
+    The same candidate may appear multiple times for different directions,
+    matching the pure-Python implementation.
+    """
+    n = candidates.shape[0]
+    # Upper bound: n candidates × 4 directions.
+    out = np.empty((n * 4, 6), dtype=np.int32)
+    out_count = 0
+
+    for i in range(n):
+        r = candidates[i, 0]
+        c = candidates[i, 1]
+        for d in range(dirs.shape[0]):
+            dr = dirs[d, 0]
+            dc = dirs[d, 1]
+            count = 0
+            pos_end_r = -1
+            pos_end_c = -1
+            neg_end_r = -1
+            neg_end_c = -1
+
+            # Positive direction
+            rr = r + dr
+            cc = c + dc
+            while 0 <= rr < size and 0 <= cc < size and grid[rr, cc] == stone:
+                count += 1
+                rr += dr
+                cc += dc
+            if 0 <= rr < size and 0 <= cc < size and grid[rr, cc] == 0:
+                pos_end_r = rr
+                pos_end_c = cc
+
+            # Negative direction
+            rr = r - dr
+            cc = c - dc
+            while 0 <= rr < size and 0 <= cc < size and grid[rr, cc] == stone:
+                count += 1
+                rr -= dr
+                cc -= dc
+            if 0 <= rr < size and 0 <= cc < size and grid[rr, cc] == 0:
+                neg_end_r = rr
+                neg_end_c = cc
+
+            open_ends = 0
+            if pos_end_r >= 0:
+                open_ends += 1
+            if neg_end_r >= 0:
+                open_ends += 1
+
+            total = count + 1
+            if total == 3 and open_ends == 2:
+                out[out_count, 0] = r
+                out[out_count, 1] = c
+                # Match the Python order: positive-sign end first, then
+                # negative-sign end.
+                out[out_count, 2] = pos_end_r
+                out[out_count, 3] = pos_end_c
+                out[out_count, 4] = neg_end_r
+                out[out_count, 5] = neg_end_c
+                out_count += 1
+
+    return out[:out_count].copy()
 
 
 # ---------------------------------------------------------------------------
