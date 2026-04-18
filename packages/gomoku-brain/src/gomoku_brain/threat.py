@@ -68,29 +68,12 @@ def _line_cells(
     return count, open_ends, end_cells
 
 
-def _find_four_threats(board: Board, stone: Stone) -> list[tuple[Move, Move | None]]:
-    """Find all moves that create a four-in-a-row for ``stone``.
+def _find_four_threats_python(board: Board, stone: Stone) -> list[tuple[Move, Move | None]]:
+    """Pure-Python fallback for :func:`_find_four_threats`.
 
-    Returns a list of ``(attack_move, defence_move | None)``.
-    ``defence_move`` is the single cell the opponent *must* play to block, or
-    ``None`` when the four is a *double-four* (two open ends → unblockable,
-    i.e. immediate win).
-
-    Detects:
-    - Straight fours: placing a stone extends three-in-a-row to four.
-    - Gap fours: placing a stone fills a gap inside a would-be five
-      (e.g. XX_XX pattern).
+    Kept for boards that aren't routed through the JIT path (tests that
+    instantiate Pydantic ``Board`` directly with JIT disabled).
     """
-    # Per-move aggregation: a single move can generate multiple four-threats
-    # across different directions.  If it produces an unblockable (five or
-    # live-four) in any direction, it's unblockable overall.  If it produces
-    # two or more distinct dead-fours, the defender can only block one — it's
-    # effectively unblockable (classic double-four).
-    #
-    # ``_line_cells`` scans outward from (r, c) and never reads the centre,
-    # so it is invariant to whether the stone has actually been placed there
-    # — the pre-move board gives the same answer and saves one full board
-    # copy per candidate.
     by_move: dict[tuple[int, int], tuple[Move, list[Move | None]]] = {}
     candidates = get_candidate_moves(board, radius=2)
 
@@ -121,11 +104,72 @@ def _find_four_threats(board: Board, stone: Stone) -> list[tuple[Move, Move | No
         if any(d is None for d in defences):
             threats.append((move, None))
         elif len(defences) >= 2:
-            # Two or more dead-fours from the same cell — opponent can only
-            # block one, so this is effectively unblockable.
             threats.append((move, None))
         else:
             threats.append((move, defences[0]))
+    return threats
+
+
+def _find_four_threats(board: Board, stone: Stone) -> list[tuple[Move, Move | None]]:
+    """Find all moves that create a four-in-a-row for ``stone``.
+
+    Returns a list of ``(attack_move, defence_move | None)``.
+    ``defence_move`` is the single cell the opponent *must* play to block, or
+    ``None`` when the four is a *double-four* (two open ends → unblockable,
+    i.e. immediate win).
+
+    Detects:
+    - Straight fours: placing a stone extends three-in-a-row to four.
+    - Gap fours: placing a stone fills a gap inside a would-be five
+      (e.g. XX_XX pattern).
+
+    Dispatches to a Numba JIT kernel when available; pure-Python fallback
+    is kept for the JIT-disabled path.  ``_line_cells`` scans outward from
+    ``(r, c)`` and never reads the centre, so it is invariant to whether
+    the stone has actually been placed there — we save the per-candidate
+    board copy.
+    """
+    from gomoku_brain.evaluate import _should_use_jit
+
+    if _should_use_jit():
+        from gomoku_brain.evaluate_jit import find_four_threats_grid, get_dirs
+        from gomoku_brain.grid_utils import board_to_grid, occupied_coords
+
+        occ = occupied_coords(board)
+        if occ.shape[0] == 0:
+            return []
+
+        from gomoku_brain.evaluate_jit import get_candidates_grid
+
+        grid = board_to_grid(board)
+        candidates = get_candidates_grid(grid, board.size, occ, 2)
+        result = find_four_threats_grid(grid, board.size, candidates, int(stone), get_dirs())
+        threats: list[tuple[Move, Move | None]] = []
+        for i in range(result.shape[0]):
+            atk = Move(row=int(result[i, 0]), col=int(result[i, 1]))
+            dr_end = int(result[i, 2])
+            if dr_end < 0:
+                threats.append((atk, None))
+            else:
+                threats.append((atk, Move(row=dr_end, col=int(result[i, 3]))))
+        return threats
+
+    return _find_four_threats_python(board, stone)
+
+
+def _find_three_threats_python(board: Board, stone: Stone) -> list[tuple[Move, list[Move]]]:
+    """Pure-Python fallback for :func:`_find_three_threats`."""
+    threats: list[tuple[Move, list[Move]]] = []
+    candidates = get_candidate_moves(board, radius=2)
+
+    for move in candidates:
+        r, c = move.row, move.col
+        for dr, dc in _DIRECTIONS:
+            count, open_ends, end_cells = _line_cells(board, r, c, dr, dc, stone)
+            total = count + 1
+            if total == 3 and open_ends == 2:
+                defence = [Move(row=er, col=ec) for er, ec in end_cells]
+                threats.append((move, defence))
     return threats
 
 
@@ -135,25 +179,35 @@ def _find_three_threats(board: Board, stone: Stone) -> list[tuple[Move, list[Mov
     Returns ``(attack_move, defence_moves)`` — the defence moves are the cells
     the opponent could play to neutralise the threat (the two open ends plus
     any adjacent cells that break the line).
+
+    Dispatches to a Numba JIT kernel when available.  The JIT path returns
+    one entry per ``(candidate, direction)`` pair, matching the pure-Python
+    behaviour (callers dedupe by attack cell if needed).
     """
-    # See _find_four_threats: _line_cells is invariant to whether the
-    # hypothetical stone has been placed at (r, c), so we avoid the
-    # per-candidate board copy.
-    threats: list[tuple[Move, list[Move]]] = []
-    candidates = get_candidate_moves(board, radius=2)
+    from gomoku_brain.evaluate import _should_use_jit
 
-    for move in candidates:
-        r, c = move.row, move.col
-        for dr, dc in _DIRECTIONS:
-            count, open_ends, end_cells = _line_cells(board, r, c, dr, dc, stone)
-            total = count + 1
+    if _should_use_jit():
+        from gomoku_brain.evaluate_jit import find_three_threats_grid, get_candidates_grid, get_dirs
+        from gomoku_brain.grid_utils import board_to_grid, occupied_coords
 
-            if total == 3 and open_ends == 2:
-                # Live three — both ends open ⇒ two natural defence cells
-                defence = [Move(row=er, col=ec) for er, ec in end_cells]
-                threats.append((move, defence))
+        occ = occupied_coords(board)
+        if occ.shape[0] == 0:
+            return []
 
-    return threats
+        grid = board_to_grid(board)
+        candidates = get_candidates_grid(grid, board.size, occ, 2)
+        result = find_three_threats_grid(grid, board.size, candidates, int(stone), get_dirs())
+        threats: list[tuple[Move, list[Move]]] = []
+        for i in range(result.shape[0]):
+            atk = Move(row=int(result[i, 0]), col=int(result[i, 1]))
+            defence = [
+                Move(row=int(result[i, 2]), col=int(result[i, 3])),
+                Move(row=int(result[i, 4]), col=int(result[i, 5])),
+            ]
+            threats.append((atk, defence))
+        return threats
+
+    return _find_three_threats_python(board, stone)
 
 
 def _find_winning_move(board: Board, stone: Stone) -> Move | None:
