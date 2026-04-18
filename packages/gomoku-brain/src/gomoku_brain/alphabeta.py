@@ -520,7 +520,7 @@ class AlphaBetaBrain:
         """
         from gomoku.diagnostics import current_move_diagnostics
 
-        from gomoku_brain.threat import _find_four_threats, _find_winning_move, _vcf
+        from gomoku_brain.threat import _find_winning_move, _vcf, classify_vcf_breakers
 
         diag = current_move_diagnostics()
 
@@ -555,11 +555,7 @@ class AlphaBetaBrain:
             diag.notes.append(f"Opponent VCF at {opp_vcf}, searching breakers")
 
         candidates = get_candidate_moves(board, radius=2)
-        breakers: list[Move] = []
-        for move in candidates:
-            trial = board.place_stone(move, stone)
-            if _vcf(trial, opp, self.vcf_depth, is_attacker=True) is None:
-                breakers.append(move)
+        durable, breakers = classify_vcf_breakers(board, candidates, stone, self.vcf_depth)
 
         if not breakers:
             # Nothing breaks the VCF — position is lost.  Prefer blocking an
@@ -577,31 +573,6 @@ class AlphaBetaBrain:
                 diag.chosen_move = block
                 diag.notes.append(f"No VCF breaker, blocking opponent at {block}")
             return block
-
-        # Classify breakers as durable vs temporary.  A breaker is temporary
-        # if it only suppresses the VCF because it creates a counter-threat;
-        # after the opponent's forced block the VCF is restored.
-        durable: list[Move] = []
-        for move in breakers:
-            trial = board.place_stone(move, stone)
-            our_threats = _find_four_threats(trial, stone)
-            if not our_threats:
-                # No counter-threat ⇒ VCF is genuinely broken.
-                durable.append(move)
-                continue
-            # Check every forced defence: if VCF returns after *any* of them
-            # the breaker is temporary.
-            is_durable = True
-            for _attack, defence in our_threats:
-                if defence is None:
-                    # Unblockable four (live-4 / five) ⇒ we win, obviously durable.
-                    continue
-                after_block = trial.place_stone(defence, opp)
-                if _vcf(after_block, opp, self.vcf_depth, is_attacker=True) is not None:
-                    is_durable = False
-                    break
-            if is_durable:
-                durable.append(move)
 
         effective = durable if durable else breakers
         logfire.info(

@@ -386,6 +386,70 @@ def _vcf(
 # ---------------------------------------------------------------------------
 
 
+def classify_vcf_breakers(
+    board: Board,
+    candidates: list[Move],
+    stone: Stone,
+    vcf_depth: int,
+) -> tuple[list[Move], list[Move]]:
+    """Classify VCF breakers as (durable, all).
+
+    A *breaker* is any candidate move that makes the opponent's VCF
+    disappear when we play it.  A breaker is *durable* when the opponent
+    cannot restore the VCF via their forced reply to any counter four-
+    threat we happen to create.
+
+    Specifically, after we play ``move``:
+
+    1. If we have no four-threat ourselves, the VCF is genuinely broken
+       and ``move`` is durable.
+    2. Otherwise we enumerate our four-threats.  For each with a forced
+       blocking cell, we simulate the forced block and re-check the
+       opponent's VCF.  If any forced block restores the VCF, ``move``
+       is only a *temporary* breaker (the counter-threat was just a
+       distraction).  Unblockable fours (``defence is None``) are wins
+       for us and count as durable.
+
+    Shared between :class:`ThreatBrain._vcf_aware_search` and
+    :meth:`AlphaBetaBrain._root_vcf` so both enforce the same semantics.
+    """
+    state = SearchState.from_board(board, stone)
+    opp = stone.opponent()
+    breakers: list[Move] = []
+    durable: list[Move] = []
+
+    for move in candidates:
+        state.make(move.row, move.col, stone)
+        try:
+            if _vcf_state(state, opp, vcf_depth, is_attacker=True, cache={}) is not None:
+                continue
+            breakers.append(move)
+
+            our_threats = _find_four_threats(state, stone)
+            if not our_threats:
+                durable.append(move)
+                continue
+
+            is_durable = True
+            for _attack, defence in our_threats:
+                if defence is None:
+                    # Unblockable four — we win, so the VCF concern is moot.
+                    continue
+                state.make(defence.row, defence.col, opp)
+                try:
+                    if _vcf_state(state, opp, vcf_depth, is_attacker=True, cache={}) is not None:
+                        is_durable = False
+                        break
+                finally:
+                    state.unmake()
+            if is_durable:
+                durable.append(move)
+        finally:
+            state.unmake()
+
+    return durable, breakers
+
+
 def _vct_defence_moves_state(state: SearchState, attack_move: Move, stone: Stone) -> list[Move]:
     """Compute the full defence set for a three-threat played by *stone*.
 
@@ -918,26 +982,18 @@ class ThreatBrain:
     ) -> Move:
         """Pick the best move when the opponent has a VCF.
 
-        Instead of unconditionally blocking at *opp_vcf_move*, we check
-        every candidate: does our move break the opponent's VCF?  Among
-        the VCF-breakers we let alpha-beta choose the positionally best
-        one.  If nothing breaks it we fall back to the direct block.
+        Classify candidates into durable breakers (VCF stays broken
+        after any forced reply) and merely-temporary breakers (opp
+        restores the VCF via the forced block of one of our counter-
+        threats).  Prefer durable breakers when any exist; fall back
+        to all breakers otherwise — matching the semantics of
+        :meth:`AlphaBetaBrain._root_vcf`.  Among the chosen set, pick
+        the positionally best move.
         """
         from gomoku_brain.evaluate import evaluate_board
 
-        opp = stone.opponent()
-        state = SearchState.from_board(board, stone)
-        candidates = get_candidate_moves(state, radius=2)
-
-        # Partition candidates into those that break opp VCF and those that don't.
-        breakers: list[Move] = []
-        for move in candidates:
-            state.make(move.row, move.col, stone)
-            try:
-                if _vcf_state(state, opp, self.vcf_depth, is_attacker=True, cache={}) is None:
-                    breakers.append(move)
-            finally:
-                state.unmake()
+        candidates = get_candidate_moves(board, radius=2)
+        durable, breakers = classify_vcf_breakers(board, candidates, stone, self.vcf_depth)
 
         if not breakers:
             logfire.info(
@@ -948,17 +1004,21 @@ class ThreatBrain:
                 return opp_vcf_move
             return self._fallback.get_move(board, stone)
 
-        if len(breakers) == 1:
-            logfire.info("Single VCF breaker: {move}", move=str(breakers[0]))
-            return breakers[0]
-
+        effective = durable if durable else breakers
         logfire.info(
-            "VCF-aware search: {n} breakers, picking best via alpha-beta",
-            n=len(breakers),
+            "VCF breakers: {total} total, {durable} durable, using {n}",
+            total=len(breakers),
+            durable=len(durable),
+            n=len(effective),
         )
+
+        if len(effective) == 1:
+            return effective[0]
+
+        state = SearchState.from_board(board, stone)
         best_score = float("-inf")
-        best_move = breakers[0]
-        for move in breakers:
+        best_move = effective[0]
+        for move in effective:
             state.make(move.row, move.col, stone)
             try:
                 score = evaluate_board(state, stone)
