@@ -816,8 +816,29 @@ class ThreatBrain:
         Runs the same threat search (PNS or VCT) from the opponent's
         perspective.  If a forced win is found, restrict candidates to
         moves that break it and pick the best positionally.
+
+        Gated by a cheap material heuristic: PNS/VCT only has a realistic
+        chance of proving a combination win when the opponent already has
+        enough tactical material on the board (≥ 1 dead-four, since any
+        single forcing sequence starts there, or ≥ 2 live-threes, since
+        a double-three is a known fork seed).  When neither is present we
+        skip the full search — this is the dominant case in quiet
+        positions and each PNS call costs up to ``pns_time_s`` seconds.
+
+        The earlier ``_vcf`` check in :meth:`get_move` has already ruled
+        out unblockable fours, so any four-threat seen here is a
+        dead-four.
         """
         opp = stone.opponent()
+
+        opp_fours = _find_four_threats(board, opp)
+        opp_threes = _find_three_threats(board, opp)
+        # Distinct attack cells rather than raw entry count: the JIT path
+        # emits one three-threat entry per direction, so a double-three
+        # shows up as two entries at the same cell.
+        distinct_three_cells = {(a.row, a.col) for a, _ in opp_threes}
+        if not opp_fours and len(distinct_three_cells) < 2:
+            return None
 
         if self.threat_search == "pns":
             from gomoku_brain.pns import pns_threat_search
