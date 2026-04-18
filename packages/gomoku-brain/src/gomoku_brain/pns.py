@@ -12,6 +12,11 @@ Proof numbers guide the search toward the *most-provable* subtree,
 disproof numbers toward the *most-disprovable*.  The search terminates
 when the root is proved (forced win found), disproved (no forced win),
 or the node budget is exhausted.
+
+Positions are represented implicitly: each node stores only its move and
+parent pointer.  A single mutable :class:`SearchState` is replayed along
+the selection path each iteration (O(depth) make/unmake per iteration),
+so no Pydantic ``Board`` is allocated per node.
 """
 
 from __future__ import annotations
@@ -21,12 +26,13 @@ from enum import Enum, auto
 
 from gomoku.board import Board
 from gomoku.models import Move, Stone
-from gomoku.rules import check_winner
 
+from gomoku_brain.search_state import SearchState
 from gomoku_brain.threat import (
     _find_four_threats,
     _find_three_threats,
     _find_winning_move,
+    _state_is_win,
 )
 
 # ---------------------------------------------------------------------------
@@ -47,30 +53,35 @@ class _NodeType(Enum):
 
 
 class _PNSNode:
-    """A single node in the proof-number search tree."""
+    """A single node in the proof-number search tree.
+
+    Stores only the move that led here and the parent pointer — the
+    position itself is materialised on demand by replaying moves into
+    the shared :class:`SearchState` owned by :func:`pns_threat_search`.
+    """
 
     __slots__ = (
-        "board",
         "children",
         "disproof",
         "expanded",
         "move",
         "node_type",
+        "parent",
         "proof",
         "stone",
     )
 
     def __init__(
         self,
-        board: Board,
         stone: Stone,
         node_type: _NodeType,
         move: Move | None = None,
+        parent: _PNSNode | None = None,
     ) -> None:
-        self.board = board
         self.stone = stone  # the *attacker* colour (constant through tree)
         self.node_type = node_type
         self.move = move  # the move that led to this node
+        self.parent = parent
         self.expanded = False
         self.children: list[_PNSNode] = []
         # Initial proof/disproof: 1/1 for unknown nodes
@@ -91,24 +102,23 @@ class _PNSNode:
 # ---------------------------------------------------------------------------
 
 
-def _evaluate_leaf(node: _PNSNode) -> None:
+def _evaluate_leaf(node: _PNSNode, state: SearchState, attacker: Stone) -> None:
     """Lightweight leaf evaluation: check immediate wins only.
 
-    Full threat-existence detection is deferred to expansion time --
-    if an OR node has no threats, expansion produces no children and
-    the node is disproved then.
+    ``state`` must already reflect the position at ``node``.  Full
+    threat-existence detection is deferred to expansion time — if an OR
+    node has no threats, expansion produces no children and the node is
+    disproved then.
     """
-    attacker = node.stone
     defender = attacker.opponent()
-    board = node.board
 
     if node.node_type is _NodeType.OR:
-        if _find_winning_move(board, attacker) is not None:
+        if _find_winning_move(state, attacker) is not None:
             node.proof = 0
             node.disproof = INF
             return
     else:
-        if _find_winning_move(board, defender) is not None:
+        if _find_winning_move(state, defender) is not None:
             node.proof = INF
             node.disproof = 0
             return
@@ -122,7 +132,7 @@ def _evaluate_leaf(node: _PNSNode) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _pns_defence_moves(board: Board, attacker: Stone) -> list[Move]:
+def _pns_defence_moves(state: SearchState, attacker: Stone) -> list[Move]:
     """Compute defender moves for an AND node: blocks + counter-threats.
 
     Includes:
@@ -135,7 +145,7 @@ def _pns_defence_moves(board: Board, attacker: Stone) -> list[Move]:
     cells: set[tuple[int, int]] = set()
 
     # 1) Forced blocks of attacker fours
-    for attack, block in _find_four_threats(board, attacker):
+    for attack, block in _find_four_threats(state, attacker):
         if block is not None:
             cells.add((block.row, block.col))
         else:
@@ -143,19 +153,19 @@ def _pns_defence_moves(board: Board, attacker: Stone) -> list[Move]:
             cells.add((attack.row, attack.col))
 
     # 2) End cells of attacker live threes
-    for _attack, defs in _find_three_threats(board, attacker):
+    for _attack, defs in _find_three_threats(state, attacker):
         for d in defs:
             cells.add((d.row, d.col))
 
     # 3) Defender's own four-threats (counter-fours)
-    for attack, _block in _find_four_threats(board, defender):
+    for attack, _block in _find_four_threats(state, defender):
         cells.add((attack.row, attack.col))
 
     # 4) Defender's own three-threats (counter-threes)
-    for attack, _defs in _find_three_threats(board, defender):
+    for attack, _defs in _find_three_threats(state, defender):
         cells.add((attack.row, attack.col))
 
-    return [Move(row=r, col=c) for r, c in sorted(cells) if board.at(r, c) is Stone.EMPTY]
+    return [Move(row=r, col=c) for r, c in sorted(cells) if state.is_empty(r, c)]
 
 
 # ---------------------------------------------------------------------------
@@ -163,39 +173,41 @@ def _pns_defence_moves(board: Board, attacker: Stone) -> list[Move]:
 # ---------------------------------------------------------------------------
 
 
-def _expand(node: _PNSNode) -> None:
-    """Generate children for a node."""
+def _expand(node: _PNSNode, state: SearchState) -> None:
+    """Generate children for ``node``.
+
+    Precondition: ``state`` is at ``node``'s position.  Postcondition:
+    ``state`` is restored to ``node``'s position (intermediate
+    make/unmake cycles are balanced by ``try`` / ``finally`` blocks).
+    """
     node.expanded = True
     attacker = node.stone
     defender = attacker.opponent()
-    board = node.board
 
     if node.node_type is _NodeType.OR:
-        # Attacker moves: four-threats and three-threats only
+        # Attacker moves: four-threats and three-threats only.
 
-        # Immediate win
-        win_move = _find_winning_move(board, attacker)
+        # Immediate win — no need to materialise the child position.
+        win_move = _find_winning_move(state, attacker)
         if win_move is not None:
-            child = _PNSNode(
-                board.place_stone(win_move, attacker),
-                attacker,
-                _NodeType.AND,
-                move=win_move,
-            )
+            child = _PNSNode(attacker, _NodeType.AND, move=win_move, parent=node)
             child.proof = 0
             child.disproof = INF
             node.children.append(child)
             _update_ancestors(node)
             return
 
-        # If defender has an immediate win, attacker must block it
-        def_win = _find_winning_move(board, defender)
+        # If defender has an immediate win, attacker must block it.
+        def_win = _find_winning_move(state, defender)
         if def_win is not None:
-            if board.is_valid_move(def_win):
-                new_board = board.place_stone(def_win, attacker)
-                child = _PNSNode(new_board, attacker, _NodeType.AND, move=def_win)
-                _evaluate_leaf(child)
-                node.children.append(child)
+            if state.is_empty(def_win.row, def_win.col):
+                state.make(def_win.row, def_win.col, attacker)
+                try:
+                    child = _PNSNode(attacker, _NodeType.AND, move=def_win, parent=node)
+                    _evaluate_leaf(child, state, attacker)
+                    node.children.append(child)
+                finally:
+                    state.unmake()
             else:
                 node.proof = INF
                 node.disproof = 0
@@ -204,52 +216,56 @@ def _expand(node: _PNSNode) -> None:
 
         # Four-threats
         seen_moves: set[tuple[int, int]] = set()
-        for attack, _defence in _find_four_threats(board, attacker):
+        for attack, _defence in _find_four_threats(state, attacker):
             key = (attack.row, attack.col)
             if key in seen_moves:
                 continue
             seen_moves.add(key)
 
-            new_board = board.place_stone(attack, attacker)
-            r = check_winner(new_board, attack)
-            if r is not None and r.winner is attacker:
-                child = _PNSNode(new_board, attacker, _NodeType.AND, move=attack)
-                child.proof = 0
-                child.disproof = INF
+            state.make(attack.row, attack.col, attacker)
+            try:
+                if _state_is_win(state, attack.row, attack.col):
+                    child = _PNSNode(attacker, _NodeType.AND, move=attack, parent=node)
+                    child.proof = 0
+                    child.disproof = INF
+                    node.children.append(child)
+                    _update_ancestors(node)
+                    return
+
+                if _find_winning_move(state, defender) is not None:
+                    continue
+
+                child = _PNSNode(attacker, _NodeType.AND, move=attack, parent=node)
+                _evaluate_leaf(child, state, attacker)
                 node.children.append(child)
-                _update_ancestors(node)
-                return
-
-            if _find_winning_move(new_board, defender) is not None:
-                continue
-
-            child = _PNSNode(new_board, attacker, _NodeType.AND, move=attack)
-            _evaluate_leaf(child)
-            node.children.append(child)
+            finally:
+                state.unmake()
 
         # Three-threats
-        for attack, _defs in _find_three_threats(board, attacker):
+        for attack, _defs in _find_three_threats(state, attacker):
             key = (attack.row, attack.col)
             if key in seen_moves:
                 continue
             seen_moves.add(key)
 
-            new_board = board.place_stone(attack, attacker)
-            r = check_winner(new_board, attack)
-            if r is not None and r.winner is attacker:
-                child = _PNSNode(new_board, attacker, _NodeType.AND, move=attack)
-                child.proof = 0
-                child.disproof = INF
+            state.make(attack.row, attack.col, attacker)
+            try:
+                if _state_is_win(state, attack.row, attack.col):
+                    child = _PNSNode(attacker, _NodeType.AND, move=attack, parent=node)
+                    child.proof = 0
+                    child.disproof = INF
+                    node.children.append(child)
+                    _update_ancestors(node)
+                    return
+
+                if _find_winning_move(state, defender) is not None:
+                    continue
+
+                child = _PNSNode(attacker, _NodeType.AND, move=attack, parent=node)
+                _evaluate_leaf(child, state, attacker)
                 node.children.append(child)
-                _update_ancestors(node)
-                return
-
-            if _find_winning_move(new_board, defender) is not None:
-                continue
-
-            child = _PNSNode(new_board, attacker, _NodeType.AND, move=attack)
-            _evaluate_leaf(child)
-            node.children.append(child)
+            finally:
+                state.unmake()
 
         if not node.children:
             # No viable attack moves -> disproved
@@ -257,38 +273,40 @@ def _expand(node: _PNSNode) -> None:
             node.disproof = 0
 
     else:
-        # AND node: defender responds with blocks + counter-threats
+        # AND node: defender responds with blocks + counter-threats.
 
         # If attacker can win immediately, defender MUST block at that cell.
         # If attacker has multiple winning cells (e.g. live four), the
         # node is effectively proved — defender can only block one.
-        atk_win = _find_winning_move(board, attacker)
+        atk_win = _find_winning_move(state, attacker)
         if atk_win is not None:
-            # Try blocking at the winning cell
-            new_board = board.place_stone(atk_win, defender)
-            # Check if attacker still has an immediate win after the block
-            if _find_winning_move(new_board, attacker) is not None:
-                # Multiple winning cells — defender can't block all → proved
-                node.proof = 0
-                node.disproof = INF
-                _update_ancestors(node)
-                return
-            # Single winning cell — defender blocks, continue from there
-            r = check_winner(new_board, atk_win)
-            if r is not None and r.winner is defender:
-                child = _PNSNode(new_board, attacker, _NodeType.OR, move=atk_win)
-                child.proof = INF
-                child.disproof = 0
+            state.make(atk_win.row, atk_win.col, defender)
+            try:
+                if _find_winning_move(state, attacker) is not None:
+                    # Multiple winning cells — defender can't block all → proved
+                    node.proof = 0
+                    node.disproof = INF
+                    _update_ancestors(node)
+                    return
+                if _state_is_win(state, atk_win.row, atk_win.col):
+                    # Defender's block itself completes five for defender
+                    # (rare but possible: defender had own 4-in-a-row through
+                    # the block cell).  Disprove this OR-child.
+                    child = _PNSNode(attacker, _NodeType.OR, move=atk_win, parent=node)
+                    child.proof = INF
+                    child.disproof = 0
+                    node.children.append(child)
+                    _update_ancestors(node)
+                    return
+                child = _PNSNode(attacker, _NodeType.OR, move=atk_win, parent=node)
+                _evaluate_leaf(child, state, attacker)
                 node.children.append(child)
                 _update_ancestors(node)
                 return
-            child = _PNSNode(new_board, attacker, _NodeType.OR, move=atk_win)
-            _evaluate_leaf(child)
-            node.children.append(child)
-            _update_ancestors(node)
-            return
+            finally:
+                state.unmake()
 
-        defences = _pns_defence_moves(board, attacker)
+        defences = _pns_defence_moves(state, attacker)
 
         if not defences:
             # No blocks or counter-threats -> attacker's threat is unanswerable
@@ -298,20 +316,21 @@ def _expand(node: _PNSNode) -> None:
             return
 
         for cand in defences:
-            new_board = board.place_stone(cand, defender)
+            state.make(cand.row, cand.col, defender)
+            try:
+                if _state_is_win(state, cand.row, cand.col):
+                    child = _PNSNode(attacker, _NodeType.OR, move=cand, parent=node)
+                    child.proof = INF
+                    child.disproof = 0
+                    node.children.append(child)
+                    _update_ancestors(node)
+                    return
 
-            r = check_winner(new_board, cand)
-            if r is not None and r.winner is defender:
-                child = _PNSNode(new_board, attacker, _NodeType.OR, move=cand)
-                child.proof = INF
-                child.disproof = 0
+                child = _PNSNode(attacker, _NodeType.OR, move=cand, parent=node)
+                _evaluate_leaf(child, state, attacker)
                 node.children.append(child)
-                _update_ancestors(node)
-                return
-
-            child = _PNSNode(new_board, attacker, _NodeType.OR, move=cand)
-            _evaluate_leaf(child)
-            node.children.append(child)
+            finally:
+                state.unmake()
 
     _update_ancestors(node)
 
@@ -385,11 +404,15 @@ def pns_threat_search(
     Returns the first move of a forced winning sequence for *stone*,
     or ``None`` if no win is proved within the node/time budget.
     """
-    root = _PNSNode(board, stone, _NodeType.OR)
-    _evaluate_leaf(root)
+    attacker = stone
+    defender = attacker.opponent()
+
+    state = SearchState.from_board(board, stone)
+    root = _PNSNode(stone, _NodeType.OR)
+    _evaluate_leaf(root, state, attacker)
 
     if root.proved:
-        return _find_winning_move(board, stone)
+        return _find_winning_move(state, stone)
     if root.disproved:
         return None
 
@@ -400,19 +423,33 @@ def pns_threat_search(
         if time.monotonic() > deadline:
             break
 
-        # 1) Select the most-proving node
+        # 1) Select the most-proving node.
         mpn, path = _select_mpn(root)
 
-        # 2) Expand it
-        children_before = len(mpn.children)
-        _expand(mpn)
-        nodes_created += len(mpn.children) - children_before
+        # 2) Replay path moves into the shared state.  The move at path[i]
+        #    was played by the side that was to move at path[i-1].
+        for i in range(1, len(path)):
+            parent = path[i - 1]
+            nd = path[i]
+            who = attacker if parent.node_type is _NodeType.OR else defender
+            assert nd.move is not None  # only root has move=None
+            state.make(nd.move.row, nd.move.col, who)
 
-        # 3) Backpropagate along selection path only
-        _backpropagate_path(path)
+        try:
+            # 3) Expand the MPN leaf (state is already at its position).
+            children_before = len(mpn.children)
+            _expand(mpn, state)
+            nodes_created += len(mpn.children) - children_before
+
+            # 4) Backpropagate along selection path only.
+            _backpropagate_path(path)
+        finally:
+            # 5) Unwind state back to root for the next iteration.
+            for _ in range(len(path) - 1):
+                state.unmake()
 
     if root.proved and root.children:
-        # Root is OR -> find the proved child
+        # Root is OR -> find the proved child.
         for child in root.children:
             if child.proved:
                 return child.move
