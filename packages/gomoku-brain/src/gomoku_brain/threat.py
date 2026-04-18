@@ -768,79 +768,100 @@ class ThreatBrain:
     ) -> Move:
         """Pick the best move when the opponent has a VCT/PNS forced win.
 
-        Test every candidate: does our move break the opponent's threat
-        sequence?  Among breakers, pick the positionally strongest.
-        Falls back to blocking the threat start cell.
+        Order candidates by static evaluation (descending), then probe in
+        order until we find the first move that breaks the opponent's
+        threat sequence.  Because the candidate list is eval-sorted, the
+        first breaker is also the positionally strongest, so a single
+        pass replaces the old "collect-all-then-score" loop.
+
+        A global wall-clock cap (``self.pns_time_s``) prevents the
+        worst-case blow-up that used to be possible when every one of
+        the 40-50 candidates was probed with a half-budget PNS call.
+        Per-candidate PNS budgets are additionally shrunk to the
+        remaining global budget.
         """
+        import time as _time
+
         from gomoku_brain.evaluate import evaluate_board
 
         opp = stone.opponent()
         state = SearchState.from_board(board, stone)
         candidates = get_candidate_moves(state, radius=2)
 
-        breakers: list[Move] = []
+        # Pre-score every candidate with a static eval so strong moves
+        # are probed first.  Static eval is cheap on the JIT path
+        # (<~50us per call).
+        scored: list[tuple[float, Move]] = []
         for move in candidates:
-            state.make(move.row, move.col, stone)
-            try:
-                # Check VCF first (fast)
-                if _vcf_state(state, opp, self.vcf_depth, is_attacker=True, cache={}) is not None:
-                    continue
-                # Then check VCT/PNS
-                if self.threat_search == "pns":
-                    from gomoku_brain.pns import pns_threat_search
-
-                    # PNS still takes a Pydantic Board; one-off reconstruct.
-                    from gomoku_brain.grid_utils import grid_to_board
-
-                    trial_board = grid_to_board(state.grid, state.size)
-                    opp_result = pns_threat_search(
-                        trial_board,
-                        opp,
-                        max_nodes=self.pns_nodes // 2,
-                        max_time_s=self.pns_time_s / 2,
-                    )
-                    if opp_result is not None:
-                        continue
-                else:
-                    if (
-                        _vct_state(state, opp, self.vct_depth, is_attacker=True, vct_cache={}, vcf_cache={})
-                        is not None
-                    ):
-                        continue
-                breakers.append(move)
-            finally:
-                state.unmake()
-
-        if not breakers:
-            logfire.info(
-                "No VCT breaker found, blocking opponent threat at: {move}",
-                move=str(opp_threat_move),
-            )
-            if board.is_valid_move(opp_threat_move):
-                return opp_threat_move
-            return self._fallback.get_move(board, stone)
-
-        if len(breakers) == 1:
-            logfire.info("Single VCT breaker: {move}", move=str(breakers[0]))
-            return breakers[0]
-
-        logfire.info(
-            "VCT-aware search: {n} breakers, picking best positionally",
-            n=len(breakers),
-        )
-        best_score = float("-inf")
-        best_move = breakers[0]
-        for move in breakers:
             state.make(move.row, move.col, stone)
             try:
                 score = evaluate_board(state, stone)
             finally:
                 state.unmake()
-            if score > best_score:
-                best_score = score
-                best_move = move
+            scored.append((score, move))
+        scored.sort(key=lambda item: item[0], reverse=True)
 
-        return best_move
+        deadline = _time.monotonic() + self.pns_time_s
+        probed = 0
+        for score, move in scored:
+            if _time.monotonic() > deadline:
+                logfire.info(
+                    "VCT-aware search: time budget exhausted after {n} candidates",
+                    n=probed,
+                )
+                break
+            probed += 1
+
+            state.make(move.row, move.col, stone)
+            try:
+                # Fast VCF probe first.
+                if _vcf_state(state, opp, self.vcf_depth, is_attacker=True, cache={}) is not None:
+                    continue
+                # Expensive threat probe — bounded by remaining global budget.
+                if self.threat_search == "pns":
+                    from gomoku_brain.grid_utils import grid_to_board
+                    from gomoku_brain.pns import pns_threat_search
+
+                    remaining = max(0.05, deadline - _time.monotonic())
+                    trial_board = grid_to_board(state.grid, state.size)
+                    opp_result = pns_threat_search(
+                        trial_board,
+                        opp,
+                        max_nodes=self.pns_nodes // 2,
+                        max_time_s=min(self.pns_time_s / 2, remaining),
+                    )
+                    if opp_result is not None:
+                        continue
+                else:
+                    if (
+                        _vct_state(
+                            state,
+                            opp,
+                            self.vct_depth,
+                            is_attacker=True,
+                            vct_cache={},
+                            vcf_cache={},
+                        )
+                        is not None
+                    ):
+                        continue
+                logfire.info(
+                    "VCT-aware search: first durable breaker {move} (eval={score:.0f}) after {n} probes",
+                    move=str(move),
+                    score=score,
+                    n=probed,
+                )
+                return move
+            finally:
+                state.unmake()
+
+        logfire.info(
+            "No VCT breaker found, blocking opponent threat at: {move}",
+            move=str(opp_threat_move),
+        )
+        if board.is_valid_move(opp_threat_move):
+            return opp_threat_move
+        return self._fallback.get_move(board, stone)
 
     # -- Fork detection -----------------------------------------------------
 
