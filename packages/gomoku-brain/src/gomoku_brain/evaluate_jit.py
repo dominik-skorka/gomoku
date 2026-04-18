@@ -389,6 +389,49 @@ def get_candidates_grid(
 
 
 @njit(cache=True)
+def find_winning_move_grid(
+    grid: NDArray,  # type: ignore[type-arg]
+    size: int,
+    candidates: NDArray,  # type: ignore[type-arg]
+    stone: int,
+    dirs: NDArray,  # type: ignore[type-arg]
+) -> NDArray:  # type: ignore[type-arg]
+    """Return a ``(row, col)`` that completes 5-in-a-row for *stone*, or
+    an empty ``(0, 2)`` array if none exists.
+
+    Scans the directional neighbours of each candidate cell in place.
+    Mirrors the pure-Python ``_find_winning_move`` but uses the int8
+    grid for speed.
+    """
+    out = np.empty((1, 2), dtype=np.int32)
+    n = candidates.shape[0]
+    for i in range(n):
+        r = candidates[i, 0]
+        c = candidates[i, 1]
+        for d in range(dirs.shape[0]):
+            dr = dirs[d, 0]
+            dc = dirs[d, 1]
+            count = 1  # the stone we would place
+            nr = r + dr
+            nc = c + dc
+            while 0 <= nr < size and 0 <= nc < size and grid[nr, nc] == stone:
+                count += 1
+                nr += dr
+                nc += dc
+            nr = r - dr
+            nc = c - dc
+            while 0 <= nr < size and 0 <= nc < size and grid[nr, nc] == stone:
+                count += 1
+                nr -= dr
+                nc -= dc
+            if count >= 5:
+                out[0, 0] = r
+                out[0, 1] = c
+                return out
+    return np.empty((0, 2), dtype=np.int32)
+
+
+@njit(cache=True)
 def is_four_threat(
     grid: NDArray,  # type: ignore[type-arg]
     size: int,
