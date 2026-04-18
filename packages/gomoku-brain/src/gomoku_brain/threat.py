@@ -16,6 +16,15 @@ from gomoku.rules import check_winner
 
 from gomoku_brain.alphabeta import AlphaBetaBrain
 from gomoku_brain.candidates import get_candidate_moves
+from gomoku_brain.zobrist import hash_board
+
+# Cache entry: (proven, depth_searched, attack_move)
+# * proven=True  -> winning attack found within ``depth_searched`` plies.
+#                   Valid whenever the query depth is >= depth_searched.
+# * proven=False -> no winning sequence within ``depth_searched`` plies.
+#                   Valid whenever the query depth is <= depth_searched.
+_CacheEntry = tuple[bool, int, "Move | None"]
+_ThreatCache = dict[int, _CacheEntry]
 
 # ---------------------------------------------------------------------------
 # Direction vectors (horizontal, vertical, two diagonals)
@@ -184,15 +193,33 @@ def _vcf(
     stone: Stone,
     depth: int,
     is_attacker: bool,
+    cache: _ThreatCache | None = None,
 ) -> Move | None:
     """Recursive VCF search.
 
     *Attacker* can only play moves that create four-threats.
     *Defender* must respond to each four-threat with the forced block.
     Returns the first attacking move of a winning sequence, or ``None``.
+
+    ``cache`` is a transposition table scoped to a single top-level call —
+    transposed positions (reached via different attack orderings) are
+    resolved once and reused.  Callers who wish to share a cache across
+    multiple related queries (e.g. VCT's inner _vcf calls) can pass an
+    explicit dict.
     """
     if depth <= 0:
         return None
+    if cache is None:
+        cache = {}
+
+    zh = hash_board(board, stone)
+    entry = cache.get(zh)
+    if entry is not None:
+        proven, stored_depth, stored_move = entry
+        if proven and stored_depth <= depth:
+            return stored_move
+        if not proven and stored_depth >= depth:
+            return None
 
     if is_attacker:
         threats = _find_four_threats(board, stone)
@@ -202,6 +229,7 @@ def _vcf(
             trial = board.place_stone(attack, stone)
             result = check_winner(trial, attack)
             if result is not None and result.winner is stone:
+                cache[zh] = (True, depth, attack)
                 return attack
 
             # Opponent gets to respond — can they win first?
@@ -210,6 +238,7 @@ def _vcf(
 
             if defence is None:
                 # Unblockable four (live-four or five) → win
+                cache[zh] = (True, depth, attack)
                 return attack
 
             # Before assuming the defender is forced to block, verify the
@@ -224,9 +253,11 @@ def _vcf(
             trial2 = trial.place_stone(defence, opp)
 
             # Recurse: attacker tries another four-threat
-            if _vcf(trial2, stone, depth - 2, is_attacker=True) is not None:
+            if _vcf(trial2, stone, depth - 2, is_attacker=True, cache=cache) is not None:
+                cache[zh] = (True, depth, attack)
                 return attack
 
+    cache[zh] = (False, depth, None)
     return None
 
 
@@ -271,20 +302,42 @@ def _vct(
     stone: Stone,
     depth: int,
     is_attacker: bool,
+    vct_cache: _ThreatCache | None = None,
+    vcf_cache: _ThreatCache | None = None,
 ) -> Move | None:
     """Recursive VCT search.
 
     Attacker plays four-threats *and* live-three threats.
     Defender tries all reasonable defence moves: the two open-end cells of the
     threat **and** any move that creates a counter four-threat.
+
+    ``vct_cache`` memoises VCT results across transpositions in the current
+    top-level call.  ``vcf_cache`` is a separate table shared with the inner
+    ``_vcf`` probes — VCT and VCF prove different properties, so their
+    entries cannot be mixed, but within a single VCT search the same VCF
+    sub-positions are re-visited repeatedly and benefit from caching.
     """
     if depth <= 0:
         return None
+    if vct_cache is None:
+        vct_cache = {}
+    if vcf_cache is None:
+        vcf_cache = {}
+
+    zh = hash_board(board, stone)
+    entry = vct_cache.get(zh)
+    if entry is not None:
+        proven, stored_depth, stored_move = entry
+        if proven and stored_depth <= depth:
+            return stored_move
+        if not proven and stored_depth >= depth:
+            return None
 
     if is_attacker:
         # 1) Try VCF first (four-threats are stronger)
-        vcf_result = _vcf(board, stone, depth, is_attacker=True)
+        vcf_result = _vcf(board, stone, depth, is_attacker=True, cache=vcf_cache)
         if vcf_result is not None:
+            vct_cache[zh] = (True, depth, vcf_result)
             return vcf_result
 
         # 2) Try three-threats
@@ -295,6 +348,7 @@ def _vct(
             # Check if attack itself wins
             result = check_winner(trial, attack)
             if result is not None and result.winner is stone:
+                vct_cache[zh] = (True, depth, attack)
                 return attack
 
             # Opponent gets to respond — can they win first?
@@ -343,16 +397,38 @@ def _vct(
                             all_refuted = False
                             break
                         board_after_block = trial2.place_stone(block_move, stone)
-                        if _vct(board_after_block, stone, depth - 2, is_attacker=True) is None:
+                        if (
+                            _vct(
+                                board_after_block,
+                                stone,
+                                depth - 2,
+                                is_attacker=True,
+                                vct_cache=vct_cache,
+                                vcf_cache=vcf_cache,
+                            )
+                            is None
+                        ):
                             all_refuted = False
                             break
-                    elif _vct(trial2, stone, depth - 2, is_attacker=True) is None:
+                    elif (
+                        _vct(
+                            trial2,
+                            stone,
+                            depth - 2,
+                            is_attacker=True,
+                            vct_cache=vct_cache,
+                            vcf_cache=vcf_cache,
+                        )
+                        is None
+                    ):
                         all_refuted = False
                         break
 
             if all_refuted:
+                vct_cache[zh] = (True, depth, attack)
                 return attack
 
+    vct_cache[zh] = (False, depth, None)
     return None
 
 
