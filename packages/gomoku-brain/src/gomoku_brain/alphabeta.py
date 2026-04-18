@@ -10,6 +10,7 @@ from gomoku.models import Move, Stone
 from gomoku.rules import check_winner
 
 from gomoku_brain.candidates import get_candidate_moves
+from gomoku_brain.directions import DIRECTIONS as _DIRECTIONS
 from gomoku_brain.evaluate import evaluate_board
 from gomoku_brain.opening import deduplicate_by_symmetry, lookup_opening_book
 from gomoku_brain.search_state import SearchState
@@ -27,9 +28,6 @@ _MAX_CANDIDATES = 20
 
 # Maximum extra plies for quiescence search at leaves.
 _MAX_QS_DEPTH = 4
-
-# Directions for line scanning (horizontal, vertical, two diagonals).
-_DIRECTIONS = [(0, 1), (1, 0), (1, 1), (1, -1)]
 
 # Type alias for the history heuristic table: (stone, row, col) -> cumulative score.
 HistoryTable = dict[tuple[int, int, int], int]
