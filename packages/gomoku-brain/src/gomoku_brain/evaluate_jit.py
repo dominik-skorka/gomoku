@@ -742,3 +742,91 @@ def occupied_from_grid(
                 buf[count, 1] = c
                 count += 1
     return buf[:count].copy()
+
+
+# ---------------------------------------------------------------------------
+# MCTS prior scoring
+# ---------------------------------------------------------------------------
+
+
+@njit(cache=True)
+def compute_priors_grid(
+    grid: NDArray,  # type: ignore[type-arg]
+    size: int,
+    candidates: NDArray,  # type: ignore[type-arg]
+    stone: int,
+    opponent: int,
+    dirs: NDArray,  # type: ignore[type-arg]
+    table: NDArray,  # type: ignore[type-arg]
+) -> NDArray:  # type: ignore[type-arg]
+    """Return normalised MCTS prior probabilities for *candidates*.
+
+    Mirrors the handwritten ``_score_move_prior`` + ``_compute_priors`` in
+    ``gomoku_brain.mcts`` — per candidate, sums our own offensive pattern
+    score plus 0.8 × the opponent's defensive pattern score across all four
+    directions.  Output is an L1-normalised ``float64[N]`` array; uniform
+    when every raw score is zero (only possible for an empty ``candidates``).
+    """
+    n = candidates.shape[0]
+    raw = np.empty(n, dtype=np.float64)
+    total = 0.0
+    for i in range(n):
+        row = candidates[i, 0]
+        col = candidates[i, 1]
+        score = 1.0  # baseline so no move gets zero prior
+        for d in range(dirs.shape[0]):
+            dr = dirs[d, 0]
+            dc = dirs[d, 1]
+
+            # --- offensive: our own consecutive stones through (row, col)
+            count = 0
+            open_ends = 0
+            rr = row + dr
+            cc = col + dc
+            while 0 <= rr < size and 0 <= cc < size and grid[rr, cc] == stone:
+                count += 1
+                rr += dr
+                cc += dc
+            if 0 <= rr < size and 0 <= cc < size and grid[rr, cc] == 0:
+                open_ends += 1
+            rr = row - dr
+            cc = col - dc
+            while 0 <= rr < size and 0 <= cc < size and grid[rr, cc] == stone:
+                count += 1
+                rr -= dr
+                cc -= dc
+            if 0 <= rr < size and 0 <= cc < size and grid[rr, cc] == 0:
+                open_ends += 1
+            score += _pattern_score(count, open_ends, table)
+
+            # --- defensive: opponent consecutive stones through (row, col)
+            count = 0
+            open_ends = 0
+            rr = row + dr
+            cc = col + dc
+            while 0 <= rr < size and 0 <= cc < size and grid[rr, cc] == opponent:
+                count += 1
+                rr += dr
+                cc += dc
+            if 0 <= rr < size and 0 <= cc < size and grid[rr, cc] == 0:
+                open_ends += 1
+            rr = row - dr
+            cc = col - dc
+            while 0 <= rr < size and 0 <= cc < size and grid[rr, cc] == opponent:
+                count += 1
+                rr -= dr
+                cc -= dc
+            if 0 <= rr < size and 0 <= cc < size and grid[rr, cc] == 0:
+                open_ends += 1
+            score += 0.8 * _pattern_score(count, open_ends, table)
+
+        raw[i] = score
+        total += score
+
+    if total == 0.0:
+        if n == 0:
+            return raw
+        return np.full(n, 1.0 / n, dtype=np.float64)
+    for i in range(n):
+        raw[i] = raw[i] / total
+    return raw
