@@ -22,10 +22,21 @@ from gomoku.models import GameConfig, Move, Stone
 
 
 class CandidateInfo(BaseModel, frozen=True):
-    """A candidate move with its evaluation score."""
+    """A candidate move with its score.
+
+    ``score_type`` declares what the ``score`` represents so the analyzer can
+    compare apples to apples across brains:
+
+    * ``"eval"``    — static evaluation (AlphaBetaBrain): higher is better for
+                      the side to move.  No fixed range; wins ≈ ±100 000.
+    * ``"winrate"`` — root-visit winrate proportion (MCTSBrain), in ``[0, 1]``.
+    * ``"visits"``  — raw visit count for MCTS root children.
+    * ``"priority"``— threat-brain ordering score (higher = more urgent).
+    """
 
     move: Move
     score: float
+    score_type: str = "eval"
 
 
 class ThreatInfo(BaseModel, frozen=True):
@@ -42,9 +53,11 @@ class SearchStats(BaseModel, frozen=True):
 
     depth_reached: int | None = None
     nodes_searched: int | None = None
+    qs_nodes_searched: int | None = None
     iterations: int | None = None
     tt_size: int | None = None
     tt_hits: int | None = None
+    tt_probes: int | None = None
     time_ms: int | None = None
     aspiration_resets: int | None = None
 
@@ -70,6 +83,10 @@ class MoveDiagnostics(BaseModel):
 
     # Top candidates considered (ordered by score, descending)
     top_candidates: list[CandidateInfo] = Field(default_factory=list)
+
+    # When the chosen move is not the top candidate, record the top alternative
+    # so the analyzer can flag possible blunders / alternative-best deviations.
+    alternative_best: CandidateInfo | None = None
 
     # Threat landscape
     our_threats: ThreatInfo = ThreatInfo()
