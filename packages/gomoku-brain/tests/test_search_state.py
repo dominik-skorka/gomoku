@@ -279,6 +279,114 @@ class TestStress:
 
 
 # ---------------------------------------------------------------------------
+# Grid-mirror and occupied-count invariants
+# ---------------------------------------------------------------------------
+
+
+class TestGridMirror:
+    """``state.grid`` is an int8 mirror maintained in lock-step with the
+    bitboards.  A divergence silently breaks every grid-JIT kernel
+    (evaluate_grid, check_winner_grid, find_*_threats_grid, ...)."""
+
+    def test_grid_reflects_make(self):
+        s = SearchState.from_board(Board(size=9), Stone.BLACK)
+        assert int(s.grid[4, 4]) == 0
+        s.make(4, 4, Stone.BLACK)
+        assert int(s.grid[4, 4]) == int(Stone.BLACK)
+        s.make(3, 3, Stone.WHITE)
+        assert int(s.grid[3, 3]) == int(Stone.WHITE)
+
+    def test_grid_reflects_unmake(self):
+        s = SearchState.from_board(Board(size=9), Stone.BLACK)
+        s.make(4, 4, Stone.BLACK)
+        s.make(3, 3, Stone.WHITE)
+        s.unmake()
+        assert int(s.grid[3, 3]) == 0
+        s.unmake()
+        assert int(s.grid[4, 4]) == 0
+
+    def test_grid_matches_bitboards_everywhere(self):
+        """For every cell the grid value must match the bitboards."""
+        rng = random.Random(0x777)
+        s = SearchState.from_board(Board(size=11), Stone.BLACK)
+        side = Stone.BLACK
+        for _ in range(40):
+            while True:
+                r, c = rng.randrange(11), rng.randrange(11)
+                if s.is_empty(r, c):
+                    break
+            s.make(r, c, side)
+            side = side.opponent()
+
+            for rr in range(s.size):
+                for cc in range(s.size):
+                    grid_val = int(s.grid[rr, cc])
+                    at_val = int(s.at(rr, cc))
+                    assert grid_val == at_val
+
+
+class TestOccCount:
+    """``occ_count`` is consumed on the hot path instead of ``len(occupied)``
+    — a desync silently corrupts move-generation stopping conditions."""
+
+    def test_matches_bit_count(self):
+        rng = random.Random(0xFEED)
+        s = SearchState.from_board(Board(size=13), Stone.BLACK)
+        side = Stone.BLACK
+        for _ in range(50):
+            while True:
+                r, c = rng.randrange(13), rng.randrange(13)
+                if s.is_empty(r, c):
+                    break
+            s.make(r, c, side)
+            side = side.opponent()
+            black_bits = sum(int(x).bit_count() for x in s.black)
+            white_bits = sum(int(x).bit_count() for x in s.white)
+            assert s.occ_count == black_bits + white_bits
+
+    def test_matches_pydantic_board_occupied(self):
+        """The count must agree with the equivalent Board's occupied set."""
+        rng = random.Random(0xBEEF)
+        b = Board(size=9)
+        s = SearchState.from_board(b, Stone.BLACK)
+        side = Stone.BLACK
+        for _ in range(15):
+            while True:
+                r, c = rng.randrange(9), rng.randrange(9)
+                if s.is_empty(r, c):
+                    break
+            s.make(r, c, side)
+            b = b.place_stone(Move(row=r, col=c), side)
+            side = side.opponent()
+            assert s.occ_count == len(b.occupied)
+
+
+class TestOccupiedSet:
+    """The lazy ``state.occupied`` set is an ``occupied_from_bb`` derivation
+    — the cache is invalidated on make/unmake.  Clients that happen to
+    touch it must see a fresh value after mutation."""
+
+    def test_occupied_refreshes_after_make(self):
+        s = SearchState.from_board(Board(size=9), Stone.BLACK)
+        assert s.occupied == set()
+        s.make(4, 4, Stone.BLACK)
+        assert s.occupied == {(4, 4)}
+        s.make(3, 3, Stone.WHITE)
+        assert s.occupied == {(4, 4), (3, 3)}
+
+    def test_occupied_refreshes_after_unmake(self):
+        s = SearchState.from_board(Board(size=9), Stone.BLACK)
+        s.make(4, 4, Stone.BLACK)
+        _ = s.occupied  # populate cache
+        s.make(3, 3, Stone.WHITE)
+        assert s.occupied == {(4, 4), (3, 3)}
+        s.unmake()
+        assert s.occupied == {(4, 4)}
+        s.unmake()
+        assert s.occupied == set()
+
+
+# ---------------------------------------------------------------------------
 # Bitboard layout parity with existing BitboardState
 # ---------------------------------------------------------------------------
 

@@ -60,49 +60,99 @@ class TestPnsBasic:
 
 
 class TestPnsCounterThreats:
-    def test_does_not_prove_false_win(self):
-        """Reproduce the game-2 position where old VCT falsely declared G11 a win.
+    """Guard against the "K8 bug" class of unsound proofs.
 
-        After Black plays G11, White can play K8 creating an unblockable
-        four at K5. PNS must NOT declare G11 as a winning move.
+    The original regression — game-2 move 42, Black G11 declared a
+    winning VCT — happened because the old defence-move generator did
+    not include the opponent's counter-four cells.  Black's attack
+    looked forced because only natural blocks were considered; the
+    lethal counter-four at K8 was invisible, so PNS would falsely
+    declare Black's live-three attack a forced win.
 
-        Board at move 42 (Black to play) from game 2 (threat vs alphabeta).
+    These tests encode the bug's *structure* rather than the specific
+    board: any position where the attacker has only a live-three while
+    the defender has a live-three that extends to a live-four must be
+    proved unwinnable.
+    """
+
+    def _fork_setup(self) -> Board:
+        """Black double-three fork at (7, 7) — playing it creates a
+        horizontal AND a vertical live-three simultaneously.
+
+        Horizontal live-two: (7, 5), (7, 6) → + (7, 7) = live-three.
+        Vertical live-two:   (5, 7), (6, 7) → + (7, 7) = live-three.
         """
-        import json
-        from pathlib import Path
+        b = Board(size=15)
+        return _place(b, [(7, 5), (7, 6), (5, 7), (6, 7)], Stone.BLACK)
 
-        recording = Path(__file__).resolve().parents[2] / "../../recordings/gomoku_20260405_120630.json"
-        if not recording.exists():
-            # Skip if recording not available
-            return
+    def test_fork_wins_without_counter_threat(self):
+        """Sanity check: a double-three fork is a classical forced win
+        — White can only block one of the two live-threes, the other
+        extends to a live-four on Black's next move.  PNS must find it.
 
-        with open(recording) as f:
-            data = json.load(f)
+        If this test fails, ``test_counter_four_refutes_fork_attack``
+        below is proving the wrong thing (PNS simply can't solve forks
+        rather than correctly handling the counter-threat)."""
+        b = self._fork_setup()
+        # White material is cosmetic / unrelated to the fork
+        b = _place(b, [(0, 0), (0, 1), (14, 14)], Stone.WHITE)
+
+        move = pns_threat_search(b, Stone.BLACK, max_nodes=50_000)
+        assert move is not None, (
+            "PNS failed to solve the baseline double-three fork — the "
+            "counter-threat test below is moot."
+        )
+        # The fork cell (7, 7) should be the proven move.
+        assert move == Move(row=7, col=7)
+
+    def test_counter_four_refutes_fork_attack(self):
+        """Guard against the K8 bug: same Black fork as above, but now
+        White has a live-three that becomes an unblockable live-four.
+
+        After Black plays the fork at (7, 7), White's defence set
+        (``_pns_defence_moves``) must include the counter-four cells
+        (3, 3) / (3, 7).  When White plays one, the resulting live-four
+        forces Black to chase blocks instead of converting the fork —
+        and since Black can only block one end of a live-four, White
+        wins the race.  PNS must therefore *not* declare the fork a
+        forced win.
+
+        This is the synthetic analogue of the original game-2 K8
+        position: the attacker's threat sequence is disrupted by a
+        defender counter-four that arrives first on the board.
+        """
+        b = self._fork_setup()
+        # White live-three — playing (3, 3) or (3, 7) creates a live-four
+        b = _place(b, [(3, 4), (3, 5), (3, 6)], Stone.WHITE)
+
+        move = pns_threat_search(b, Stone.BLACK, max_nodes=50_000)
+        assert move is None, (
+            f"PNS falsely proved a forced win at {move} — White's "
+            "counter-four at (3,3)/(3,7) refutes the double-three fork."
+        )
+
+    def test_pns_result_is_sound_when_positive(self):
+        """Whenever PNS returns a move, that move must be legal and must
+        either complete five-in-a-row immediately or produce at least
+        one four-threat for the attacker.  A proof violating either
+        invariant is unsound."""
+        from gomoku.rules import check_winner
+
+        from gomoku_brain.threat import _find_four_threats
 
         b = Board(size=15)
-        stone_map = {1: Stone.BLACK, 2: Stone.WHITE}
-        for m in data["moves"]:
-            if m["number"] >= 43:
-                break
-            s = stone_map[m["stone"]]
-            b = b.place_stone(Move(row=m["move"]["row"], col=m["move"]["col"]), s)
-
-        # PNS should NOT claim G11 as a forced win (it's not — White has K8 counter)
-        move = pns_threat_search(b, Stone.BLACK, max_nodes=50_000)
-        if move is not None:
-            # If PNS claims a win, it must not be G11 (which is unsound)
-            # — or if it IS G11, PNS must have actually proved it
-            # through all defender responses including K8.
-            # Let's verify: after G11 + K8, PNS shouldn't find a continuation.
-            g11 = Move(row=10, col=6)
-            if move == g11:
-                board_after = b.place_stone(g11, Stone.BLACK)
-                k8 = Move(row=7, col=10)
-                board_after = board_after.place_stone(k8, Stone.WHITE)
-                followup = pns_threat_search(board_after, Stone.BLACK, max_nodes=50_000)
-                # If PNS proves G11 works, it must also work after K8
-                # (which we know it doesn't from analysis)
-                assert followup is not None, "PNS claimed G11 wins but can't continue after K8 — unsound proof"
+        b = _place(b, [(4, 2), (4, 3), (4, 4), (4, 5)], Stone.BLACK)
+        b = _place(b, [(0, 0), (0, 1), (0, 2)], Stone.WHITE)
+        move = pns_threat_search(b, Stone.BLACK, max_nodes=5_000)
+        assert move is not None
+        assert b.is_valid_move(move)
+        trial = b.place_stone(move, Stone.BLACK)
+        won = check_winner(trial, move) is not None
+        fours = _find_four_threats(trial, Stone.BLACK)
+        assert won or len(fours) > 0, (
+            f"PNS returned {move} but it neither wins nor creates a "
+            "four-threat — unsound proof"
+        )
 
 
 class TestPnsChainedThreats:
