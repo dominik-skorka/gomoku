@@ -10,7 +10,7 @@ brain went wrong, why, and how to fix it.
 1. [Prerequisites](#prerequisites)
 2. [Quick-Start Checklist](#quick-start-checklist)
 3. [Step 1 — Replay the Game](#step-1--replay-the-game)
-4. [Step 2 — Enable & Read Diagnostics](#step-2--enable--read-diagnostics)
+4. [Step 2 — Run `gomoku analyze`](#step-2--run-gomoku-analyze)
 5. [Step 3 — Identify Blunders](#step-3--identify-blunders)
 6. [Step 4 — Identify Mistakes](#step-4--identify-mistakes)
 7. [Step 5 — Identify Inefficiencies](#step-5--identify-inefficiencies)
@@ -40,12 +40,12 @@ uv run gomoku-cli play --black threat --white alphabeta \
 ## Quick-Start Checklist
 
 ```
-□ Replay the game visually with playback
-□ Note the move where the losing side lost the initiative
-□ Open the diagnostics file for that game
-□ For each suspicious move, check:
+□ Replay the game visually with playback (diagnostics auto-overlay)
+□ Run `gomoku analyze <file>.diag.jsonl` — start from its flagged moves
+□ For each flagged move, check:
+   □ reasons      — which heuristic(s) fired?
    □ decision_path — which algorithm chose the move?
-   □ top_candidates — was a better move available?
+   □ top_candidates / alternative_best — was a better move available?
    □ our_threats / opp_threats — were threats missed?
    □ eval_before / eval_after — did the eval swing sharply?
    □ think_time_ms — was the brain under time pressure?
@@ -78,11 +78,52 @@ uv run gomoku-cli playback recordings/gomoku_20260405_143012.json
 
 Use `←` / `→` to navigate.  Note the move numbers that look suspicious.
 
+When a companion `.diag.jsonl` file sits next to the recording, playback
+overlays per-move brain internals under each board (decision path, TT hit
+rate, threat counts, top candidates, `alternative_best` warnings).
+
 ---
 
-## Step 2 — Enable & Read Diagnostics
+## Step 2 — Run `gomoku analyze`
 
-If you have a `.diag.jsonl` file, load it:
+`gomoku analyze` parses the diagnostics file and flags suspect moves for
+you.  Start here before diving into raw JSON:
+
+```bash
+uv run gomoku analyze recordings/gomoku_20260405_143012.diag.jsonl
+```
+
+Output is two tables:
+
+1. **Per-player statistics** — moves, total / avg think time, avg and max
+   depth, total nodes, blunder count.
+2. **Flagged moves** — every move that tripped one or more heuristics.
+
+### Flagging heuristics
+
+| Reason | Fires when | Default threshold |
+|--------|-----------|-------------------|
+| `eval_drop` | Your own `eval_after` dropped sharply vs your previous move | ≥ 500 eval units |
+| `bypassed_top_candidate` | `alternative_best` outscored the chosen move (eval-typed candidates only) | ≥ 500 eval units |
+| `time_spike` | Think time much larger than this player's running average | ≥ 2× average **and** ≥ 200 ms |
+| `opp_double_four` | Opponent has ≥ 2 fours after your move and you did not pick a `block_*` decision path | — |
+| `opp_forced_win` | Opponent's `vcf_result` / `vct_result` is `"win"` | — |
+
+Thresholds are module-level constants in `gomoku_cli.analyze`
+(`BLUNDER_EVAL_DROP`, `ALTERNATIVE_GAP`, `TIME_SPIKE_FACTOR`,
+`TIME_SPIKE_MIN_MS`).
+
+### Machine-readable output
+
+```bash
+uv run gomoku analyze recordings/gomoku_20260405_143012.diag.jsonl --json \
+    | jq '.flagged[] | select(.reasons | contains(["eval_drop"]))'
+```
+
+### Manual deep-dive (optional)
+
+When the analyzer flags a move you want to inspect by hand, load the JSONL
+directly:
 
 ```python
 import json
@@ -108,8 +149,8 @@ for m in moves:
 Look for:
 - **Large negative eval swings** (e.g., Δ-3000) — the chosen move made the
   position significantly worse.
-- **Decision path changes** — a brain switching from `VCF` to `Alpha-Beta`
-  mid-game may signal it lost the tactical thread.
+- **Decision path changes** — a brain switching from `vcf_win` to
+  `alphabeta` mid-game may signal it lost the tactical thread.
 
 ---
 
@@ -126,7 +167,7 @@ Typical eval swing: **Δ ≤ −3,000** or transition from "winning" to "losing"
 | `opp_threats.four_threats` | > 0 and brain didn't block |
 | `opp_threats.vcf_result` | `"win"` — opponent has a forced win the brain didn't see |
 | `our_threats.vcf_result` | Was `"win"` last turn but now `None` — brain abandoned its own VCF |
-| `top_candidates` | Top candidate ≫ chosen move's score |
+| `top_candidates` / `alternative_best` | Top candidate ≫ chosen move's score (analyzer reports this as `bypassed_top_candidate`) |
 
 ### How to check
 
@@ -154,7 +195,7 @@ the position.  Typical eval swing: **Δ −500 to −3,000**.
 |-----------------|---------|
 | `eval_before` → `eval_after` | Moderate negative swing |
 | `top_candidates` | #2 or #3 candidate scored significantly higher than chosen move |
-| `decision_path` | `"Alpha-Beta"` when a threat search might have found something |
+| `decision_path` | `"alphabeta"` when a threat search might have found something |
 | `our_threats.three_threats` | > 0 but brain didn't follow up on them |
 | `opp_threats.three_threats` | > 0 and brain didn't block |
 
@@ -180,7 +221,7 @@ resources — leading to weaker play in subsequent moves.
 |-----------------|---------|
 | `think_time_ms` | >> 5,000 ms for a non-critical move |
 | `search_stats.nodes_searched` | Very high node count with no eval improvement |
-| `search_stats.tt_hits` | 0 or very low — TT not helping |
+| `search_stats.tt_hits` / `tt_probes` | Hit rate `tt_hits/tt_probes` near zero — TT not helping |
 | `search_stats.aspiration_resets` | > 2 — windows keep failing |
 | `decision_path` | Expensive algorithm used when position is simple |
 | `search_stats.depth_reached` | < configured depth — search timed out |
@@ -259,7 +300,7 @@ For each identified issue, match it to a root cause:
 ### Pattern 1: "The horizon blunder"
 
 ```
-Move 20: eval +500 (Alpha-Beta, depth 4)
+Move 20: eval +500 (alphabeta, depth 4)
 Move 21: opponent plays live-four → eval -10000
 ```
 
@@ -272,8 +313,8 @@ brain which naturally searches much deeper for forcing lines.
 ### Pattern 2: "The abandoned VCF"
 
 ```
-Move 15: decision_path="VCF", eval +8000 (own VCF found)
-Move 17: decision_path="Alpha-Beta", eval +200 (VCF gone)
+Move 15: decision_path="vcf_win", eval +8000 (own VCF found)
+Move 17: decision_path="alphabeta", eval +200 (VCF gone)
 ```
 
 **Cause:** The brain found a VCF but the opponent's response disrupted it.
@@ -288,8 +329,8 @@ alpha-beta `depth`.
 ### Pattern 3: "The slow opening"
 
 ```
-Move 1: think_time_ms=12000, decision_path="Alpha-Beta"
-Move 2: think_time_ms=15000, decision_path="Alpha-Beta"
+Move 1: think_time_ms=12000, decision_path="alphabeta"
+Move 2: think_time_ms=15000, decision_path="alphabeta"
 ```
 
 **Cause:** No opening book configured.  Alpha-beta exhaustively searches an
@@ -301,7 +342,7 @@ almost-empty board where most moves are equivalent.
 ### Pattern 4: "The PNS timeout"
 
 ```
-Move 25: think_time_ms=5100, decision_path="Alpha-Beta", notes=["PNS: budget exhausted"]
+Move 25: think_time_ms=5100, decision_path="alphabeta", notes=["PNS: budget exhausted"]
 ```
 
 **Cause:** PNS ran for its full time budget (5s) without proving or disproving
@@ -330,7 +371,14 @@ a three-threat chain, increase `vct_depth` or `pns_nodes`.
 
 ## Analysis Scripts
 
-The `scripts/` directory contains utilities for post-game analysis:
+The primary analyser is the built-in CLI command:
+
+```bash
+uv run gomoku analyze recordings/gomoku_*.diag.jsonl
+uv run gomoku analyze recordings/gomoku_*.diag.jsonl --json | jq '.flagged'
+```
+
+Additional utilities under `scripts/` target narrower questions:
 
 | Script | Purpose | Usage |
 |--------|---------|-------|
@@ -357,7 +405,23 @@ uv run gomoku-cli playback recordings/gomoku_20260405_143012.json
 Navigate to move 25 — Black seems to have the initiative. By move 30, White
 has built a row on row 7 uncontested. By move 38, White has a live-four.
 
-### Step 2: Diagnostics overview
+### Step 2: Run the analyzer
+
+```bash
+uv run gomoku analyze recordings/gomoku_20260405_143012.diag.jsonl
+```
+
+Suppose it reports:
+
+```
+Flagged moves (2)
+#   Stone  Path               Reasons                  Details
+27  Black  vcf_aware_search   eval_drop                eval_drop=820 eval_prev=+100 eval_after=-720
+30  Black  alphabeta          eval_drop                eval_drop=540 eval_prev=-170 eval_after=-710
+```
+
+For additional context, load the JSONL directly and inspect neighbours of
+the flagged moves:
 
 ```python
 # Load diagnostics
@@ -374,22 +438,23 @@ for m in moves[24:35]:  # moves 25-35
 
 Output:
 ```
-# 25 VCF-defence            opp_fours=0  Δ=-200
-# 26 Alpha-Beta             opp_fours=0  Δ=+100
-# 27 VCF-defence            opp_fours=1  Δ=-800     ← !!
-# 28 Alpha-Beta             opp_fours=0  Δ=+50
-# 29 Alpha-Beta             opp_fours=0  Δ=-100
-# 30 Alpha-Beta             opp_fours=0  Δ=-500     ← !!
+# 25 vcf_aware_search       opp_fours=0  Δ=-200
+# 26 alphabeta              opp_fours=0  Δ=+100
+# 27 vcf_aware_search       opp_fours=1  Δ=-800     ← flagged
+# 28 alphabeta              opp_fours=0  Δ=+50
+# 29 alphabeta              opp_fours=0  Δ=-100
+# 30 alphabeta              opp_fours=0  Δ=-500     ← flagged
 ```
 
 ### Step 3: Diagnosis
 
-**Move 27** — Black used VCF-defence, meaning White had a VCF. But Black's
-response let White's row-7 grow uncontested (Δ=-800). The VCF-defence picked
-a breaker that neutralised the VCF but didn't address the positional build-up.
+**Move 27** — Black ran `vcf_aware_search`, meaning White had a VCF that
+Black was trying to break.  Black's response neutralised the VCF but let
+White's row-7 grow uncontested (Δ=-800). The VCF-breaker wasn't the one
+that also helped positionally.
 
-**Move 30** — Black's alpha-beta played a general move while White had been
-building on row 7 for three turns.
+**Move 30** — Black's plain alpha-beta played a general move while White
+had been building on row 7 for three turns.
 
 ### Step 4: Root cause
 

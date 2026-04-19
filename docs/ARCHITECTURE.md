@@ -65,10 +65,11 @@ gomoku/
 │   │   └── tests/
 │   └── gomoku-cli/           ← Terminal user interface
 │       ├── src/gomoku_cli/
-│       │   ├── main.py       ← Click CLI (play, playback commands)
+│       │   ├── main.py       ← Click CLI (play, playback, analyze, generate-book)
 │       │   ├── display.py    ← Rich-based board rendering
 │       │   ├── keyboard.py   ← Human player input provider
-│       │   └── playback.py   ← Arrow-key game replay
+│       │   ├── playback.py   ← Arrow-key game replay + diagnostics overlay
+│       │   └── analyze.py    ← Post-game .diag.jsonl analyser
 │       └── tests/
 ├── recordings/               ← Saved game JSON files + MD5 checksums
 └── scripts/                  ← Analysis & generation utilities

@@ -30,7 +30,8 @@ uv run gomoku-cli playback recordings/gomoku_20260405_143012.json
 | **6 AI brains** | Random, minimax, negamax, alpha-beta (8 enhancements), threat (VCF/VCT/PNS), MCTS |
 | **Human play** | Keyboard input via terminal |
 | **Game recording** | Incremental JSON with MD5 checksums |
-| **Diagnostics** | Per-move brain internals (`.diag.jsonl`) |
+| **Diagnostics** | Per-move brain internals (`.diag.jsonl`) + `gomoku analyze` blunder/time-spike reporter |
+| **Playback overlay** | Arrow-key replay overlays diagnostics when a companion file exists |
 | **Opening book** | Hardcoded + file-based with 8-fold symmetry |
 | **Configuration** | TOML + environment variables + CLI flags |
 | **Observability** | Pydantic Logfire instrumentation |
@@ -104,7 +105,33 @@ uv run gomoku-cli play [OPTIONS]
 uv run gomoku-cli playback <file.json> [--from-move N]
 ```
 
-Navigate with `←` previous, `→` next, `q` quit.
+Navigate with `←` previous, `→` next, `q` quit.  If a companion
+`<file>.diag.jsonl` file sits next to the recording (default when playing
+with `--record --diagnostics`), per-move brain internals are overlaid under
+each position automatically.
+
+### `analyze` — Post-game diagnostics review
+
+```bash
+uv run gomoku-cli analyze <file.diag.jsonl> [--json]
+```
+
+Prints per-player stats (moves, think time, avg/max depth, total nodes,
+blunder count) and a table of suspect moves flagged by five heuristics
+(`eval_drop`, `bypassed_top_candidate`, `time_spike`, `opp_double_four`,
+`opp_forced_win`).  `--json` emits a single machine-readable document.
+See [docs/DIAGNOSTICS.md](docs/DIAGNOSTICS.md#post-game-analysis-gomoku-analyze)
+for details.
+
+### `generate-book` — Build a file-based opening book
+
+```bash
+uv run gomoku-cli generate-book [OPTIONS]
+```
+
+Runs a configurable brain on the early-game search tree and saves an
+opening book JSON file.  See
+[docs/OPENING_BOOK.md](docs/OPENING_BOOK.md#generating-a-book).
 
 ---
 

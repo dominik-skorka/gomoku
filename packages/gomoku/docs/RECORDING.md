@@ -160,6 +160,10 @@ At each step the terminal shows:
 
 - The board state with the last move highlighted
 - Move number, stone colour, cell, and think time
+- A diagnostics overlay (decision path, depth, nodes, TT hit rate, threat
+  counts, top candidates, `alternative_best` deviation) when a companion
+  `.diag.jsonl` file is found alongside the recording — see
+  [docs/DIAGNOSTICS.md](../../../docs/DIAGNOSTICS.md#playback-overlay)
 - At the final move: the game result and winning line
 
 ---
@@ -212,12 +216,26 @@ print(f"Winner: {record.result.winner}")
 ### Playback (programmatic)
 
 ```python
+from pathlib import Path
 from gomoku.recorder import load_record
 from gomoku_cli.playback import run_playback
 
 record = load_record(Path("recordings/gomoku_20260405_120611.json"))
+
+# Plain replay
 run_playback(record, from_move=1)
+
+# Replay with diagnostics overlay
+run_playback(
+    record,
+    from_move=1,
+    diagnostics_path=Path("recordings/gomoku_20260405_120611.diag.jsonl"),
+)
 ```
+
+The `gomoku playback` CLI auto-discovers a `.diag.jsonl` companion next to
+the recording; `diagnostics_path` is only needed when the file lives
+elsewhere.
 
 ---
 
