@@ -61,14 +61,16 @@ gomoku/
 │   │   │   └── __init__.py   ← Brain registry & factory
 │   │   ├── docs/
 │   │   │   ├── THREAT_BRAIN.md
-│   │   │   └── ALPHABETA_BRAIN.md
+│   │   │   ├── ALPHABETA_BRAIN.md
+│   │   │   └── MCTS_BRAIN.md
 │   │   └── tests/
 │   └── gomoku-cli/           ← Terminal user interface
 │       ├── src/gomoku_cli/
-│       │   ├── main.py       ← Click CLI (play, playback commands)
+│       │   ├── main.py       ← Click CLI (play, playback, analyze, generate-book)
 │       │   ├── display.py    ← Rich-based board rendering
 │       │   ├── keyboard.py   ← Human player input provider
-│       │   └── playback.py   ← Arrow-key game replay
+│       │   ├── playback.py   ← Arrow-key game replay + diagnostics overlay
+│       │   └── analyze.py    ← Post-game .diag.jsonl analyser
 │       └── tests/
 ├── recordings/               ← Saved game JSON files + MD5 checksums
 └── scripts/                  ← Analysis & generation utilities
@@ -217,9 +219,10 @@ All brains are registered in `gomoku_brain.__init__` and created via the
 | `mcts` | `mcts.py` | PUCT + heuristic priors + heuristic eval | Medium |
 | `keyboard` | `gomoku_cli/keyboard.py` | Human terminal input | N/A |
 
-See [THREAT_BRAIN.md](../packages/gomoku-brain/docs/THREAT_BRAIN.md) and
-[ALPHABETA_BRAIN.md](../packages/gomoku-brain/docs/ALPHABETA_BRAIN.md) for
-in-depth documentation of the two strongest brains.
+See [THREAT_BRAIN.md](../packages/gomoku-brain/docs/THREAT_BRAIN.md),
+[ALPHABETA_BRAIN.md](../packages/gomoku-brain/docs/ALPHABETA_BRAIN.md), and
+[MCTS_BRAIN.md](../packages/gomoku-brain/docs/MCTS_BRAIN.md) for
+in-depth documentation of the three heaviest brains.
 
 ---
 
