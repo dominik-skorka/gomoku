@@ -172,6 +172,7 @@ lmr = true
 | [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | Manual for analysing games — blunders, mistakes, inefficiencies, root causes, fixes |
 | [packages/gomoku-brain/docs/THREAT_BRAIN.md](packages/gomoku-brain/docs/THREAT_BRAIN.md) | VCF, VCT, PNS algorithms with pseudocode and examples |
 | [packages/gomoku-brain/docs/ALPHABETA_BRAIN.md](packages/gomoku-brain/docs/ALPHABETA_BRAIN.md) | Eight alpha-beta enhancements with worked examples |
+| [packages/gomoku-brain/docs/MCTS_BRAIN.md](packages/gomoku-brain/docs/MCTS_BRAIN.md) | PUCT, heuristic priors, Dirichlet noise, VCF safety gate |
 | [packages/gomoku/docs/RECORDING.md](packages/gomoku/docs/RECORDING.md) | Game recording JSON format, playback controls, Python API |
 
 ---
