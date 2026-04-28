@@ -6,12 +6,15 @@ Settings are loaded with the following priority (highest first):
 2. Environment variables with ``GOMOKU_`` prefix
 3. ``gomoku.toml`` file in the current directory (if it exists)
 4. Field defaults
+
+Per-brain settings models are defined here, but the mapping from brain
+name to settings model lives alongside the brain classes themselves in
+``gomoku_brain.BRAINS`` (see :mod:`gomoku_brain` for the single registry).
 """
 
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict, TomlConfigSettingsSource
@@ -122,16 +125,6 @@ class GameSettings(BaseModel):
 
 # ── Brain settings container ────────────────────────────────────────────────
 
-BRAIN_TYPE_SETTINGS: dict[str, type[BaseModel]] = {
-    "keyboard": KeyboardBrainSettings,
-    "random": RandomBrainSettings,
-    "minimax": MinimaxBrainSettings,
-    "negamax": NegamaxBrainSettings,
-    "alphabeta": AlphaBetaBrainSettings,
-    "threat": ThreatBrainSettings,
-    "mcts": MCTSBrainSettings,
-}
-
 
 class BrainSettings(BaseModel):
     """Container holding brain alias configurations.
@@ -140,41 +133,21 @@ class BrainSettings(BaseModel):
     referencing a built-in brain type and optional parameter overrides.
     Names that match a built-in type fall back to defaults when no alias
     is defined.
+
+    Resolution lives in :func:`gomoku_brain.resolve_brain` because it
+    needs the single brain registry.  This class stays a pure data
+    container so the core ``gomoku`` package has no upward dependency.
     """
 
     model_config = ConfigDict(extra="allow")
 
-    def resolve(self, name: str) -> tuple[str, dict[str, Any]]:
-        """Return *(brain_type, validated_kwargs)* for *name*."""
-        raw = (self.model_extra or {}).get(name)
-        if raw is not None:
-            if not isinstance(raw, dict) or "type" not in raw:
-                msg = f"Brain alias {name!r} must be a table with a 'type' key"
-                raise ValueError(msg)
-            brain_type: str = raw["type"]
-            params = {k: v for k, v in raw.items() if k != "type"}
-        elif name in BRAIN_TYPE_SETTINGS:
-            # Fall back: treat the name as a brain type with defaults.
-            brain_type = name
-            params = {}
-        else:
-            msg = f"Unknown brain {name!r}. Available: {', '.join(self.all_names())}"
-            raise ValueError(msg)
+    def aliases(self) -> dict[str, object]:
+        """Return the alias table (``{alias_name: alias_dict}``).
 
-        if brain_type not in BRAIN_TYPE_SETTINGS:
-            available = ", ".join(sorted(BRAIN_TYPE_SETTINGS))
-            msg = f"Unknown brain type {brain_type!r} in alias {name!r}. Available types: {available}"
-            raise ValueError(msg)
-
-        settings_cls = BRAIN_TYPE_SETTINGS[brain_type]
-        validated = settings_cls(**params)
-        return brain_type, validated.model_dump()
-
-    def all_names(self) -> list[str]:
-        """Return all available brain names (aliases + built-in types)."""
-        names = set(self.model_extra or {})
-        names.update(BRAIN_TYPE_SETTINGS)
-        return sorted(names)
+        Brain *types* (the built-in names) are not included — they live
+        in the registry alongside the brain classes.
+        """
+        return dict(self.model_extra or {})
 
 
 # ── Root settings ────────────────────────────────────────────────────────────
