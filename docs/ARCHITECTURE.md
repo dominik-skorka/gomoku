@@ -49,6 +49,7 @@ gomoku/
 │   │   │   ├── alphabeta_ordering.py ← Move-classification helpers
 │   │   │   ├── threat.py     ← ThreatBrain (VCF/VCT/PNS)
 │   │   │   ├── threat_detect.py      ← Threat-detection primitives
+│   │   │   ├── threat_search.py      ← VCF / VCT recursive search core
 │   │   │   ├── mcts.py       ← MCTSBrain (PUCT + heuristic eval)
 │   │   │   ├── pns.py        ← Proof-Number Search
 │   │   │   ├── evaluate.py   ← Heuristic board evaluation
