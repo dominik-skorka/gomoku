@@ -471,11 +471,11 @@ brain = MCTSBrain(
 
 ```bash
 # Default settings
-uv run gomoku-cli play --black mcts --white alphabeta
+uv run gomoku play --black mcts --white alphabeta
 
 # Inspect MCTS decisions after the game
-uv run gomoku-cli play --black mcts --white alphabeta --record --diagnostics
-uv run gomoku-cli analyze recordings/gomoku_*.diag.jsonl
+uv run gomoku play --black mcts --white alphabeta --record --diagnostics
+uv run gomoku analyze recordings/gomoku_*.diag.jsonl
 ```
 
 ### gomoku.toml

@@ -472,10 +472,10 @@ brain = AlphaBetaBrain(
 
 ```bash
 # Default settings
-uv run gomoku-cli play --black alphabeta --white threat
+uv run gomoku play --black alphabeta --white threat
 
 # With a file-based opening book
-uv run gomoku-cli play --black alphabeta --white threat --opening-book books/15x15.json
+uv run gomoku play --black alphabeta --white threat --opening-book books/15x15.json
 ```
 
 ### gomoku.toml

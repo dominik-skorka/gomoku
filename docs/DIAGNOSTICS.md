@@ -41,10 +41,10 @@ and to spot blunders, missed threats, or search inefficiencies.
 
 ```bash
 # Enable diagnostics (saves alongside recordings)
-uv run gomoku-cli play --black threat --white alphabeta --diagnostics
+uv run gomoku play --black threat --white alphabeta --diagnostics
 
 # Custom output directory
-uv run gomoku-cli play --black threat --white alphabeta \
+uv run gomoku play --black threat --white alphabeta \
     --diagnostics --diagnostics-dir my_diags/
 ```
 
@@ -181,8 +181,13 @@ if diag is not None:
 3. **`end_move()`** — the CLI clears the context and appends the entry to the
    `.diag.jsonl` file.
 
-This design is non-intrusive: brains that don't check for diagnostics work
-unchanged.  The overhead is zero when diagnostics are disabled.
+This design is non-intrusive: brains that don't check for diagnostics
+work unchanged, and brains that do still run `current_move_diagnostics()`
+(a single `ContextVar.get()` call returning `None`) plus one monotonic
+timer read per `get_move` — measured at well under a microsecond on a
+modern laptop, so the cost is negligible relative to the search itself.
+There is no per-node or per-move dictionary keeping diagnostics state
+warm when they're disabled.
 
 ---
 

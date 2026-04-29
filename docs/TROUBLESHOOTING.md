@@ -31,7 +31,7 @@ brain went wrong, why, and how to fix it.
 If you don't have diagnostics, re-play the same matchup with `--diagnostics`:
 
 ```bash
-uv run gomoku-cli play --black threat --white alphabeta \
+uv run gomoku play --black threat --white alphabeta \
     --record --diagnostics --diagnostics-dir recordings/
 ```
 
@@ -63,7 +63,7 @@ Start by watching the game move-by-move to build intuition about where things
 went wrong:
 
 ```bash
-uv run gomoku-cli playback recordings/gomoku_20260405_143012.json
+uv run gomoku playback recordings/gomoku_20260405_143012.json
 ```
 
 **What to look for:**
@@ -378,14 +378,27 @@ uv run gomoku analyze recordings/gomoku_*.diag.jsonl
 uv run gomoku analyze recordings/gomoku_*.diag.jsonl --json | jq '.flagged'
 ```
 
-Additional utilities under `scripts/` target narrower questions:
+For narrower follow-up queries, pipe `gomoku analyze --json` through
+`jq` rather than reaching for one-off scripts:
 
-| Script | Purpose | Usage |
-|--------|---------|-------|
-| `analyze_threats.py` | Scan games for undetected threats | `uv run python scripts/analyze_threats.py recordings/*.json` |
-| `analyze_vct_bailout.py` | Find positions where VCT gave up prematurely | `uv run python scripts/analyze_vct_bailout.py recordings/*.json` |
-| `trace_vct_game2.py` | Trace VCT decisions in a specific game | `uv run python scripts/trace_vct_game2.py` |
-| `test_vct_depths.py` | Benchmark VCT at multiple depths | `uv run python scripts/test_vct_depths.py` |
+```bash
+# Moves where the brain bypassed a clearly better candidate
+uv run gomoku analyze recordings/*.diag.jsonl --json \
+    | jq '.flagged[] | select(.reasons | contains(["bypassed_top_candidate"]))'
+
+# Per-player average think-time
+uv run gomoku analyze recordings/*.diag.jsonl --json \
+    | jq '.player_stats | to_entries[] | {stone:.key, avg_ms:.value.avg_think_ms}'
+
+# All decision paths the brain took, sorted by frequency
+jq -r '.decision_path' recordings/*.diag.jsonl 2>/dev/null \
+    | sort | uniq -c | sort -rn
+```
+
+If you need an analysis that `gomoku analyze` can't express, the
+`MoveDiagnostics` Pydantic model in `gomoku.diagnostics` deserialises
+each line of the `.diag.jsonl` file directly, so a five-line Python
+script can usually answer the question.
 
 ---
 
@@ -399,7 +412,7 @@ White wins at move 42 despite Black having the first-move advantage.
 ### Step 1: Replay
 
 ```bash
-uv run gomoku-cli playback recordings/gomoku_20260405_143012.json
+uv run gomoku playback recordings/gomoku_20260405_143012.json
 ```
 
 Navigate to move 25 — Black seems to have the initiative. By move 30, White

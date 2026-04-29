@@ -12,13 +12,13 @@ interface, game recording, diagnostics, and opening book support.
 uv sync
 
 # Play as Black (keyboard) against the strongest AI (threat brain)
-uv run gomoku-cli play --black keyboard --white threat
+uv run gomoku play --black keyboard --white threat
 
 # Watch two AIs play each other
-uv run gomoku-cli play --black threat --white alphabeta --record
+uv run gomoku play --black threat --white alphabeta --record
 
 # Replay a recorded game
-uv run gomoku-cli playback recordings/gomoku_20260405_143012.json
+uv run gomoku playback recordings/gomoku_20260405_143012.json
 ```
 
 ---
@@ -84,7 +84,7 @@ extensions.
 ### `play` — Start a game
 
 ```bash
-uv run gomoku-cli play [OPTIONS]
+uv run gomoku play [OPTIONS]
 ```
 
 | Option | Default | Description |
@@ -102,7 +102,7 @@ uv run gomoku-cli play [OPTIONS]
 ### `playback` — Replay a recorded game
 
 ```bash
-uv run gomoku-cli playback <file.json> [--from-move N]
+uv run gomoku playback <file.json> [--from-move N]
 ```
 
 Navigate with `←` previous, `→` next, `q` quit.  If a companion
@@ -113,7 +113,7 @@ each position automatically.
 ### `analyze` — Post-game diagnostics review
 
 ```bash
-uv run gomoku-cli analyze <file.diag.jsonl> [--json]
+uv run gomoku analyze <file.diag.jsonl> [--json]
 ```
 
 Prints per-player stats (moves, think time, avg/max depth, total nodes,
@@ -126,7 +126,7 @@ for details.
 ### `generate-book` — Build a file-based opening book
 
 ```bash
-uv run gomoku-cli generate-book [OPTIONS]
+uv run gomoku generate-book [OPTIONS]
 ```
 
 Runs a configurable brain on the early-game search tree and saves an
@@ -206,7 +206,6 @@ packages/
   gomoku-brain/             ← AI brains
   gomoku-cli/               ← terminal interface
 recordings/                 ← saved games & diagnostics
-scripts/                    ← analysis utilities
 docs/                       ← project documentation
 ```
 
