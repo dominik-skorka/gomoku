@@ -9,6 +9,7 @@ from gomoku.board import Board
 from gomoku.models import Move, Stone
 from gomoku.rules import check_winner
 
+from gomoku_brain.brain_base import brain_session
 from gomoku_brain.candidates import get_candidate_moves
 from gomoku_brain.directions import DIRECTIONS as _DIRECTIONS
 from gomoku_brain.evaluate import evaluate_board
@@ -301,10 +302,10 @@ class AlphaBetaBrain:
         return "alphabeta"
 
     def get_move(self, board: Board, stone: Stone) -> Move:
-        with logfire.span("brain.alphabeta", depth=self.depth, vcf_depth=self.vcf_depth, stone=str(stone)):
-            from gomoku.diagnostics import current_move_diagnostics
-
-            diag = current_move_diagnostics()
+        with brain_session(
+            "alphabeta", depth=self.depth, vcf_depth=self.vcf_depth, stone=str(stone)
+        ) as session:
+            diag = session.diag
 
             # -- Opening book (file-based, then hardcoded) -------------------
             book_move = None
@@ -350,9 +351,10 @@ class AlphaBetaBrain:
             prev_score: float | None = None
             aspiration_resets = 0
 
-            # Time management: 0 means unlimited.
+            # Time management: 0 means unlimited.  Deadline is independent
+            # of the brain_session timer because it gates the search itself
+            # (not just diagnostics reporting).
             deadline = (time.monotonic() + self.time_limit_s) if self.time_limit_s > 0 else 0.0
-            search_start = time.monotonic()
 
             # Static eval before the move (for diagnostics).
             if diag is not None:
@@ -448,7 +450,7 @@ class AlphaBetaBrain:
 
                 from gomoku_brain.threat import _find_four_threats, _find_three_threats
 
-                search_ms = int((time.monotonic() - search_start) * 1000)
+                search_ms = session.elapsed_ms()
                 diag.decision_path = diag.decision_path or "alphabeta"
                 diag.chosen_move = best_move
                 diag.search_stats = SearchStats(

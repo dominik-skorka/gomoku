@@ -14,6 +14,7 @@ from gomoku.board import Board
 from gomoku.models import Move, Stone
 
 from gomoku_brain.alphabeta import AlphaBetaBrain
+from gomoku_brain.brain_base import brain_session
 from gomoku_brain.candidates import get_candidate_moves
 from gomoku_brain.directions import DIRECTIONS as _DIRECTIONS
 from gomoku_brain.search_state import SearchState
@@ -706,20 +707,17 @@ class ThreatBrain:
         return "threat"
 
     def get_move(self, board: Board, stone: Stone) -> Move:
-        with logfire.span(
-            "brain.threat",
+        with brain_session(
+            "threat",
             vcf_depth=self.vcf_depth,
             vct_depth=self.vct_depth,
             threat_search=self.threat_search,
             pns_nodes=self.pns_nodes,
             stone=str(stone),
-        ):
-            import time as _time
+        ) as session:
+            from gomoku.diagnostics import ThreatInfo
 
-            from gomoku.diagnostics import ThreatInfo, current_move_diagnostics
-
-            diag = current_move_diagnostics()
-            _t0 = _time.monotonic()
+            diag = session.diag
 
             # Collect threat landscape for diagnostics.
             if diag is not None:

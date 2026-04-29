@@ -37,6 +37,7 @@ import numpy as np
 from gomoku.board import Board
 from gomoku.models import Move, Stone
 
+from gomoku_brain.brain_base import brain_session
 from gomoku_brain.candidates import get_candidate_moves
 from gomoku_brain.search_state import SearchState
 from gomoku_brain.threat import classify_vcf_breakers, probe_immediate
@@ -261,18 +262,13 @@ class MCTSBrain:
     # -- Public interface ----------------------------------------------------
 
     def get_move(self, board: Board, stone: Stone) -> Move:
-        with logfire.span(
-            "brain.mcts",
+        with brain_session(
+            "mcts",
             iterations=self.iterations,
             exploration=self.exploration,
             stone=str(stone),
-        ):
-            import time as _time
-
-            from gomoku.diagnostics import current_move_diagnostics
-
-            diag = current_move_diagnostics()
-            _t0 = _time.monotonic()
+        ) as session:
+            diag = session.diag
 
             candidates = get_candidate_moves(board)
             if len(candidates) == 1:
@@ -374,7 +370,7 @@ class MCTSBrain:
             if diag is not None:
                 from gomoku.diagnostics import CandidateInfo, SearchStats
 
-                search_ms = int((_time.monotonic() - _t0) * 1000)
+                search_ms = session.elapsed_ms()
                 diag.decision_path = diag.decision_path or (
                     "mcts_vcf_gated" if vcf_gated else "mcts"
                 )
