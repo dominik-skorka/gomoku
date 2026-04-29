@@ -8,9 +8,17 @@ file covers the silent-wrong-answer primitives:
 * prior normalisation (a non-normalised prior breaks PUCT proportionality)
 * Dirichlet noise mixing (must preserve the sum and still differ from the
   input for non-trivial ``noise_weight``)
+* heuristic leaf value (must lie in [0, 1] and reflect side advantage)
 * PUCT formula (a sign flip or missing sqrt goes undetected by smoke tests)
 * VCF safety gate (when the opponent has a forced four-threat win, MCTS
   must fall back to blocking cells only)
+
+The raw-grid helpers that earlier versions of this file referenced
+(``_candidate_moves`` / ``_evaluate_position`` / ``_fast_check_winner`` /
+``_find_winning_move`` / ``_score_move_prior``) were removed when MCTS
+moved to a shared :class:`SearchState`.  Their equivalents are covered
+in ``test_search_state.py``, ``test_evaluate_jit.py``, ``test_threat.py``,
+and ``test_parity.py``; we don't duplicate that coverage here.
 """
 
 from __future__ import annotations
@@ -21,94 +29,26 @@ import random
 import pytest
 from gomoku.board import Board
 from gomoku.models import Move, Stone
-
 from gomoku_brain.mcts import (
     MCTSBrain,
     _apply_dirichlet_noise,
-    _candidate_moves,
     _compute_priors,
-    _evaluate_position,
-    _fast_check_winner,
-    _find_winning_move,
+    _leaf_value,
     _Node,
-    _score_move_prior,
 )
+from gomoku_brain.search_state import SearchState
 
 # ---------------------------------------------------------------------------
-# Raw-grid helpers
-# ---------------------------------------------------------------------------
-
-
-def _empty_grid(size: int) -> list[list[int]]:
-    return [[0] * size for _ in range(size)]
-
-
-def _place(grid: list[list[int]], r: int, c: int, stone: Stone) -> None:
-    grid[r][c] = int(stone)
-
-
-# ---------------------------------------------------------------------------
-# Raw-grid winner / candidate helpers
+# Helpers
 # ---------------------------------------------------------------------------
 
 
-class TestFastCheckWinner:
-    def test_horizontal_five(self):
-        g = _empty_grid(15)
-        for c in range(3, 8):
-            _place(g, 7, c, Stone.BLACK)
-        assert _fast_check_winner(g, 15, 7, 5, int(Stone.BLACK), 5) is True
-
-    def test_not_win_with_four(self):
-        g = _empty_grid(15)
-        for c in range(3, 7):
-            _place(g, 7, c, Stone.BLACK)
-        assert _fast_check_winner(g, 15, 7, 5, int(Stone.BLACK), 5) is False
-
-    def test_diagonal_five(self):
-        g = _empty_grid(15)
-        for k in range(5):
-            _place(g, 3 + k, 3 + k, Stone.WHITE)
-        assert _fast_check_winner(g, 15, 5, 5, int(Stone.WHITE), 5) is True
-
-
-class TestFindWinningMove:
-    def test_finds_win(self):
-        g = _empty_grid(15)
-        for c in range(3, 7):
-            _place(g, 7, c, Stone.BLACK)
-        # Placing at (7,7) or (7,2) wins.
-        result = _find_winning_move(g, 15, [(7, 2), (7, 7), (0, 0)], int(Stone.BLACK), 5)
-        assert result in {(7, 2), (7, 7)}
-
-    def test_returns_none_when_no_win(self):
-        g = _empty_grid(15)
-        _place(g, 7, 7, Stone.BLACK)
-        assert _find_winning_move(g, 15, [(0, 0), (1, 1)], int(Stone.BLACK), 5) is None
-
-    def test_does_not_mutate_grid(self):
-        g = _empty_grid(15)
-        for c in range(3, 7):
-            _place(g, 7, c, Stone.BLACK)
-        before = [row[:] for row in g]
-        _find_winning_move(g, 15, [(7, 7), (0, 0)], int(Stone.BLACK), 5)
-        assert g == before
-
-
-class TestCandidateMoves:
-    def test_empty_board_returns_center(self):
-        cands = _candidate_moves(set(), 15, radius=2)
-        assert cands == [(7, 7)]
-
-    def test_radius_1_returns_8_neighbours(self):
-        cands = set(_candidate_moves({(7, 7)}, 15, radius=1))
-        expected = {(r, c) for r in range(6, 9) for c in range(6, 9) if (r, c) != (7, 7)}
-        assert cands == expected
-
-    def test_excludes_occupied(self):
-        cands = _candidate_moves({(7, 7), (7, 8)}, 15, radius=1)
-        assert (7, 7) not in cands
-        assert (7, 8) not in cands
+def _state_with_three(stone: Stone, size: int = 15) -> SearchState:
+    """Board with a 3-in-a-row of *stone* on row 7, cols 3-5; *stone* to move."""
+    b = Board(size=size)
+    for c in range(3, 6):
+        b = b.place_stone(Move(row=7, col=c), stone)
+    return SearchState.from_board(b, stone)
 
 
 # ---------------------------------------------------------------------------
@@ -116,58 +56,38 @@ class TestCandidateMoves:
 # ---------------------------------------------------------------------------
 
 
-class TestScoreMovePrior:
-    def test_baseline_is_positive(self):
-        """Every move gets at least a +1 baseline so priors can't all be 0."""
-        g = _empty_grid(9)
-        p = _score_move_prior(g, 9, 4, 4, int(Stone.BLACK), int(Stone.WHITE))
-        assert p >= 1.0
-
-    def test_extending_own_three_scores_higher_than_empty(self):
-        g = _empty_grid(15)
-        for c in range(3, 6):
-            _place(g, 7, c, Stone.BLACK)
-        extend = _score_move_prior(g, 15, 7, 6, int(Stone.BLACK), int(Stone.WHITE))
-        empty = _score_move_prior(g, 15, 0, 0, int(Stone.BLACK), int(Stone.WHITE))
-        assert extend > empty
-
-    def test_blocking_opponent_three_scores_higher_than_empty(self):
-        g = _empty_grid(15)
-        for c in range(3, 6):
-            _place(g, 7, c, Stone.WHITE)
-        block = _score_move_prior(g, 15, 7, 6, int(Stone.BLACK), int(Stone.WHITE))
-        empty = _score_move_prior(g, 15, 0, 0, int(Stone.BLACK), int(Stone.WHITE))
-        assert block > empty
-
-
 class TestComputePriors:
     def test_sums_to_one(self):
-        g = _empty_grid(15)
-        for c in range(3, 6):
-            _place(g, 7, c, Stone.BLACK)
+        state = _state_with_three(Stone.BLACK)
         cands = [(7, 2), (7, 6), (0, 0), (5, 5)]
-        priors = _compute_priors(g, 15, cands, int(Stone.BLACK), int(Stone.WHITE))
+        priors = _compute_priors(state, cands, int(Stone.BLACK), int(Stone.WHITE))
         assert sum(priors) == pytest.approx(1.0)
         assert all(p >= 0 for p in priors)
 
-    def test_fallback_uniform_when_all_zero(self):
-        """Baseline is +1 per move so we can't actually get all-zero raw
-        scores, but the defensive branch should still return a valid
-        uniform distribution for a single-candidate list."""
-        g = _empty_grid(9)
-        priors = _compute_priors(g, 9, [(4, 4)], int(Stone.BLACK), int(Stone.WHITE))
+    def test_single_candidate_gets_unit_prior(self):
+        state = SearchState.from_board(Board(size=9), Stone.BLACK)
+        priors = _compute_priors(state, [(4, 4)], int(Stone.BLACK), int(Stone.WHITE))
         assert priors == pytest.approx([1.0])
 
+    def test_empty_candidates_returns_empty(self):
+        state = SearchState.from_board(Board(size=9), Stone.BLACK)
+        assert _compute_priors(state, [], int(Stone.BLACK), int(Stone.WHITE)) == []
+
     def test_stronger_cell_gets_higher_prior(self):
-        """The cell that completes a four-threat should dominate an empty
-        corner cell."""
-        g = _empty_grid(15)
-        for c in range(3, 6):
-            _place(g, 7, c, Stone.BLACK)
+        """The cell that completes a four-threat should dominate empty cells."""
+        state = _state_with_three(Stone.BLACK)
         cands = [(0, 0), (7, 6), (14, 14)]
-        priors = _compute_priors(g, 15, cands, int(Stone.BLACK), int(Stone.WHITE))
+        priors = _compute_priors(state, cands, int(Stone.BLACK), int(Stone.WHITE))
         assert priors[1] > priors[0]
         assert priors[1] > priors[2]
+
+    def test_blocking_opponent_three_scores_above_empty(self):
+        """A defensive move (blocking opponent's three) must outscore an
+        unrelated empty cell — otherwise MCTS would never explore blocks."""
+        state = _state_with_three(Stone.WHITE)
+        cands = [(0, 0), (7, 6)]
+        priors = _compute_priors(state, cands, int(Stone.BLACK), int(Stone.WHITE))
+        assert priors[1] > priors[0]
 
 
 # ---------------------------------------------------------------------------
@@ -193,9 +113,9 @@ class TestApplyDirichletNoise:
         assert mixed == pytest.approx(priors)
 
     def test_noise_weight_one_ignores_priors(self):
-        """With noise_weight=1.0 the output is pure Dirichlet draw — so two
-        different seeds must give different results even if priors are the
-        same."""
+        """With ``noise_weight=1.0`` the output is a pure Dirichlet draw —
+        two different seeds must give different results even for identical
+        input priors."""
         priors = [0.25, 0.25, 0.25, 0.25]
         rng_state = random.getstate()
         try:
@@ -222,37 +142,28 @@ class TestApplyDirichletNoise:
 
 
 # ---------------------------------------------------------------------------
-# _evaluate_position — heuristic leaf value
+# Heuristic leaf value
 # ---------------------------------------------------------------------------
 
 
-class TestEvaluatePosition:
+class TestLeafValue:
     def test_returns_in_unit_interval(self):
-        g = _empty_grid(15)
-        occ: set[tuple[int, int]] = set()
-        for c in range(3, 6):
-            _place(g, 7, c, Stone.BLACK)
-            occ.add((7, c))
-        v = _evaluate_position(g, 15, occ, int(Stone.BLACK))
+        state = _state_with_three(Stone.BLACK)
+        v = _leaf_value(state, Stone.BLACK)
         assert 0.0 <= v <= 1.0
 
     def test_empty_board_is_neutral(self):
-        v = _evaluate_position(_empty_grid(15), 15, set(), int(Stone.BLACK))
+        state = SearchState.from_board(Board(size=15), Stone.BLACK)
+        v = _leaf_value(state, Stone.BLACK)
         assert v == pytest.approx(0.5)
 
-    def test_symmetry(self):
-        """Swapping the evaluator's perspective should map value to 1 - value."""
-        g = _empty_grid(15)
-        occ: set[tuple[int, int]] = set()
-        for c in range(3, 6):
-            _place(g, 7, c, Stone.BLACK)
-            occ.add((7, c))
-        v_black = _evaluate_position(g, 15, occ, int(Stone.BLACK))
-        v_white = _evaluate_position(g, 15, occ, int(Stone.WHITE))
-        # The sign flips but the 0.8 opp-weight makes it asymmetric, so the
-        # exact symmetry ``v_black + v_white == 1`` does not hold.  Instead:
-        # the BLACK-favourable position must score > 0.5 for BLACK and < 0.5
-        # for WHITE.
+    def test_advantage_flips_with_perspective(self):
+        """A position favouring BLACK must score > 0.5 from BLACK's view and
+        < 0.5 from WHITE's view (the 0.8 opp-weight makes the values
+        asymmetric, so ``v_black + v_white == 1`` does not hold exactly)."""
+        state = _state_with_three(Stone.BLACK)
+        v_black = _leaf_value(state, Stone.BLACK)
+        v_white = _leaf_value(state, Stone.WHITE)
         assert v_black > 0.5
         assert v_white < 0.5
 
@@ -346,7 +257,6 @@ class TestMCTSBrain:
         b = b.place_stone(Move(row=0, col=0), Stone.BLACK)
         brain = MCTSBrain(iterations=5)
         move = brain.get_move(b, Stone.BLACK)
-        # The only blocking cells are (7,2) and (7,7)
         assert move in {Move(row=7, col=2), Move(row=7, col=7)}
 
     def test_vcf_gate_picks_blocker_when_opponent_has_forced_win(self):
