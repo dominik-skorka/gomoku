@@ -247,7 +247,7 @@ book.save(Path("opening_book.json"))
 
 ```bash
 # Use a file-based opening book
-uv run gomoku-cli play --black alphabeta --white threat --opening-book books/15x15.json
+uv run gomoku play --black alphabeta --white threat --opening-book books/15x15.json
 ```
 
 The `--opening-book` flag injects the book path into all `alphabeta`-type

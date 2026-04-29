@@ -77,8 +77,7 @@ gomoku/
 │       │   ├── playback.py   ← Arrow-key game replay + diagnostics overlay
 │       │   └── analyze.py    ← Post-game .diag.jsonl analyser
 │       └── tests/
-├── recordings/               ← Saved game JSON files + MD5 checksums
-└── scripts/                  ← Analysis & generation utilities
+└── recordings/               ← Saved game JSON files + MD5 checksums
 ```
 
 ---
@@ -242,6 +241,41 @@ See [THREAT_BRAIN.md](../packages/gomoku-brain/docs/THREAT_BRAIN.md),
 [ALPHABETA_BRAIN.md](../packages/gomoku-brain/docs/ALPHABETA_BRAIN.md), and
 [MCTS_BRAIN.md](../packages/gomoku-brain/docs/MCTS_BRAIN.md) for
 in-depth documentation of the three heaviest brains.
+
+### Module split & import cycles
+
+`alphabeta.py` and `threat.py` were each split along behavioural seams
+(detection helpers, search core, root pre-check, quiescence — see the
+respective brain docs).  Two of the splits introduce a *load-order
+cycle*: `threat.py` defines the detection helpers that
+`threat_search.py` imports, but `threat.py` also re-exports the search
+functions back out for backward compatibility.  Same shape for
+`alphabeta.py` ⇄ `alphabeta_quiescence.py`.
+
+The cycle is broken by **module-load order**:
+
+1. `threat.py` defines `_find_four_threats`, `_find_three_threats`,
+   `_find_winning_move` near the top of the file.
+2. *After* those definitions, `threat.py` does `from
+   gomoku_brain.threat_search import _vcf, _vct, ...`.
+3. When Python now starts loading `threat_search.py`, its top-level
+   `from gomoku_brain.threat import _find_four_threats, ...` resolves
+   against the *partially-loaded* `threat` module — the helper names
+   are already present, so the import succeeds.
+4. `threat_search.py` finishes loading; control returns to `threat.py`,
+   which can then declare `ThreatBrain`.
+
+The same pattern wires `alphabeta.py` ⇄ `alphabeta_quiescence.py`,
+where `quiesce()` lazy-imports `_check_win` and `_split_threats` from
+`alphabeta` *inside the function body* (not at module scope) for the
+same reason.
+
+If you split another module along similar lines, keep this invariant:
+**the back-edge of the cycle must come after the symbols it reaches
+back at**.  The re-export tests (`test_module_split.py`,
+`test_threat_search_split.py`) lock in the `is`-identity of the
+re-exports; they will fail loudly if a future refactor accidentally
+shadows a symbol with a copy.
 
 ---
 
