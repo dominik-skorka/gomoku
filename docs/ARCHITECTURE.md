@@ -47,6 +47,7 @@ gomoku/
 │   │   │   ├── negamax.py    ← NegamaxBrain
 │   │   │   ├── alphabeta.py  ← AlphaBetaBrain (8 enhancements)
 │   │   │   ├── alphabeta_ordering.py ← Move-classification helpers
+│   │   │   ├── alphabeta_root.py     ← Root-level VCF pre-check
 │   │   │   ├── threat.py     ← ThreatBrain (VCF/VCT/PNS)
 │   │   │   ├── threat_detect.py      ← Threat-detection primitives
 │   │   │   ├── threat_search.py      ← VCF / VCT recursive search core

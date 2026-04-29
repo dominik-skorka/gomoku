@@ -145,7 +145,9 @@ class AlphaBetaBrain:
 
             # -- Root-level VCF pre-check ------------------------------------
             if self.vcf_depth > 0:
-                vcf_move = self._root_vcf(board, stone)
+                from gomoku_brain.alphabeta_root import root_vcf
+
+                vcf_move = root_vcf(board, stone, self.vcf_depth)
                 if vcf_move is not None:
                     if diag is not None:
                         diag.decision_path = "vcf_precheck"
@@ -352,98 +354,6 @@ class AlphaBetaBrain:
                 finally:
                     state.unmake()
         return block
-
-    # -- Root-level VCF pre-check -------------------------------------------
-
-    def _root_vcf(self, board: Board, stone: Stone) -> Move | None:
-        """Run VCF at the root for *stone* and its opponent.
-
-        Returns immediately if *stone* has a forced VCF win.
-        If the opponent has a VCF, restricts candidates to moves that break
-        it and returns the positionally best breaker.
-        Returns ``None`` when VCF is irrelevant and normal search should run.
-        """
-        from gomoku.diagnostics import current_move_diagnostics
-
-        from gomoku_brain.threat import _find_winning_move, _vcf, classify_vcf_breakers
-
-        diag = current_move_diagnostics()
-
-        # 0) Instant win — check before the expensive VCF search.
-        instant = _find_winning_move(board, stone)
-        if instant is not None:
-            logfire.info("AlphaBeta instant win: {move}", move=str(instant))
-            if diag is not None:
-                diag.decision_path = "instant_win"
-            return instant
-
-        # 1) Do we have a forced win?
-        our_vcf = _vcf(board, stone, self.vcf_depth, is_attacker=True)
-        if our_vcf is not None:
-            logfire.info("AlphaBeta VCF win: {move}", move=str(our_vcf))
-            if diag is not None:
-                diag.decision_path = "vcf_win"
-                diag.our_threats = diag.our_threats.model_copy(update={"vcf_result": "win"})
-            return our_vcf
-
-        # 2) Does the opponent have a forced win we must disrupt?
-        opp = stone.opponent()
-        opp_vcf = _vcf(board, opp, self.vcf_depth, is_attacker=True)
-        if opp_vcf is None:
-            if diag is not None:
-                diag.notes.append("No VCF for either side")
-            return None  # No VCF concern — proceed with normal search.
-
-        logfire.info("Opponent has VCF starting at {move}, searching breakers", move=str(opp_vcf))
-        if diag is not None:
-            diag.opp_threats = diag.opp_threats.model_copy(update={"vcf_result": "win"})
-            diag.notes.append(f"Opponent VCF at {opp_vcf}, searching breakers")
-
-        candidates = get_candidate_moves(board, radius=2)
-        durable, breakers = classify_vcf_breakers(board, candidates, stone, self.vcf_depth)
-
-        if not breakers:
-            # Nothing breaks the VCF — position is lost.  Prefer blocking an
-            # instant winning move (five-in-a-row) over the multi-step VCF
-            # start, since the instant win ends the game immediately.
-            block = _find_winning_move(board, opp)
-            if block is None:
-                block = opp_vcf
-            logfire.info(
-                "No VCF breaker found, blocking opponent VCF start: {move}",
-                move=str(block),
-            )
-            if diag is not None:
-                diag.decision_path = "vcf_block_no_breaker"
-                diag.chosen_move = block
-                diag.notes.append(f"No VCF breaker, blocking opponent at {block}")
-            return block
-
-        effective = durable if durable else breakers
-        logfire.info(
-            "VCF breakers: {total} total, {durable} durable, using {n}",
-            total=len(breakers),
-            durable=len(durable),
-            n=len(effective),
-        )
-        if diag is not None:
-            diag.decision_path = "vcf_breaker"
-            diag.notes.append(f"VCF breakers: {len(breakers)} total, {len(durable)} durable, using {len(effective)}")
-
-        if len(effective) == 1:
-            logfire.info("Single VCF breaker: {move}", move=str(effective[0]))
-            return effective[0]
-
-        # Multiple breakers — pick via evaluation.
-        best_score = float("-inf")
-        best_move = effective[0]
-        for move in effective:
-            trial = board.place_stone(move, stone)
-            score = evaluate_board(trial, stone)
-            if score > best_score:
-                best_score = score
-                best_move = move
-        return best_move
 
     # -- Move ordering -------------------------------------------------------
 
