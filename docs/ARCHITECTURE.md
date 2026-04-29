@@ -206,8 +206,22 @@ The game is played turn by turn — the caller drives the loop (the CLI calls
 
 ## AI Brains
 
-All brains are registered in `gomoku_brain.__init__` and created via the
-`get_brain()` / `get_brain_from_settings()` factory functions.
+All brains live in the single registry `gomoku_brain.BRAINS`, a
+`dict[str, BrainSpec]` that pairs each brain class with its pydantic
+settings model.  Adding a new brain means appending one `BrainSpec`
+entry — there is no parallel dict in `gomoku.settings` to keep in sync.
+
+Public surface:
+
+- `get_brain(name, **kwargs)` — instantiate by name with explicit kwargs.
+- `resolve_brain(name, brain_settings)` — turn a brain name or TOML
+  alias into a validated `(type, kwargs)` pair without instantiating.
+- `get_brain_from_settings(name, brain_settings)` — `resolve_brain` +
+  instantiate.
+- `register_brain(name, brain_cls, settings_cls)` — extend the registry
+  at runtime (used by the CLI to register the keyboard provider).
+- `available_brains(brain_settings)` — sorted list of all resolvable
+  names (built-ins + TOML aliases).
 
 | Brain | Module | Algorithm | Strength |
 |-------|--------|-----------|----------|

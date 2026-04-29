@@ -10,8 +10,8 @@ import logfire
 from gomoku.game import Game, InvalidMoveError
 from gomoku.models import GameConfig, Move, Stone
 from gomoku.recorder import GameRecorder, PlayerInfo, load_record
-from gomoku.settings import GomokuSettings
-from gomoku_brain import BRAINS, get_brain_from_settings
+from gomoku.settings import GomokuSettings, KeyboardBrainSettings
+from gomoku_brain import available_brains, get_brain_from_settings, register_brain, resolve_brain
 from rich.console import Console
 
 from gomoku_cli.display import render_board, render_result
@@ -20,7 +20,7 @@ from gomoku_cli.keyboard import KeyboardProvider
 console = Console()
 
 # Register the keyboard provider so it's resolved like any other brain.
-BRAINS["keyboard"] = KeyboardProvider
+register_brain("keyboard", KeyboardProvider, KeyboardBrainSettings)
 
 
 def _make_provider(name: str, settings: GomokuSettings) -> object:
@@ -29,7 +29,7 @@ def _make_provider(name: str, settings: GomokuSettings) -> object:
 
 def _player_settings(name: str, settings: GomokuSettings) -> dict:
     """Extract the brain settings dict for a given provider name."""
-    _brain_type, kwargs = settings.brains.resolve(name)
+    _brain_type, kwargs = resolve_brain(name, settings.brains)
     return kwargs
 
 
@@ -104,7 +104,7 @@ def play(
         book_str = str(opening_book_path)
         for name in [black_name, white_name]:
             try:
-                brain_type, _kwargs = settings.brains.resolve(name)
+                brain_type, _kwargs = resolve_brain(name, settings.brains)
             except ValueError:
                 continue
             if brain_type == "alphabeta":
@@ -118,7 +118,7 @@ def play(
                     settings.brains.model_extra[name] = {"type": "alphabeta", "opening_book": book_str}
 
     # Validate provider names early.
-    available = settings.brains.all_names()
+    available = available_brains(settings.brains)
     for name, label in [(black_name, "--black"), (white_name, "--white")]:
         if name not in available:
             raise click.BadParameter(
@@ -391,7 +391,7 @@ def generate_book(
 
     settings = _load_settings(config_path)
 
-    available = settings.brains.all_names()
+    available = available_brains(settings.brains)
     if brain_name not in available:
         raise click.BadParameter(
             f"Unknown brain {brain_name!r}. Available: {', '.join(available)}",
@@ -430,7 +430,7 @@ def generate_book(
 
     book.generator_brain = brain_name
     try:
-        _brain_type, kwargs = settings.brains.resolve(brain_name)
+        _brain_type, kwargs = resolve_brain(brain_name, settings.brains)
         book.generator_settings = kwargs
     except ValueError:
         pass
