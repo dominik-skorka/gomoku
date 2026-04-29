@@ -145,6 +145,11 @@ Runtime settings are managed via `gomoku.toml` with pydantic-settings.
 3. `gomoku.toml`
 4. Built-in defaults
 
+The TOML file is discovered automatically: the loader walks up from the
+current working directory until it finds `gomoku.toml` or hits a project
+root marker (`pyproject.toml` / `.git`).  Set `GOMOKU_CONFIG=/path/to/config.toml`
+to bypass discovery and use an explicit file.
+
 Brain aliases allow multiple configurations of the same engine:
 
 ```toml
