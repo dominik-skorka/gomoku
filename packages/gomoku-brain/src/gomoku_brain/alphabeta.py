@@ -432,17 +432,6 @@ class AlphaBetaBrain:
 
     # -- Quiescence search ---------------------------------------------------
 
-    @staticmethod
-    def _get_threat_moves(state: SearchState, stone: Stone) -> list[Move]:
-        """Return moves that create a four-in-a-row for *stone* or block one for the opponent.
-
-        Only considers candidates within radius 2 of occupied stones.
-        This is a lightweight detector for quiescence — not exhaustive.
-        """
-        candidates = get_candidate_moves(state)
-        threats, _ = _split_threats(state, candidates, stone)
-        return threats
-
     def _quiesce(
         self,
         state: SearchState,
@@ -453,70 +442,26 @@ class AlphaBetaBrain:
         qs_depth: int,
         eval_cache: EvalCache,
     ) -> float:
-        """Quiescence search: extend leaves for forcing (four-threat) moves."""
-        self.qs_node_count += 1
-        zh = state.zobrist
-        # -- VCF probe: detect multi-move forced wins that the one-ply
-        #    threat loop would miss.
-        if self.qs_vcf_depth > 0:
-            from gomoku_brain.grid_utils import grid_to_board
-            from gomoku_brain.threat import _find_winning_move, _vcf
+        """Quiescence search — thin wrapper around
+        :func:`gomoku_brain.alphabeta_quiescence.quiesce`.
 
-            # _vcf requires a Pydantic Board — reconstruct from bitboards.
-            vcf_board = grid_to_board(state.grid, state.size)
+        Bundles ``self.qs_vcf_depth`` and the running ``self.qs_node_count``
+        counter into a :class:`QuiesceCtx`, delegates to the free
+        function, and writes the updated counter back.  ``tt`` is
+        accepted but unused — preserved in the signature because the
+        main alpha-beta loop passes it from its own scope.
+        """
+        from gomoku_brain.alphabeta_quiescence import QuiesceCtx, quiesce
 
-            # Guard: if the opponent already has a winning move (four/five
-            # on the board), we must block — we cannot freely start our own
-            # VCF.  Skipping this check caused the engine to return a false
-            # +100 000 even when the opponent had an unstoppable live-4.
-            opp = stone.opponent()
-            if _find_winning_move(vcf_board, opp) is None:
-                if _vcf(vcf_board, stone, self.qs_vcf_depth, is_attacker=True) is not None:
-                    return 100_000.0
-
-        # Standing pat — static evaluation as a lower bound.
-        if zh in eval_cache:
-            stand_pat = eval_cache[zh]
-        else:
-            stand_pat = evaluate_board(state, stone)
-            eval_cache[zh] = stand_pat
-        if stand_pat >= beta:
-            return stand_pat
-        if stand_pat > alpha:
-            alpha = stand_pat
-
-        if qs_depth <= 0:
-            return stand_pat
-
-        # Only search forcing moves.
-        threats = self._get_threat_moves(state, stone)
-        if not threats:
-            return stand_pat
-
-        for move in threats:
-            state.make(move.row, move.col, stone)
-            try:
-                if _check_win(state, move):
-                    return 100_000.0
-
-                score = -self._quiesce(
-                    state,
-                    -beta,
-                    -alpha,
-                    stone.opponent(),
-                    tt,
-                    qs_depth - 1,
-                    eval_cache,
-                )
-            finally:
-                state.unmake()
-
-            if score >= beta:
-                return score
-            if score > alpha:
-                alpha = score
-
-        return alpha
+        del tt  # quiescence does not consult the alpha-beta TT
+        ctx = QuiesceCtx(
+            qs_vcf_depth=self.qs_vcf_depth,
+            eval_cache=eval_cache,
+            nodes=self.qs_node_count,
+        )
+        score = quiesce(state, alpha, beta, stone, ctx, qs_depth)
+        self.qs_node_count = ctx.nodes
+        return score
 
     # -- Core search ---------------------------------------------------------
 
