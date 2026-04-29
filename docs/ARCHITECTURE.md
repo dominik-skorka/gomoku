@@ -297,8 +297,25 @@ Configuration is managed by `pydantic-settings` with a TOML backend.
 
 1. CLI flags (`--depth 4`)
 2. Environment variables (`GOMOKU_BRAINS__ALPHABETA__DEPTH=4`)
-3. `gomoku.toml` file
+3. `gomoku.toml` file (discovered via `gomoku.settings.find_config_file`)
 4. Field defaults in settings models
+
+### Config discovery
+
+`gomoku.toml` is located by `find_config_file` on each `GomokuSettings()`
+instantiation:
+
+1. If `GOMOKU_CONFIG` is set, use that file (no fallback if it's missing).
+2. Otherwise walk up from the current working directory toward the
+   filesystem root.  At each directory:
+   - if it contains `gomoku.toml`, return it;
+   - else if it contains `pyproject.toml` or `.git`, stop — that's a
+     project boundary and we don't leak into the parent.
+3. Return `None` (use field defaults) when no config exists in the
+   search path.
+
+This means `uv run gomoku ...` works the same whether you run it from
+the project root or any subdirectory.
 
 ### Key sections
 

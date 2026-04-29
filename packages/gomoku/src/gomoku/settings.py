@@ -4,7 +4,9 @@ Settings are loaded with the following priority (highest first):
 
 1. Explicit ``__init__`` kwargs (programmatic overrides / CLI)
 2. Environment variables with ``GOMOKU_`` prefix
-3. ``gomoku.toml`` file in the current directory (if it exists)
+3. ``gomoku.toml`` file discovered via :func:`find_config_file` —
+   ``GOMOKU_CONFIG`` env var if set, otherwise a walk-up from the
+   current working directory toward the filesystem root
 4. Field defaults
 
 Per-brain settings models are defined here, but the mapping from brain
@@ -14,12 +16,59 @@ name to settings model lives alongside the brain classes themselves in
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict, TomlConfigSettingsSource
 
-_TOML_FILE = Path("gomoku.toml")
+CONFIG_FILENAME = "gomoku.toml"
+"""Canonical config filename — searched for during the walk-up."""
+
+# Markers that signal a project root.  When the walk-up encounters one of
+# these in a directory that does *not* also contain ``gomoku.toml``, the
+# search stops — climbing further up would leak into an unrelated parent
+# project.
+_PROJECT_ROOT_MARKERS = ("pyproject.toml", ".git")
+
+
+def find_config_file(start: Path | None = None) -> Path | None:
+    """Locate the active ``gomoku.toml`` for the current process.
+
+    Resolution order:
+
+    1. ``GOMOKU_CONFIG`` environment variable, if set and pointing at an
+       existing file.  When set but the file is missing, returns
+       ``None`` *without* falling through to the walk-up — the user
+       explicitly opted in to that path so silently picking a different
+       config would be surprising.
+    2. Walk up from *start* (default: current working directory) toward
+       the filesystem root.  At each directory:
+
+       * if it contains ``gomoku.toml``, return that path;
+       * else if it contains ``pyproject.toml`` or ``.git``, stop —
+         we're at the project root and there is no config here.
+
+    Returns ``None`` when no config exists anywhere in the search path.
+    Callers (notably :class:`GomokuSettings`) should treat ``None`` as
+    "use field defaults".
+    """
+    env_path = os.environ.get("GOMOKU_CONFIG", "").strip()
+    if env_path:
+        p = Path(env_path).expanduser()
+        return p if p.is_file() else None
+
+    cwd = (start or Path.cwd()).resolve()
+    for directory in (cwd, *cwd.parents):
+        candidate = directory / CONFIG_FILENAME
+        if candidate.is_file():
+            return candidate
+        for marker in _PROJECT_ROOT_MARKERS:
+            if (directory / marker).exists():
+                # Hit a project boundary without finding the config —
+                # don't leak into unrelated parent projects.
+                return None
+    return None
 
 
 # ── Per-brain configuration sections ────────────────────────────────────────
@@ -154,12 +203,19 @@ class BrainSettings(BaseModel):
 
 
 class GomokuSettings(BaseSettings):
-    """Root settings loaded from env vars / ``gomoku.toml`` / defaults."""
+    """Root settings loaded from env vars / ``gomoku.toml`` / defaults.
+
+    The TOML file is located dynamically on each instantiation via
+    :func:`find_config_file` — meaning ``GomokuSettings()`` works the
+    same whether you run from the project root or any subdirectory.
+    Pre-walk-up code paths that constructed ``GomokuSettings(**data)``
+    after loading TOML by hand continue to work unchanged because the
+    discovered file is just a lower-priority source than ``init_settings``.
+    """
 
     model_config = SettingsConfigDict(
         env_prefix="GOMOKU_",
         env_nested_delimiter="__",
-        toml_file=str(_TOML_FILE),
     )
 
     game: GameSettings = GameSettings()
@@ -178,9 +234,16 @@ class GomokuSettings(BaseSettings):
         dotenv_settings: object,
         file_secret_settings: object,
     ) -> tuple[object, ...]:
+        # Resolve the TOML path *per-instance* so subclasses, tests,
+        # and CLI invocations from different CWDs all pick up the
+        # nearest ``gomoku.toml``.  When no config is found, we still
+        # construct a TomlConfigSettingsSource pointing at a missing
+        # path — pydantic-settings handles that gracefully (it returns
+        # an empty dict and field defaults are used).
+        toml_path = find_config_file() or Path(CONFIG_FILENAME)
         return (
             init_settings,
             env_settings,
-            TomlConfigSettingsSource(settings_cls),
+            TomlConfigSettingsSource(settings_cls, toml_file=toml_path),
             file_secret_settings,
         )
