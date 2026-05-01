@@ -7,6 +7,7 @@ dependencies = [
     "gomoku",
     "gomoku-brain",
     "gomoku-cli",
+    "gomoku-fastapi",
 ]
 
 [tool.uv.workspace]
@@ -16,6 +17,7 @@ members = ["packages/*"]
 gomoku = { workspace = true }
 gomoku-brain = { workspace = true }
 gomoku-cli = { workspace = true }
+gomoku-fastapi = { workspace = true }
 
 [tool.ruff]
 target-version = "py314"
@@ -38,6 +40,7 @@ testpaths = [
     "packages/gomoku/tests",
     "packages/gomoku-brain/tests",
     "packages/gomoku-cli/tests",
+    "packages/gomoku-fastapi/tests",
 ]
 markers = [
     "bench: slow benchmarks (opt-in via `-m bench`)",
@@ -48,4 +51,5 @@ addopts = "-m 'not bench'"
 dev = [
     "pytest>=9.0.2",
     "ruff>=0.15.9",
+    "httpx>=0.27",
 ]
