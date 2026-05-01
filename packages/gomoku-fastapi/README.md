@@ -22,21 +22,39 @@ curl -X POST http://127.0.0.1:8000/v1/move \
   -H "Content-Type: application/json" \
   -d '{"board": {"size": 9}, "side_to_move": 1, "brain": "alphabeta",
        "brain_overrides": {"depth": 2}}'
-# {"move":{"row":4,"col":4,"position":"E5"},"brain":"alphabeta"}
+# {"move":{"row":4,"col":4,"position":"E5"},"brain":"alphabeta",
+#  "diagnostics":null}
+
+# Get a move + per-move diagnostics
+curl -X POST http://127.0.0.1:8000/v1/move \
+  -H "Content-Type: application/json" \
+  -d '{"board": {"size": 9}, "side_to_move": 1, "brain": "alphabeta",
+       "diagnostics": true}'
+
+# Static heuristic eval
+curl -X POST http://127.0.0.1:8000/v1/evaluate \
+  -H "Content-Type: application/json" \
+  -d '{"board": {"size": 9}, "side_to_move": 1}'
+
+# Analyse a recording (multipart upload)
+curl -X POST http://127.0.0.1:8000/v1/analyze \
+  -F "file=@recordings/gomoku_*.diag.jsonl"
 ```
 
 Interactive OpenAPI docs are live at `http://127.0.0.1:8000/docs`.
 
-## Endpoints (iteration 1)
+## Endpoints (iterations 1-2)
 
 | Path | Verb | Purpose |
 |---|---|---|
 | `/healthz` | GET | Liveness probe |
 | `/v1/brains` | GET | Brain registry + per-brain settings JSON Schema |
-| `/v1/move` | POST | Stateless: ask a brain for its move on a given board |
+| `/v1/move` | POST | Stateless: ask a brain for its move on a given board (optional `diagnostics: true`) |
+| `/v1/evaluate` | POST | Static heuristic eval — no brain |
+| `/v1/analyze` | POST | Upload a `.diag.jsonl`; returns the same report shape as `gomoku analyze --json` |
 
-The plan from the architecture-review thread schedules sessions,
-diagnostics, and analyze in iterations 2-4.
+The plan from the architecture-review thread schedules stateful
+sessions and operational hardening in iterations 3-4.
 
 ## Configuration
 

@@ -13,6 +13,7 @@ from __future__ import annotations
 from typing import Any
 
 from gomoku.board import Board
+from gomoku.diagnostics import MoveDiagnostics
 from gomoku.models import Move, Stone
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -66,6 +67,17 @@ class MoveRequest(BaseModel):
             "the TOML aliases."
         ),
     )
+    diagnostics: bool = Field(
+        default=False,
+        description=(
+            "When ``true``, the server activates a diagnostics "
+            ":class:`~gomoku.diagnostics.MoveDiagnostics` ContextVar "
+            "around the brain call and returns the captured record on "
+            "the response.  Adds a measurable cost to the request "
+            "(brains do extra evaluation when diagnostics are active), "
+            "so leave it off when you only need the move."
+        ),
+    )
 
 
 class MoveResponse(BaseModel):
@@ -73,11 +85,54 @@ class MoveResponse(BaseModel):
 
     move: Move = Field(description="Move chosen by the brain.")
     brain: str = Field(description="Echo of the brain key used (post-alias resolution).")
+    diagnostics: MoveDiagnostics | None = Field(
+        default=None,
+        description=(
+            "Per-move diagnostics when the request set ``diagnostics: "
+            "true``; ``null`` otherwise.  Schema matches the lines of a "
+            "``.diag.jsonl`` recording so callers can pipe straight into "
+            "``analyze_diagnostics``."
+        ),
+    )
+
+
+class EvaluateRequest(BaseModel):
+    """Request payload for ``POST /v1/evaluate`` — static heuristic eval.
+
+    No brain is involved; this is a cheap call into
+    :func:`gomoku_brain.evaluate.evaluate_board`.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    board: Board = Field(description="Position to evaluate.")
+    side_to_move: Stone = Field(
+        description=(
+            "Whose perspective the eval is from.  Higher = better for "
+            "*this* side; the same board returns roughly opposite "
+            "scores for opposite stones."
+        ),
+    )
+
+
+class EvaluateResponse(BaseModel):
+    """Response payload for ``POST /v1/evaluate``."""
+
+    score: float = Field(
+        description=(
+            "Heuristic score from ``side_to_move``'s perspective.  "
+            "Clamped to ±99 000 — never reaches the ±100 000 win/loss "
+            "constants used by the search."
+        ),
+    )
 
 
 __all__ = [
     "BrainInfo",
     "BrainsResponse",
+    "EvaluateRequest",
+    "EvaluateResponse",
     "MoveRequest",
     "MoveResponse",
 ]
+

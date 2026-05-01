@@ -10,24 +10,27 @@ from __future__ import annotations
 
 from fastapi import FastAPI
 
-from gomoku_fastapi.routers import brains, health, moves
+from gomoku_fastapi.routers import analyze, brains, evaluate, health, moves
 
 
 def create_app() -> FastAPI:
     """Build a fresh FastAPI app with all routers mounted."""
     app = FastAPI(
         title="Gomoku API",
-        version="0.1.0",
+        version="0.2.0",
         description=(
-            "REST API for the Gomoku engine.  Stateless surface: query a "
-            "brain for its move on a given board, list registered brains, "
-            "and check liveness.  Stateful sessions arrive in a later "
-            "iteration."
+            "REST API for the Gomoku engine.  Stateless surface: query "
+            "a brain for its move on a given board, evaluate a "
+            "position, analyse a diagnostics recording, list registered "
+            "brains, and check liveness.  Stateful sessions arrive in a "
+            "later iteration."
         ),
     )
     app.include_router(health.router)
     app.include_router(brains.router, prefix="/v1")
     app.include_router(moves.router, prefix="/v1")
+    app.include_router(evaluate.router, prefix="/v1")
+    app.include_router(analyze.router, prefix="/v1")
     return app
 
 
