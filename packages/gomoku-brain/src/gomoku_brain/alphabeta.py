@@ -644,20 +644,24 @@ class AlphaBetaBrain:
         History heuristic scores are added to the evaluation to boost moves
         that have historically caused cutoffs.
         """
+        candidates_by_coord = {(m.row, m.col): m for m in candidates}
         skip: set[tuple[int, int]] = set()
         promoted: list[Move] = []
 
         # 1. TT best-move first
-        if tt_move is not None and tt_move in candidates:
-            promoted.append(tt_move)
-            skip.add((tt_move.row, tt_move.col))
+        if tt_move is not None:
+            tt_coord = (tt_move.row, tt_move.col)
+            if tt_coord in candidates_by_coord:
+                promoted.append(candidates_by_coord[tt_coord])
+                skip.add(tt_coord)
 
         # 2. Killer moves
         if depth in killers:
             for km in killers[depth]:
-                if (km.row, km.col) not in skip and km in candidates:
-                    promoted.append(km)
-                    skip.add((km.row, km.col))
+                km_coord = (km.row, km.col)
+                if km_coord not in skip and km_coord in candidates_by_coord:
+                    promoted.append(candidates_by_coord[km_coord])
+                    skip.add(km_coord)
 
         rest = [m for m in candidates if (m.row, m.col) not in skip]
 
@@ -1052,7 +1056,7 @@ class AlphaBetaBrain:
                             state,
                             child_depth,
                             -beta,
-                            -score,
+                            -alpha,
                             stone.opponent(),
                             killers,
                             tt,

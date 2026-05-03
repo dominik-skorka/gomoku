@@ -487,7 +487,13 @@ def classify_vcf_breakers(
     return durable, breakers
 
 
-def _vct_defence_moves_state(state: SearchState, attack_move: Move, stone: Stone) -> list[Move]:
+def _vct_defence_moves_state(
+    state: SearchState,
+    attack_move: Move,
+    stone: Stone,
+    *,
+    known_end_cells: set[tuple[int, int]] | None = None,
+) -> list[Move]:
     """Compute the full defence set for a three-threat played by *stone*.
 
     Mirrors :func:`_vct_defence_moves` but operates on a mutable
@@ -497,12 +503,15 @@ def _vct_defence_moves_state(state: SearchState, attack_move: Move, stone: Stone
     opp = stone.opponent()
 
     # Natural end-cell defences of the live three
-    three_threats = _find_three_threats(state, stone)
-    end_cells: set[tuple[int, int]] = set()
-    for atk, defs in three_threats:
-        if atk == attack_move:
-            for d in defs:
-                end_cells.add((d.row, d.col))
+    if known_end_cells is None:
+        three_threats = _find_three_threats(state, stone)
+        end_cells: set[tuple[int, int]] = set()
+        for atk, defs in three_threats:
+            if atk == attack_move:
+                for d in defs:
+                    end_cells.add((d.row, d.col))
+    else:
+        end_cells = set(known_end_cells)
 
     # Place the attack, then scan for counter four-threats
     state.make(attack_move.row, attack_move.col, stone)
@@ -558,10 +567,22 @@ def _vct_state(
 
         # 2) Try three-threats
         three_threats = _find_three_threats(state, stone)
+        merged_threats: dict[tuple[int, int], tuple[Move, set[tuple[int, int]]]] = {}
+        for attack, naive_defences in three_threats:
+            key = (attack.row, attack.col)
+            if key not in merged_threats:
+                merged_threats[key] = (attack, set())
+            for d in naive_defences:
+                merged_threats[key][1].add((d.row, d.col))
         opp = stone.opponent()
-        for attack, _naive_defences in three_threats:
+        for attack, naive_end_cells in merged_threats.values():
             # Defence set is computed on the *pre-attack* state.
-            defence_moves = _vct_defence_moves_state(state, attack, stone)
+            defence_moves = _vct_defence_moves_state(
+                state,
+                attack,
+                stone,
+                known_end_cells=naive_end_cells,
+            )
 
             state.make(attack.row, attack.col, stone)
             try:
@@ -737,24 +758,22 @@ class ThreatBrain:
                     three_threats=len(opp_threes),
                 )
 
-            # 0) If we can win immediately, do it
-            win = _find_winning_move(board, stone)
-            if win is not None:
-                logfire.info("Immediate win: {move}", move=str(win))
+            # 0) Shared immediate tactical probe (win / forced block)
+            immediate, immediate_tag = probe_immediate(board, stone)
+            if immediate is not None:
+                if immediate_tag == "instant_win":
+                    logfire.info("Immediate win: {move}", move=str(immediate))
+                    decision_path = "immediate_win"
+                else:
+                    logfire.info("Blocking opponent immediate win at: {move}", move=str(immediate))
+                    decision_path = "block_immediate_win"
                 if diag is not None:
-                    diag.decision_path = "immediate_win"
-                    diag.chosen_move = win
-                return win
+                    # Keep legacy decision-path labels for downstream tooling.
+                    diag.decision_path = decision_path
+                    diag.chosen_move = immediate
+                return immediate
 
-            # 1) If opponent can win next turn, we must block
             opp = stone.opponent()
-            opp_win = _find_winning_move(board, opp)
-            if opp_win is not None:
-                logfire.info("Blocking opponent immediate win at: {move}", move=str(opp_win))
-                if diag is not None:
-                    diag.decision_path = "block_immediate_win"
-                    diag.chosen_move = opp_win
-                return opp_win
 
             # 2) Try VCF — very fast, deep search
             move = _vcf(board, stone, self.vcf_depth, is_attacker=True)
