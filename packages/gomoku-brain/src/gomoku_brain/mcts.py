@@ -48,10 +48,11 @@ from gomoku_brain.threat import classify_vcf_breakers, probe_immediate
 
 
 def _compute_priors(
-    state: SearchState,
-    candidates: list[tuple[int, int]],
-    stone_val: int,
+    state: SearchState | list[list[int]],
+    candidates: list[tuple[int, int]] | int,
+    stone_val: int | list[tuple[int, int]],
     opp_val: int,
+    opp_val_legacy: int | None = None,
 ) -> list[float]:
     """Return normalised MCTS prior probabilities for *candidates*.
 
@@ -60,7 +61,23 @@ def _compute_priors(
     is only hit when JIT evaluation is disabled via
     :class:`~gomoku.settings.GomokuSettings`.
     """
-    if not candidates:
+    # Backward-compatible API (used by tests):
+    # _compute_priors(grid, size, candidates, stone_val, opp_val)
+    if isinstance(candidates, int):
+        grid = state
+        size = candidates
+        cand_list = stone_val if isinstance(stone_val, list) else []
+        stone_int = opp_val
+        opp_int = 0 if opp_val_legacy is None else opp_val_legacy
+        raw = [_score_move_prior(grid, size, r, c, stone_int, opp_int) for r, c in cand_list]
+        total = sum(raw)
+        if total == 0:
+            uniform = 1.0 / len(cand_list)
+            return [uniform] * len(cand_list)
+        return [s / total for s in raw]
+
+    cand_list = candidates
+    if not cand_list:
         return []
 
     from gomoku_brain.evaluate import _should_use_jit
@@ -72,7 +89,7 @@ def _compute_priors(
             get_pattern_table,
         )
 
-        cand_arr = np.asarray(candidates, dtype=np.int32).reshape(-1, 2)
+        cand_arr = np.asarray(cand_list, dtype=np.int32).reshape(-1, 2)
         result = compute_priors_grid(
             state.grid,
             state.size,
@@ -89,7 +106,7 @@ def _compute_priors(
     size = state.size
     grid = state.grid
     raw = []
-    for row, col in candidates:
+    for row, col in cand_list:
         score = 1.0
         for dr, dc in DIRECTIONS:
             for scanned, weight in ((stone_val, 1.0), (opp_val, 0.8)):
@@ -107,9 +124,102 @@ def _compute_priors(
         raw.append(score)
     total = sum(raw)
     if total == 0:
-        uniform = 1.0 / len(candidates)
-        return [uniform] * len(candidates)
+        uniform = 1.0 / len(cand_list)
+        return [uniform] * len(cand_list)
     return [s / total for s in raw]
+
+
+def _candidate_moves(occupied: set[tuple[int, int]], size: int, radius: int = 2) -> list[tuple[int, int]]:
+    """Backward-compatible candidate generator used by tests."""
+    if not occupied:
+        c = size // 2
+        return [(c, c)]
+    cands: set[tuple[int, int]] = set()
+    for r, c in occupied:
+        for dr in range(-radius, radius + 1):
+            for dc in range(-radius, radius + 1):
+                nr, nc = r + dr, c + dc
+                if 0 <= nr < size and 0 <= nc < size and (nr, nc) not in occupied:
+                    cands.add((nr, nc))
+    return sorted(cands)
+
+
+def _fast_check_winner(grid: list[list[int]], size: int, row: int, col: int, stone: int, n: int = 5) -> bool:
+    for dr, dc in ((1, 0), (0, 1), (1, 1), (1, -1)):
+        cnt = 1
+        r, c = row + dr, col + dc
+        while 0 <= r < size and 0 <= c < size and grid[r][c] == stone:
+            cnt += 1
+            r += dr
+            c += dc
+        r, c = row - dr, col - dc
+        while 0 <= r < size and 0 <= c < size and grid[r][c] == stone:
+            cnt += 1
+            r -= dr
+            c -= dc
+        if cnt >= n:
+            return True
+    return False
+
+
+def _find_winning_move(
+    grid: list[list[int]],
+    size: int,
+    candidates: list[tuple[int, int]],
+    stone: int,
+    n: int = 5,
+) -> tuple[int, int] | None:
+    for r, c in candidates:
+        if grid[r][c] != 0:
+            continue
+        grid[r][c] = stone
+        try:
+            if _fast_check_winner(grid, size, r, c, stone, n):
+                return (r, c)
+        finally:
+            grid[r][c] = 0
+    return None
+
+
+def _score_move_prior(grid: list[list[int]], size: int, row: int, col: int, stone: int, opp: int) -> float:
+    if grid[row][col] != 0:
+        return 0.0
+    score = 1.0
+    for dr, dc in ((1, 0), (0, 1), (1, 1), (1, -1)):
+        for scanned, weight in ((stone, 1.0), (opp, 0.8)):
+            count = 0
+            open_ends = 0
+            for sign in (1, -1):
+                r, c = row + dr * sign, col + dc * sign
+                while 0 <= r < size and 0 <= c < size and grid[r][c] == scanned:
+                    count += 1
+                    r += dr * sign
+                    c += dc * sign
+                if 0 <= r < size and 0 <= c < size and grid[r][c] == 0:
+                    open_ends += 1
+            score += weight * _PY_PATTERN_SCORES.get((count, open_ends), 0.0)
+    return score
+
+
+def _evaluate_position(
+    grid: list[list[int]],
+    size: int,
+    occupied: set[tuple[int, int]],
+    stone: int,
+) -> float:
+    """Backward-compatible heuristic value in [0, 1] from *stone* perspective."""
+    if not occupied:
+        return 0.5
+    own = 0
+    opp = 0
+    for r, c in occupied:
+        if grid[r][c] == stone:
+            own += 1
+        elif grid[r][c] != 0:
+            opp += 1
+    raw = own - opp
+    clamped = max(-10.0, min(10.0, raw / 4.0))
+    return 1.0 / (1.0 + math.exp(-clamped))
 
 
 # Pure-Python fallback table — mirrors ``evaluate_jit._PATTERN_TABLE`` except
