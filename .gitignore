@@ -42,3 +42,6 @@ Thumbs.db
 
 # internal data
 recordings/
+
+# Tool-managed skill references (installed via `uv run library-skills`)
+.agents/
