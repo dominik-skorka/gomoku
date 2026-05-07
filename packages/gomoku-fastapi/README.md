@@ -39,11 +39,29 @@ curl -X POST http://127.0.0.1:8000/v1/evaluate \
 # Analyse a recording (multipart upload)
 curl -X POST http://127.0.0.1:8000/v1/analyze \
   -F "file=@recordings/gomoku_*.diag.jsonl"
+
+# Stateful session: human (Black) vs alphabeta (White)
+GAME=$(curl -s -X POST http://127.0.0.1:8000/v1/games \
+  -H "Content-Type: application/json" \
+  -d '{"board_size": 9, "white": {"brain": "alphabeta",
+       "brain_overrides": {"depth": 2}}}' | jq -r .game_id)
+
+# Black plays the centre
+curl -X POST http://127.0.0.1:8000/v1/games/$GAME/moves \
+  -H "Content-Type: application/json" \
+  -d '{"stone": 1, "move": {"row": 4, "col": 4}}'
+
+# White's brain replies
+curl -X POST http://127.0.0.1:8000/v1/games/$GAME/think \
+  -H "Content-Type: application/json" -d '{}'
+
+# Tear it down
+curl -X DELETE http://127.0.0.1:8000/v1/games/$GAME
 ```
 
 Interactive OpenAPI docs are live at `http://127.0.0.1:8000/docs`.
 
-## Endpoints (iterations 1-2)
+## Endpoints
 
 | Path | Verb | Purpose |
 |---|---|---|
@@ -52,9 +70,16 @@ Interactive OpenAPI docs are live at `http://127.0.0.1:8000/docs`.
 | `/v1/move` | POST | Stateless: ask a brain for its move on a given board (optional `diagnostics: true`) |
 | `/v1/evaluate` | POST | Static heuristic eval — no brain |
 | `/v1/analyze` | POST | Upload a `.diag.jsonl`; returns the same report shape as `gomoku analyze --json` |
+| `/v1/games` | POST | Create a session (each side may be brain-driven or external) |
+| `/v1/games/{id}` | GET | Read session state (board, history, result) |
+| `/v1/games/{id}` | DELETE | Drop a session (idempotent — 204 even if unknown) |
+| `/v1/games/{id}/moves` | POST | Submit an externally-played move |
+| `/v1/games/{id}/think` | POST | Run the configured brain on the side-to-move |
 
-The plan from the architecture-review thread schedules stateful
-sessions and operational hardening in iterations 3-4.
+Sessions are in-process and TTL-evicted (default: 1 hour of
+inactivity).  No persistence — restarting the server drops everything.
+Operational hardening (rate limits, structured request logging,
+metrics) lands in iteration 4.
 
 ## Configuration
 
@@ -71,6 +96,9 @@ client ── HTTP ──▶ FastAPI router
                        ├─ build_brain(name, overrides, settings)
                        │     └─ resolve_brain (gomoku-brain registry)
                        │
+                       ├─ SessionStore (in-memory, TTL-evicted)
+                       │     └─ Session { GameRunner, lock, recorder, ... }
+                       │
                        └─ anyio.to_thread.run_sync(brain.get_move)
                               ↑ keeps the event loop responsive while
                                 a multi-second alpha-beta search runs
@@ -80,3 +108,10 @@ The CPU-bound `brain.get_move` runs on the default anyio thread pool
 so that one slow request can't starve other concurrent ones.
 Diagnostics `ContextVar`s propagate across the thread-pool boundary
 correctly (locked in by tests in iteration 2).
+
+`GameRunner` (added in iteration 3, in `gomoku/runner.py`) generalises
+`Game`'s loop so each side may be brain-driven *or* external.  The
+`/v1/games/{id}/moves` endpoint advances the external side; `/think`
+dispatches the configured brain.  Per-session locking keeps concurrent
+calls on the same session serialised without blocking different
+sessions.

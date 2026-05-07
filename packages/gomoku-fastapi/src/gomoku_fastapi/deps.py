@@ -1,14 +1,15 @@
-"""FastAPI dependencies — settings + brain registry resolver.
+"""FastAPI dependencies — settings, brain registry, session store.
 
 Wires :class:`gomoku.settings.GomokuSettings` (with its walk-up TOML
-discovery) and :func:`gomoku_brain.get_brain_from_settings` into the
-request lifecycle.  Endpoints that need either declare a
-``Depends(get_settings)`` / ``Depends(get_brain_factory)`` parameter and
-get a per-request value injected.
+discovery), :func:`gomoku_brain.get_brain_from_settings`, and the
+in-memory :class:`SessionStore` into the request lifecycle.  Endpoints
+declare an ``Annotated[..., Depends(...)]`` parameter and get a
+per-request value injected.
 
-The settings instance is cached at module level so we don't re-walk the
-filesystem on every request.  Tests can clear the cache via
-:func:`reset_settings_cache`.
+The settings instance and the session store are both cached at module
+level so we don't re-walk the filesystem or lose stateful sessions on
+every request.  Tests can clear the cache via :func:`reset_settings_cache`
+and :func:`reset_session_store`.
 """
 
 from __future__ import annotations
@@ -24,7 +25,10 @@ from gomoku_brain import (
     resolve_brain,
 )
 
+from gomoku_fastapi.sessions import SessionStore
+
 _settings: GomokuSettings | None = None
+_session_store: SessionStore | None = None
 
 
 def get_settings() -> GomokuSettings:
@@ -41,7 +45,23 @@ def reset_settings_cache() -> None:
     _settings = None
 
 
+def get_session_store() -> SessionStore:
+    """Return the process-wide :class:`SessionStore` (cached)."""
+    global _session_store
+    if _session_store is None:
+        _session_store = SessionStore()
+    return _session_store
+
+
+def reset_session_store() -> None:
+    """Drop the cached session store — used by tests so each test
+    starts with an empty store and no inherited session state."""
+    global _session_store
+    _session_store = None
+
+
 SettingsDep = Annotated[GomokuSettings, Depends(get_settings)]
+SessionStoreDep = Annotated[SessionStore, Depends(get_session_store)]
 
 
 def build_brain(
@@ -98,10 +118,13 @@ def build_brain(
 
 
 __all__ = [
+    "SessionStoreDep",
     "SettingsDep",
     "build_brain",
     # Re-exported for convenience so endpoint code only imports from one place.
     "get_brain_from_settings",
+    "get_session_store",
     "get_settings",
+    "reset_session_store",
     "reset_settings_cache",
 ]
