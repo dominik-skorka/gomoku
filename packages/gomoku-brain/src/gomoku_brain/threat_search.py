@@ -264,7 +264,14 @@ def _vct_defence_moves_state(state: SearchState, attack_move: Move, stone: Stone
     Mirrors :func:`_vct_defence_moves` but operates on a mutable
     :class:`SearchState` — ``state`` is expected to be the pre-attack
     position and is returned to the same ply on exit.
+
+    On the JIT path the per-candidate counter-four probe uses
+    ``has_any_four_threat_grid`` (short-circuits on first hit) over
+    a candidate list regenerated after each defender placement, replacing
+    the previous full ``_find_four_threats`` enumeration.
     """
+    from gomoku_brain.evaluate import _should_use_jit
+
     opp = stone.opponent()
 
     # Natural end-cell defences of the live three
@@ -275,18 +282,42 @@ def _vct_defence_moves_state(state: SearchState, attack_move: Move, stone: Stone
             for d in defs:
                 end_cells.add((d.row, d.col))
 
-    # Place the attack, then scan for counter four-threats
     state.make(attack_move.row, attack_move.col, stone)
     try:
-        for candidate in get_candidate_moves(state, radius=2):
-            if (candidate.row, candidate.col) in end_cells:
-                continue
-            state.make(candidate.row, candidate.col, opp)
-            try:
-                if _find_four_threats(state, opp):
-                    end_cells.add((candidate.row, candidate.col))
-            finally:
-                state.unmake()
+        if _should_use_jit():
+            from gomoku_brain.evaluate_jit import (
+                get_candidates_grid,
+                get_dirs,
+                has_any_four_threat_grid,
+            )
+            from gomoku_brain.grid_utils import occupied_coords
+
+            dirs = get_dirs()
+            opp_int = int(opp)
+            size = state.size
+            grid = state.grid  # mutable mirror updated by make/unmake
+
+            for candidate in get_candidate_moves(state, radius=2):
+                if (candidate.row, candidate.col) in end_cells:
+                    continue
+                state.make(candidate.row, candidate.col, opp)
+                try:
+                    occ = occupied_coords(state)
+                    cands = get_candidates_grid(grid, size, occ, 2)
+                    if has_any_four_threat_grid(grid, size, cands, opp_int, dirs):
+                        end_cells.add((candidate.row, candidate.col))
+                finally:
+                    state.unmake()
+        else:
+            for candidate in get_candidate_moves(state, radius=2):
+                if (candidate.row, candidate.col) in end_cells:
+                    continue
+                state.make(candidate.row, candidate.col, opp)
+                try:
+                    if _find_four_threats(state, opp):
+                        end_cells.add((candidate.row, candidate.col))
+                finally:
+                    state.unmake()
     finally:
         state.unmake()
 

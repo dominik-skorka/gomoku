@@ -174,6 +174,50 @@ def _fork_score(
 
 
 @njit(cache=True)
+def find_fork_cells_grid(
+    grid: NDArray,  # type: ignore[type-arg]
+    size: int,
+    occ: NDArray,  # type: ignore[type-arg]
+    stone: int,
+    dirs: NDArray,  # type: ignore[type-arg]
+    table: NDArray,  # type: ignore[type-arg]
+    fork_threshold: int,
+) -> NDArray:  # type: ignore[type-arg]
+    """Return empty cells where >= 2 threat-level lines for *stone* converge.
+
+    Mirrors ``_fork_score`` but emits coordinates instead of a bonus.
+    Returns an int32[K, 2] array of (row, col) pairs in scan order.
+    """
+    n_occ = occ.shape[0]
+    seen = np.zeros((size, size), dtype=np.bool_)
+    # Upper bound: every cell can be visited once.
+    out = np.empty((size * size, 2), dtype=np.int32)
+    out_count = 0
+
+    for i in range(n_occ):
+        occ_r = occ[i, 0]
+        occ_c = occ[i, 1]
+        for dr in range(-2, 3):
+            for dc in range(-2, 3):
+                nr = occ_r + dr
+                nc = occ_c + dc
+                if nr < 0 or nr >= size or nc < 0 or nc >= size:
+                    continue
+                if seen[nr, nc]:
+                    continue
+                seen[nr, nc] = True
+                if grid[nr, nc] != 0:
+                    continue
+                lines = _threat_lines_at(grid, size, nr, nc, stone, dirs, table, fork_threshold)
+                if lines >= 2:
+                    out[out_count, 0] = nr
+                    out[out_count, 1] = nc
+                    out_count += 1
+
+    return out[:out_count].copy()
+
+
+@njit(cache=True)
 def _open_three_score(
     grid: NDArray,  # type: ignore[type-arg]
     size: int,
@@ -464,6 +508,30 @@ def is_four_threat(
             r -= dr
             c -= dc
         if count >= 4:
+            return True
+    return False
+
+
+@njit(cache=True)
+def has_any_four_threat_grid(
+    grid: NDArray,  # type: ignore[type-arg]
+    size: int,
+    candidates: NDArray,  # type: ignore[type-arg]
+    stone: int,
+    dirs: NDArray,  # type: ignore[type-arg]
+) -> bool:
+    """Return True if any cell in *candidates* would create a four-threat.
+
+    Short-circuits on the first hit — cheaper than ``find_four_threats_grid``
+    when the caller only needs a boolean (e.g. VCT counter-four detection).
+    """
+    n = candidates.shape[0]
+    for i in range(n):
+        r = candidates[i, 0]
+        c = candidates[i, 1]
+        if grid[r, c] != 0:
+            continue
+        if is_four_threat(grid, size, r, c, stone, dirs):
             return True
     return False
 

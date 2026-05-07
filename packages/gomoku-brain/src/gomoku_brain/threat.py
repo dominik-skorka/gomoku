@@ -349,13 +349,11 @@ class ThreatBrain:
                     continue
                 # Expensive threat probe — bounded by remaining global budget.
                 if self.threat_search == "pns":
-                    from gomoku_brain.grid_utils import grid_to_board
                     from gomoku_brain.pns import pns_threat_search
 
                     remaining = max(0.05, deadline - _time.monotonic())
-                    trial_board = grid_to_board(state.grid, state.size)
                     opp_result = pns_threat_search(
-                        trial_board,
+                        state,
                         opp,
                         max_nodes=self.pns_nodes // 2,
                         max_time_s=min(self.pns_time_s / 2, remaining),
