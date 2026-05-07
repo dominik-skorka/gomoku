@@ -78,8 +78,30 @@ Interactive OpenAPI docs are live at `http://127.0.0.1:8000/docs`.
 
 Sessions are in-process and TTL-evicted (default: 1 hour of
 inactivity).  No persistence — restarting the server drops everything.
-Operational hardening (rate limits, structured request logging,
-metrics) lands in iteration 4.
+
+## Operations
+
+| Concern | How it's handled |
+|---|---|
+| Structured logs | [logfire](https://logfire.pydantic.dev/) — auto-instruments FastAPI requests + spans the brain calls already made via `logfire.span` in `gomoku.game`.  Set `LOGFIRE_TOKEN` to ship to logfire.dev; otherwise records stay local. |
+| Request correlation | `X-Request-ID` middleware — echoes the client's ID or mints a UUID, and exposes it via `gomoku_fastapi.observability.get_request_id()` for downstream code (incl. work dispatched to anyio threads). |
+| CORS | Opt-in via `settings.api.cors_origins`.  Empty list = no middleware mounted (server-to-server only). |
+| Rate limiting | [slowapi](https://github.com/laurentS/slowapi), in-memory backend.  Two tiers: a default per-IP limit on every endpoint and a tighter shared bucket on the compute-heavy `/v1/move` + `/v1/games/{id}/think`.  Set the limit strings to `""` to disable a tier. |
+| Graceful shutdown | FastAPI lifespan handler clears the session store on shutdown so a restart doesn't carry stale state forward. |
+
+Configure via `[api]` in `gomoku.toml`:
+
+```toml
+[api]
+cors_origins = ["http://localhost:5173"]
+rate_limit_default = "120/minute"
+rate_limit_compute = "30/minute"
+logfire_send = false
+logfire_console = true
+```
+
+All knobs are also overridable via the `GOMOKU_API__<NAME>` env var
+(e.g. `GOMOKU_API__RATE_LIMIT_COMPUTE="10/minute"`).
 
 ## Configuration
 
@@ -115,3 +137,8 @@ correctly (locked in by tests in iteration 2).
 dispatches the configured brain.  Per-session locking keeps concurrent
 calls on the same session serialised without blocking different
 sessions.
+
+Iteration 4 wraps the request pipeline with logfire instrumentation, a
+slowapi limiter, optional CORS, and a request-ID middleware — all
+configured from `[api]` in `gomoku.toml` so an operator can tune
+without a code change.

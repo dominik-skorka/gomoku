@@ -26,7 +26,7 @@ from tempfile import mkdtemp
 from typing import Annotated
 
 import anyio
-from fastapi import APIRouter, HTTPException, Response, status
+from fastapi import APIRouter, HTTPException, Request, Response, status
 from fastapi import Path as PathParam
 from gomoku.diagnostics import DiagnosticsRecorder
 from gomoku.game import InvalidMoveError
@@ -40,6 +40,7 @@ from gomoku.runner import (
 )
 
 from gomoku_fastapi.deps import SessionStoreDep, SettingsDep, build_brain
+from gomoku_fastapi.limits import compute_shared_limit
 from gomoku_fastapi.schemas import (
     CreateGameRequest,
     GameStateResponse,
@@ -270,10 +271,15 @@ def submit_move(
     responses={
         404: {"description": "Session not found or expired."},
         422: {"description": "Current side is external, or game already over."},
+        429: {"description": "Per-IP rate limit exceeded."},
     },
 )
+@compute_shared_limit
 async def think(
-    game_id: GameIdPath, req: ThinkRequest, store: SessionStoreDep
+    request: Request,
+    game_id: GameIdPath,
+    req: ThinkRequest,
+    store: SessionStoreDep,
 ) -> ThinkResponse:
     """Run the brain configured for the side-to-move and apply its move.
 

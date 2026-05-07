@@ -12,7 +12,7 @@ captured record alongside the move.
 from __future__ import annotations
 
 import anyio
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Request, status
 from gomoku.diagnostics import (
     MoveDiagnostics,
     current_move_diagnostics,
@@ -21,6 +21,7 @@ from gomoku.diagnostics import (
 from gomoku.models import Stone
 
 from gomoku_fastapi.deps import SettingsDep, build_brain
+from gomoku_fastapi.limits import compute_shared_limit
 from gomoku_fastapi.schemas import MoveRequest, MoveResponse
 
 router = APIRouter(tags=["moves"])
@@ -64,9 +65,11 @@ def _run_brain_with_diagnostics(brain, board, stone, capture: bool) -> tuple[obj
     responses={
         404: {"description": "Unknown brain name."},
         422: {"description": "Invalid request payload (bad side, no candidates, etc.)."},
+        429: {"description": "Per-IP rate limit exceeded."},
     },
 )
-async def post_move(req: MoveRequest, settings: SettingsDep) -> MoveResponse:
+@compute_shared_limit
+async def post_move(request: Request, req: MoveRequest, settings: SettingsDep) -> MoveResponse:
     """Resolve the brain, run ``get_move``, return the move (and optional diagnostics).
 
     The brain runs in a worker thread via :func:`anyio.to_thread.run_sync`

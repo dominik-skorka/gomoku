@@ -172,6 +172,56 @@ class GameSettings(BaseModel):
     win_length: int = Field(default=5, ge=3)
 
 
+# ── HTTP API settings ───────────────────────────────────────────────────────
+
+
+class ApiSettings(BaseModel):
+    """Settings that only apply to the ``gomoku-fastapi`` service.
+
+    Lives in the core ``gomoku`` package so it sits alongside the other
+    sections in ``gomoku.toml`` — no separate settings file needed.
+    The CLI / engine ignore it; only ``gomoku_fastapi`` reads it.
+    """
+
+    cors_origins: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Browser origins allowed to call the API.  Empty list = no "
+            "CORS middleware mounted (server-to-server only).  Use "
+            "``[\"*\"]`` for fully open CORS, or list specific origins "
+            "like ``[\"http://localhost:5173\"]``."
+        ),
+    )
+    rate_limit_default: str = Field(
+        default="120/minute",
+        description=(
+            "Default per-IP slowapi limit applied to all endpoints.  "
+            "Format: ``\"<count>/<period>\"`` — see slowapi docs.  "
+            "Set to empty string to disable the default limit."
+        ),
+    )
+    rate_limit_compute: str = Field(
+        default="30/minute",
+        description=(
+            "Tighter limit for CPU-heavy endpoints (``/v1/move`` and "
+            "``/v1/games/{id}/think``) — overrides the default for "
+            "those routes only.  Set empty to fall back to the default."
+        ),
+    )
+    logfire_send: bool = Field(
+        default=False,
+        description=(
+            "Send logs / spans to logfire.dev.  Requires "
+            "``LOGFIRE_TOKEN`` env var; off by default so a fresh "
+            "checkout doesn't emit network traffic."
+        ),
+    )
+    logfire_console: bool = Field(
+        default=True,
+        description="Print structured logs to stderr.  Independent of ``logfire_send``.",
+    )
+
+
 # ── Brain settings container ────────────────────────────────────────────────
 
 
@@ -224,6 +274,7 @@ class GomokuSettings(BaseSettings):
     bitboard: BitboardSettings = BitboardSettings()
     recording: RecordingSettings = RecordingSettings()
     diagnostics: DiagnosticsSettings = DiagnosticsSettings()
+    api: ApiSettings = ApiSettings()
 
     @classmethod
     def settings_customise_sources(
