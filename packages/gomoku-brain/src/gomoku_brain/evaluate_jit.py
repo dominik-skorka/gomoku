@@ -537,6 +537,59 @@ def has_any_four_threat_grid(
 
 
 @njit(cache=True)
+def count_distinct_three_cells_grid(
+    grid: NDArray,  # type: ignore[type-arg]
+    size: int,
+    candidates: NDArray,  # type: ignore[type-arg]
+    stone: int,
+    dirs: NDArray,  # type: ignore[type-arg]
+    cap: int,
+) -> int:
+    """Count distinct candidate cells that form a live-three for *stone*.
+
+    Mirrors the unique-attacker-cell count used by
+    ``ThreatBrain._check_opponent_vct``'s early-reject heuristic.  Stops
+    counting once the running total reaches ``cap`` so callers asking
+    "is this >= cap?" don't pay for the full scan.
+    """
+    n = candidates.shape[0]
+    count = 0
+    for i in range(n):
+        r = candidates[i, 0]
+        c = candidates[i, 1]
+        if grid[r, c] != 0:
+            continue
+        for d in range(dirs.shape[0]):
+            dr = dirs[d, 0]
+            dc = dirs[d, 1]
+            consec = 0
+            pos_open = False
+            neg_open = False
+            rr = r + dr
+            cc = c + dc
+            while 0 <= rr < size and 0 <= cc < size and grid[rr, cc] == stone:
+                consec += 1
+                rr += dr
+                cc += dc
+            if 0 <= rr < size and 0 <= cc < size and grid[rr, cc] == 0:
+                pos_open = True
+            rr = r - dr
+            cc = c - dc
+            while 0 <= rr < size and 0 <= cc < size and grid[rr, cc] == stone:
+                consec += 1
+                rr -= dr
+                cc -= dc
+            if 0 <= rr < size and 0 <= cc < size and grid[rr, cc] == 0:
+                neg_open = True
+            if consec + 1 == 3 and pos_open and neg_open:
+                count += 1
+                if count >= cap:
+                    return count
+                break
+    return count
+
+
+@njit(cache=True)
 def get_threat_moves_grid(
     grid: NDArray,  # type: ignore[type-arg]
     size: int,

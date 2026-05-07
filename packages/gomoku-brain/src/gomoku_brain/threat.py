@@ -6,10 +6,10 @@ defender has more responses but a forced win can still be proven.
 
 When neither finds a forced win the brain falls back to alpha-beta search.
 
-The pure threat-detection helpers (``_find_four_threats``,
-``_find_three_threats``, ``_find_winning_move``, ``probe_immediate``,
-``_line_cells``) live in :mod:`gomoku_brain.threat_detect` and are
-re-exported below for backward compatibility.
+The detection primitives live in :mod:`gomoku_brain.threat_detect`; the
+recursive search workers live in :mod:`gomoku_brain.threat_search`.  Both
+sets are re-exported below for backward compatibility — external callers
+and tests still import them from this module.
 """
 
 from __future__ import annotations
@@ -21,56 +21,20 @@ from gomoku.models import Move, Stone
 from gomoku_brain.alphabeta import AlphaBetaBrain
 from gomoku_brain.brain_base import brain_session
 from gomoku_brain.candidates import get_candidate_moves
-from gomoku_brain.directions import DIRECTIONS as _DIRECTIONS
+from gomoku_brain.pns import pns_threat_search
 from gomoku_brain.search_state import SearchState
-from gomoku_brain.threat_detect import (  # noqa: F401  (re-exports for back-compat)
+from gomoku_brain.threat_detect import (
+    _count_distinct_three_cells,
     _find_four_threats,
     _find_four_threats_python,
     _find_three_threats,
     _find_three_threats_python,
     _find_winning_move,
+    _has_any_four_threat,
     _line_cells,
     probe_immediate,
 )
-
-# Cache entry: (proven, depth_searched, attack_move)
-# * proven=True  -> winning attack found within ``depth_searched`` plies.
-#                   Valid whenever the query depth is >= depth_searched.
-# * proven=False -> no winning sequence within ``depth_searched`` plies.
-#                   Valid whenever the query depth is <= depth_searched.
-_CacheEntry = tuple[bool, int, "Move | None"]
-_ThreatCache = dict[int, _CacheEntry]
-
-# Re-exports for back-compat: callers still do
-#     from gomoku_brain.threat import _find_four_threats
-__all_detect__ = (
-    "_find_four_threats",
-    "_find_four_threats_python",
-    "_find_three_threats",
-    "_find_three_threats_python",
-    "_find_winning_move",
-    "_line_cells",
-    "probe_immediate",
-)
-
-
-# ---------------------------------------------------------------------------
-# VCF / VCT search core
-#
-# The recursive workers live in :mod:`gomoku_brain.threat_search` —
-# pure search logic with no orchestration / diagnostics / logfire.
-# We import them at the bottom of the helper section, *after* the
-# detection helpers (``_find_four_threats`` etc.) are defined, so
-# ``threat_search.py``'s top-level import resolves cleanly against the
-# partially-loaded ``threat`` module.
-#
-# Re-exported so that downstream modules (``alphabeta``, ``mcts``,
-# ``pns``) and tests that still import these names from
-# ``gomoku_brain.threat`` continue to work unchanged.
-# ---------------------------------------------------------------------------
-
-
-from gomoku_brain.threat_search import (  # noqa: E402, F401, I001
+from gomoku_brain.threat_search import (
     _state_is_win,
     _vcf,
     _vcf_state,
@@ -80,6 +44,40 @@ from gomoku_brain.threat_search import (  # noqa: E402, F401, I001
     _vct_state,
     classify_vcf_breakers,
 )
+
+__all__ = (
+    "ThreatBrain",
+    "_find_four_threats",
+    "_find_four_threats_python",
+    "_find_three_threats",
+    "_find_three_threats_python",
+    "_find_winning_move",
+    "_line_cells",
+    "_state_is_win",
+    "_vcf",
+    "_vcf_state",
+    "_vct",
+    "_vct_defence_moves",
+    "_vct_defence_moves_state",
+    "_vct_state",
+    "classify_vcf_breakers",
+    "probe_immediate",
+)
+
+# Per-side fraction of the configured PNS budget used for opponent-perspective
+# probes inside :meth:`ThreatBrain._vct_aware_search`.  The original threat
+# search has already consumed up to one full ``pns_time_s``; allowing each
+# breaker probe a full second budget would let total wall time blow past the
+# configured cap, so we halve both the node and time budgets for those probes.
+_OPP_PNS_NODE_FRACTION = 0.5
+_OPP_PNS_TIME_FRACTION = 0.5
+
+# Floor for per-candidate PNS probe time when the global VCT-aware deadline
+# is nearly exhausted — keeps progress when the deadline is close.
+_MIN_PROBE_TIME_S = 0.05
+
+# Radius used for candidate generation throughout the threat brain.
+_CANDIDATE_RADIUS = 2
 
 
 # ---------------------------------------------------------------------------
@@ -129,23 +127,9 @@ class ThreatBrain:
 
             diag = session.diag
 
-            # Collect threat landscape for diagnostics.
-            if diag is not None:
-                opp = stone.opponent()
-                our_fours = _find_four_threats(board, stone)
-                our_threes = _find_three_threats(board, stone)
-                opp_fours = _find_four_threats(board, opp)
-                opp_threes = _find_three_threats(board, opp)
-                diag.our_threats = ThreatInfo(
-                    four_threats=len(our_fours),
-                    three_threats=len(our_threes),
-                )
-                diag.opp_threats = ThreatInfo(
-                    four_threats=len(opp_fours),
-                    three_threats=len(opp_threes),
-                )
-
-            # 0) If we can win immediately, do it
+            # 0) If we can win immediately, do it.  Detection runs before
+            # the diagnostics block so the shortcut paths skip the four
+            # full pattern scans they don't need.
             win = _find_winning_move(board, stone)
             if win is not None:
                 logfire.info("Immediate win: {move}", move=str(win))
@@ -164,8 +148,31 @@ class ThreatBrain:
                     diag.chosen_move = opp_win
                 return opp_win
 
+            # Collect threat landscape for diagnostics on the search-bound
+            # paths (VCF / PNS / VCT / fork / fallback).  The instant-win
+            # and instant-block shortcuts above return without it.
+            if diag is not None:
+                our_fours = _find_four_threats(board, stone)
+                our_threes = _find_three_threats(board, stone)
+                opp_fours = _find_four_threats(board, opp)
+                opp_threes = _find_three_threats(board, opp)
+                diag.our_threats = ThreatInfo(
+                    four_threats=len(our_fours),
+                    three_threats=len(our_threes),
+                )
+                diag.opp_threats = ThreatInfo(
+                    four_threats=len(opp_fours),
+                    three_threats=len(opp_threes),
+                )
+
+            # Single VCF transposition cache shared across this decision —
+            # our VCF, opponent VCF, and breaker probes all visit
+            # overlapping sub-positions; reusing proofs cuts redundant
+            # deep search.
+            vcf_cache: dict[int, tuple[bool, int, Move | None]] = {}
+
             # 2) Try VCF — very fast, deep search
-            move = _vcf(board, stone, self.vcf_depth, is_attacker=True)
+            move = _vcf(board, stone, self.vcf_depth, is_attacker=True, cache=vcf_cache)
             if move is not None:
                 logfire.info("VCF found winning move: {move}", move=str(move))
                 if diag is not None:
@@ -176,8 +183,6 @@ class ThreatBrain:
 
             # 3) Try broader threat search (PNS or VCT)
             if self.threat_search == "pns":
-                from gomoku_brain.pns import pns_threat_search
-
                 move = pns_threat_search(board, stone, max_nodes=self.pns_nodes, max_time_s=self.pns_time_s)
                 if move is not None:
                     logfire.info("PNS found winning move: {move}", move=str(move))
@@ -199,19 +204,19 @@ class ThreatBrain:
                 diag.notes.append("No forced win found (VCF/PNS/VCT)")
 
             # 4) Check if opponent has a VCF threat
-            opp_vcf = _vcf(board, opp, self.vcf_depth, is_attacker=True)
+            opp_vcf = _vcf(board, opp, self.vcf_depth, is_attacker=True, cache=vcf_cache)
             if opp_vcf is not None:
                 if diag is not None:
                     diag.opp_threats = diag.opp_threats.model_copy(update={"vcf_result": "win"})
                     diag.notes.append(f"Opponent has VCF at {opp_vcf}")
-                result = self._vcf_aware_search(board, stone, opp_vcf)
+                result = self._vcf_aware_search(board, stone, opp_vcf, vcf_cache)
                 if diag is not None:
                     diag.decision_path = diag.decision_path or "vcf_aware_search"
                     diag.chosen_move = result
                 return result
 
             # 5) Check if opponent has a VCT / PNS threat
-            opp_vct_move = self._check_opponent_vct(board, stone)
+            opp_vct_move = self._check_opponent_vct(board, stone, vcf_cache)
             if opp_vct_move is not None:
                 if diag is not None:
                     diag.decision_path = "vct_aware_search"
@@ -239,6 +244,7 @@ class ThreatBrain:
         self,
         board: Board,
         stone: Stone,
+        vcf_cache: dict[int, tuple[bool, int, Move | None]] | None = None,
     ) -> Move | None:
         """Check if the opponent has a forced VCT win and try to break it.
 
@@ -260,18 +266,13 @@ class ThreatBrain:
         """
         opp = stone.opponent()
 
-        opp_fours = _find_four_threats(board, opp)
-        opp_threes = _find_three_threats(board, opp)
-        # Distinct attack cells rather than raw entry count: the JIT path
-        # emits one three-threat entry per direction, so a double-three
-        # shows up as two entries at the same cell.
-        distinct_three_cells = {(a.row, a.col) for a, _ in opp_threes}
-        if not opp_fours and len(distinct_three_cells) < 2:
+        # Cheap predicates short-circuit on the first hit — building full
+        # threat lists just to ask "any?" / "≥ 2?" used to dominate the
+        # quiet-position cost of every threat-brain ``get_move``.
+        if not _has_any_four_threat(board, opp) and _count_distinct_three_cells(board, opp, 2) < 2:
             return None
 
         if self.threat_search == "pns":
-            from gomoku_brain.pns import pns_threat_search
-
             opp_threat = pns_threat_search(
                 board,
                 opp,
@@ -288,13 +289,14 @@ class ThreatBrain:
             "Opponent has VCT/PNS threat starting at: {move}",
             move=str(opp_threat),
         )
-        return self._vct_aware_search(board, stone, opp_threat)
+        return self._vct_aware_search(board, stone, opp_threat, vcf_cache)
 
     def _vct_aware_search(
         self,
         board: Board,
         stone: Stone,
         opp_threat_move: Move,
+        vcf_cache: dict[int, tuple[bool, int, Move | None]] | None = None,
     ) -> Move:
         """Pick the best move when the opponent has a VCT/PNS forced win.
 
@@ -316,7 +318,9 @@ class ThreatBrain:
 
         opp = stone.opponent()
         state = SearchState.from_board(board, stone)
-        candidates = get_candidate_moves(state, radius=2)
+        candidates = get_candidate_moves(state, radius=_CANDIDATE_RADIUS)
+        if vcf_cache is None:
+            vcf_cache = {}
 
         # Pre-score every candidate with a static eval so strong moves
         # are probed first.  Static eval is cheap on the JIT path
@@ -345,18 +349,16 @@ class ThreatBrain:
             state.make(move.row, move.col, stone)
             try:
                 # Fast VCF probe first.
-                if _vcf_state(state, opp, self.vcf_depth, is_attacker=True, cache={}) is not None:
+                if _vcf_state(state, opp, self.vcf_depth, is_attacker=True, cache=vcf_cache) is not None:
                     continue
                 # Expensive threat probe — bounded by remaining global budget.
                 if self.threat_search == "pns":
-                    from gomoku_brain.pns import pns_threat_search
-
-                    remaining = max(0.05, deadline - _time.monotonic())
+                    remaining = max(_MIN_PROBE_TIME_S, deadline - _time.monotonic())
                     opp_result = pns_threat_search(
                         state,
                         opp,
-                        max_nodes=self.pns_nodes // 2,
-                        max_time_s=min(self.pns_time_s / 2, remaining),
+                        max_nodes=int(self.pns_nodes * _OPP_PNS_NODE_FRACTION),
+                        max_time_s=min(self.pns_time_s * _OPP_PNS_TIME_FRACTION, remaining),
                     )
                     if opp_result is not None:
                         continue
@@ -443,6 +445,7 @@ class ThreatBrain:
         board: Board,
         stone: Stone,
         opp_vcf_move: Move,
+        vcf_cache: dict[int, tuple[bool, int, Move | None]] | None = None,
     ) -> Move:
         """Pick the best move when the opponent has a VCF.
 
@@ -456,8 +459,10 @@ class ThreatBrain:
         """
         from gomoku_brain.evaluate import evaluate_board
 
-        candidates = get_candidate_moves(board, radius=2)
-        durable, breakers = classify_vcf_breakers(board, candidates, stone, self.vcf_depth)
+        candidates = get_candidate_moves(board, radius=_CANDIDATE_RADIUS)
+        durable, breakers = classify_vcf_breakers(
+            board, candidates, stone, self.vcf_depth, cache=vcf_cache
+        )
 
         if not breakers:
             logfire.info(

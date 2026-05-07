@@ -28,12 +28,12 @@ from gomoku.board import Board
 from gomoku.models import Move, Stone
 
 from gomoku_brain.search_state import SearchState
-from gomoku_brain.threat import (
+from gomoku_brain.threat_detect import (
     _find_four_threats,
     _find_three_threats,
     _find_winning_move,
-    _state_is_win,
 )
+from gomoku_brain.threat_search import _state_is_win
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -61,6 +61,7 @@ class _PNSNode:
     """
 
     __slots__ = (
+        "best_child",
         "children",
         "disproof",
         "expanded",
@@ -87,6 +88,10 @@ class _PNSNode:
         # Initial proof/disproof: 1/1 for unknown nodes
         self.proof = 1
         self.disproof = 1
+        # MPN selection cache — set during ``_update_ancestors``.  Reading
+        # this is O(1); the previous ``min(... key=...)`` walk inside
+        # ``_select_mpn`` was O(branching) per tree level.
+        self.best_child: _PNSNode | None = None
 
     @property
     def proved(self) -> bool:
@@ -394,18 +399,40 @@ def _expand(node: _PNSNode, state: SearchState) -> None:
 
 
 def _update_ancestors(node: _PNSNode) -> None:
-    """Recompute proof/disproof from children (non-recursive; called bottom-up)."""
+    """Recompute proof/disproof from children (non-recursive; called bottom-up).
+
+    Also caches the most-proving / most-disproving child in
+    ``node.best_child`` so :func:`_select_mpn` can walk the tree in
+    O(depth) rather than O(depth × branching).
+    """
     if not node.children:
         return
 
+    children = node.children
     if node.node_type is _NodeType.OR:
-        node.proof = min(c.proof for c in node.children)
-        dp_sum = sum(c.disproof for c in node.children)
+        best = children[0]
+        best_proof = best.proof
+        dp_sum = best.disproof
+        for c in children[1:]:
+            if c.proof < best_proof:
+                best = c
+                best_proof = c.proof
+            dp_sum += c.disproof
+        node.proof = best_proof
         node.disproof = min(dp_sum, INF)
+        node.best_child = best
     else:
-        pn_sum = sum(c.proof for c in node.children)
+        best = children[0]
+        best_disproof = best.disproof
+        pn_sum = best.proof
+        for c in children[1:]:
+            if c.disproof < best_disproof:
+                best = c
+                best_disproof = c.disproof
+            pn_sum += c.proof
         node.proof = min(pn_sum, INF)
-        node.disproof = min(c.disproof for c in node.children)
+        node.disproof = best_disproof
+        node.best_child = best
 
 
 # ---------------------------------------------------------------------------
@@ -414,14 +441,23 @@ def _update_ancestors(node: _PNSNode) -> None:
 
 
 def _select_mpn(node: _PNSNode) -> tuple[_PNSNode, list[_PNSNode]]:
-    """Walk from root to the most-proving leaf, returning ``(leaf, path)``."""
+    """Walk from root to the most-proving leaf, returning ``(leaf, path)``.
+
+    Uses ``node.best_child`` cached during :func:`_update_ancestors` so the
+    walk is O(depth).  Falls back to a per-level ``min`` only if a node
+    was expanded without subsequent backprop (shouldn't happen in
+    well-formed trees but kept for safety).
+    """
     path = [node]
     current = node
     while current.expanded and current.children:
-        if current.node_type is _NodeType.OR:
-            current = min(current.children, key=lambda c: c.proof)
-        else:
-            current = min(current.children, key=lambda c: c.disproof)
+        nxt = current.best_child
+        if nxt is None:
+            if current.node_type is _NodeType.OR:
+                nxt = min(current.children, key=lambda c: c.proof)
+            else:
+                nxt = min(current.children, key=lambda c: c.disproof)
+        current = nxt
         path.append(current)
     return current, path
 
