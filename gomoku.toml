@@ -301,3 +301,39 @@ directory = "recordings"
 # Maximum number of top candidate moves to record per move entry.
 # Default: 10 | Valid range: 1–50
 top_candidates = 10
+
+# ── Post-game review (`gomoku-cli review`) ──────────────────────────────────
+[analysis]
+# Brain used for the deep review pass.  AlphaBeta is the chess-engine
+# analogue: fast, tactical, returns exact pattern-based scores.  Threat
+# is best for forced-win sections but slower in quiet positions.  MCTS
+# is too slow for per-ply re-analysis.
+# Default: "alphabeta" | Valid values: any registered brain name
+brain = "alphabeta"
+
+# Search depth applied to the analysis brain (alphabeta / negamax /
+# minimax / threat).  Set higher than the typical play depth so the
+# review catches things the playing brain missed.
+# Default: 6 | Valid range: 1–10
+depth = 6
+
+# Classification thresholds (eval-delta cutoffs in raw pattern-score
+# units — live-3 ≈ 1 000, live-4 ≈ 10 000, win ≈ 100 000).  A move's
+# delta is `best_eval_after − played_eval_after` from the mover's
+# perspective, always ≥ 0.
+# excellent_delta = 200.0
+# good_delta = 800.0
+# inaccuracy_delta = 2_500.0
+# mistake_delta = 10_000.0      # ≥ this is BLUNDER
+
+# Advantage thresholds (Black-perspective signed eval).
+# win_threshold = 50_000.0      # |eval| ≥ this → "winning"
+# better_threshold = 1_500.0    # |eval| ≥ this → "better"
+
+# Optional LLM commentary via pydantic-ai.  Off by default; opt in with
+# `gomoku-cli review --llm`.  Requires `pip install gomoku-cli[llm]`.
+llm_enabled = false
+llm_provider = "anthropic"           # anthropic | openai | google-gla | ollama
+llm_model = "claude-sonnet-4-5"
+llm_api_key_env = "ANTHROPIC_API_KEY"
+ollama_base_url = "http://localhost:11434/v1"

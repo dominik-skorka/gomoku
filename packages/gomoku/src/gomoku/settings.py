@@ -162,6 +162,54 @@ class DiagnosticsSettings(BaseModel):
     top_candidates: int = Field(default=10, ge=1, le=50)
 
 
+class AnalysisSettings(BaseModel):
+    """Settings for ``gomoku-cli review`` — chess-engine-style post-game review.
+
+    Re-evaluates a recorded ``.diag.jsonl`` ply-by-ply with a configurable
+    *analysis brain* and classifies each move (best / excellent / good /
+    inaccuracy / mistake / blunder) by comparing the played move's eval
+    against the brain's preferred move.  An optional LLM commentary
+    layer (``llm_enabled = true`` and the ``--llm`` CLI flag) adds
+    natural-language annotations via pydantic-ai.
+    """
+
+    brain: str = Field(
+        default="alphabeta",
+        description="Brain used for the deep review pass (alphabeta is the chess-engine analogue).",
+    )
+    depth: int = Field(
+        default=6,
+        ge=1,
+        le=10,
+        description="Search depth for the analysis brain (alphabeta/negamax/minimax/threat).",
+    )
+
+    # Classification thresholds — eval-delta cutoffs from the mover's
+    # perspective.  Live-3 ≈ 1 000, live-4 ≈ 10 000, win ≈ 100 000.
+    excellent_delta: float = Field(default=200.0, ge=0.0)
+    good_delta: float = Field(default=800.0, ge=0.0)
+    inaccuracy_delta: float = Field(default=2_500.0, ge=0.0)
+    mistake_delta: float = Field(default=10_000.0, ge=0.0)
+    win_threshold: float = Field(default=50_000.0, ge=0.0)
+    better_threshold: float = Field(default=1_500.0, ge=0.0)
+
+    # Optional LLM commentary (off by default — opt-in via ``--llm``).
+    llm_enabled: bool = False
+    llm_provider: str = Field(
+        default="anthropic",
+        pattern="^(anthropic|openai|google-gla|ollama)$",
+    )
+    llm_model: str = Field(default="claude-sonnet-4-5")
+    llm_api_key_env: str = Field(
+        default="ANTHROPIC_API_KEY",
+        description="Environment variable to read the provider API key from.",
+    )
+    ollama_base_url: str = Field(
+        default="http://localhost:11434/v1",
+        description="OpenAI-compatible base URL for a local Ollama server.",
+    )
+
+
 # ── Game-level settings ─────────────────────────────────────────────────────
 
 
@@ -274,6 +322,7 @@ class GomokuSettings(BaseSettings):
     bitboard: BitboardSettings = BitboardSettings()
     recording: RecordingSettings = RecordingSettings()
     diagnostics: DiagnosticsSettings = DiagnosticsSettings()
+    analysis: AnalysisSettings = AnalysisSettings()
     api: ApiSettings = ApiSettings()
 
     @classmethod

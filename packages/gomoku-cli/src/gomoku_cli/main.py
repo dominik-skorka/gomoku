@@ -285,6 +285,173 @@ def analyze(file: Path, as_json: bool) -> None:
     render_report(report, console)
 
 
+@cli.command()
+@click.argument("file", type=click.Path(exists=True, dir_okay=False, path_type=Path))
+@click.option(
+    "--analysis-brain",
+    "analysis_brain_name",
+    type=str,
+    default=None,
+    help="Brain to use for the deep review pass. [default: from [analysis] config]",
+)
+@click.option(
+    "--analysis-depth",
+    type=click.IntRange(1, 10),
+    default=None,
+    help="Search depth override for the analysis brain. [default: from [analysis] config]",
+)
+@click.option(
+    "--llm/--no-llm",
+    default=False,
+    help="Enable optional LLM commentary via pydantic-ai (opt-in, off by default).",
+)
+@click.option(
+    "--llm-provider",
+    type=click.Choice(["anthropic", "openai", "google-gla", "ollama"]),
+    default=None,
+    help="LLM provider for commentary. [default: from [analysis] config]",
+)
+@click.option(
+    "--llm-model",
+    type=str,
+    default=None,
+    help="LLM model name (e.g. 'claude-sonnet-4-5'). [default: from [analysis] config]",
+)
+@click.option(
+    "--out",
+    "out_path",
+    type=click.Path(dir_okay=False, path_type=Path),
+    default=None,
+    help="Write a Markdown report to this path (in addition to terminal output).",
+)
+@click.option(
+    "--json",
+    "as_json",
+    is_flag=True,
+    default=False,
+    help="Emit the deep review as a single JSON document on stdout.",
+)
+@click.option(
+    "--config",
+    "config_path",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=None,
+    help="Path to gomoku.toml config file.",
+)
+def review(
+    file: Path,
+    analysis_brain_name: str | None,
+    analysis_depth: int | None,
+    llm: bool,
+    llm_provider: str | None,
+    llm_model: str | None,
+    out_path: Path | None,
+    as_json: bool,
+    config_path: Path | None,
+) -> None:
+    """Re-evaluate a recorded ``.diag.jsonl`` ply-by-ply (chess-style review)."""
+    from gomoku.analyze import (
+        ClassificationThresholds,
+        review_game,
+    )
+
+    from gomoku_cli.review import (
+        render_deep_report,
+        render_json_report,
+        write_markdown_report,
+    )
+
+    settings = _load_settings(config_path)
+    a = settings.analysis
+
+    brain_name = analysis_brain_name or a.brain
+    depth = analysis_depth if analysis_depth is not None else a.depth
+
+    available = available_brains(settings.brains)
+    if brain_name not in available:
+        raise click.BadParameter(
+            f"Unknown brain {brain_name!r}. Available: {', '.join(available)}",
+            param_hint="'--analysis-brain'",
+        )
+
+    # Inject the requested depth into a synthetic alias so brain settings
+    # resolve through the regular ``resolve_brain`` path.  Same trick the
+    # ``play`` command uses for ``--opening-book``.
+    _inject_depth_override(settings, brain_name, depth)
+    analysis_brain = _make_provider(brain_name, settings)
+
+    thresholds = ClassificationThresholds(
+        excellent_delta=a.excellent_delta,
+        good_delta=a.good_delta,
+        inaccuracy_delta=a.inaccuracy_delta,
+        mistake_delta=a.mistake_delta,
+        win_threshold=a.win_threshold,
+        better_threshold=a.better_threshold,
+    )
+
+    commentator = None
+    if llm:
+        from gomoku_cli.llm_review import MoveCommentatorImpl
+
+        provider = llm_provider or a.llm_provider
+        model = llm_model or a.llm_model
+        commentator = MoveCommentatorImpl(
+            provider=provider,
+            model=model,
+            api_key_env=a.llm_api_key_env,
+            ollama_base_url=a.ollama_base_url,
+        )
+
+    report = review_game(
+        file,
+        analysis_brain=analysis_brain,
+        analysis_brain_name=brain_name,
+        analysis_depth=depth,
+        thresholds=thresholds,
+        commentator=commentator,
+    )
+
+    if as_json:
+        click.echo(render_json_report(report))
+    else:
+        render_deep_report(report, console)
+
+    if out_path is not None:
+        write_markdown_report(report, out_path)
+        if not as_json:
+            console.print(f"\n[green]Markdown report written:[/green] {out_path}")
+
+
+def _inject_depth_override(settings: GomokuSettings, brain_name: str, depth: int) -> None:
+    """Force *depth* into the resolved settings for *brain_name*.
+
+    Mirrors the alias-injection trick the ``play`` command uses for
+    ``--opening-book``: replace (or create) the alias dict so
+    :func:`gomoku_brain.resolve_brain` returns the override.
+    """
+    try:
+        brain_type, _kwargs = resolve_brain(brain_name, settings.brains)
+    except ValueError:
+        return
+
+    # Brains that don't accept a ``depth`` field are left untouched.
+    if brain_type not in {"alphabeta", "negamax", "minimax", "threat"}:
+        return
+
+    extra = settings.brains.model_extra
+    if extra is None:
+        object.__setattr__(settings.brains, "__pydantic_extra__", {})
+        extra = settings.brains.model_extra
+    assert extra is not None
+
+    alias = extra.get(brain_name)
+    if isinstance(alias, dict):
+        alias["depth"] = depth
+    else:
+        # Built-in name without an alias — create one.
+        extra[brain_name] = {"type": brain_type, "depth": depth}
+
+
 def _find_diagnostics(record_path: Path) -> Path | None:
     """Locate the companion ``.diag.jsonl`` file next to a ``.json`` recording.
 

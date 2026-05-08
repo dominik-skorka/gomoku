@@ -11,6 +11,9 @@ dependencies = [
     "logfire>=4.0",
 ]
 
+[project.optional-dependencies]
+llm = ["pydantic-ai>=0.0.13"]
+
 [tool.uv.sources]
 gomoku = { workspace = true }
 gomoku-brain = { workspace = true }
