@@ -254,6 +254,66 @@ def _find_winning_move(board: Board, stone: Stone) -> Move | None:
     return None
 
 
+def _has_any_four_threat(board: Board, stone: Stone) -> bool:
+    """Return True if *stone* has any four-threat candidate.
+
+    Short-circuits on the first hit — cheaper than enumerating every
+    threat via :func:`_find_four_threats`.  Used by the threat brain's
+    early-reject heuristic for opponent-VCT checks.
+    """
+    from gomoku_brain.evaluate import _should_use_jit
+
+    if _should_use_jit():
+        from gomoku_brain.evaluate_jit import (
+            get_candidates_grid,
+            get_dirs,
+            has_any_four_threat_grid,
+        )
+        from gomoku_brain.grid_utils import board_to_grid, occupied_coords
+
+        occ = occupied_coords(board)
+        if occ.shape[0] == 0:
+            return False
+        grid = board_to_grid(board)
+        candidates = get_candidates_grid(grid, board.size, occ, 2)
+        return bool(has_any_four_threat_grid(grid, board.size, candidates, int(stone), get_dirs()))
+
+    return bool(_find_four_threats_python(board, stone))
+
+
+def _count_distinct_three_cells(board: Board, stone: Stone, cap: int) -> int:
+    """Count distinct cells that create a live-three for *stone*, up to *cap*.
+
+    Stops counting once the running total reaches ``cap`` — callers
+    typically just need the answer to ``>= cap?``.
+    """
+    from gomoku_brain.evaluate import _should_use_jit
+
+    if _should_use_jit():
+        from gomoku_brain.evaluate_jit import (
+            count_distinct_three_cells_grid,
+            get_candidates_grid,
+            get_dirs,
+        )
+        from gomoku_brain.grid_utils import board_to_grid, occupied_coords
+
+        occ = occupied_coords(board)
+        if occ.shape[0] == 0:
+            return 0
+        grid = board_to_grid(board)
+        candidates = get_candidates_grid(grid, board.size, occ, 2)
+        return int(
+            count_distinct_three_cells_grid(grid, board.size, candidates, int(stone), get_dirs(), cap)
+        )
+
+    distinct: set[tuple[int, int]] = set()
+    for atk, _ in _find_three_threats_python(board, stone):
+        distinct.add((atk.row, atk.col))
+        if len(distinct) >= cap:
+            return len(distinct)
+    return len(distinct)
+
+
 def probe_immediate(board: Board, stone: Stone) -> tuple[Move | None, str | None]:
     """Return ``(move, tag)`` for a pre-search tactical shortcut.
 

@@ -142,7 +142,33 @@ def find_fork_cells(board: Board, stone: Stone) -> list[Move]:
     """Return empty cells where >= 2 distinct threat lines for *stone* converge.
 
     Used by threat brain to detect imminent fork points that need blocking.
+    Dispatches to a Numba JIT kernel when available; the pure-Python
+    fallback below is kept for the JIT-disabled path.
     """
+    if _should_use_jit():
+        from gomoku_brain.evaluate_jit import (
+            find_fork_cells_grid,
+            get_dirs,
+            get_fork_threshold,
+            get_pattern_table,
+        )
+        from gomoku_brain.grid_utils import board_to_grid, occupied_coords
+
+        occ = occupied_coords(board)
+        if occ.shape[0] == 0:
+            return []
+        grid = board_to_grid(board)
+        result = find_fork_cells_grid(
+            grid,
+            board.size,
+            occ,
+            int(stone),
+            get_dirs(),
+            get_pattern_table(),
+            get_fork_threshold(),
+        )
+        return [Move(row=int(result[i, 0]), col=int(result[i, 1])) for i in range(result.shape[0])]
+
     forks: list[Move] = []
     size = board.size
     seen: set[tuple[int, int]] = set()
