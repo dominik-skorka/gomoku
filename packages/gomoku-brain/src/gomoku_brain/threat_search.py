@@ -36,13 +36,7 @@ from gomoku.models import Move, Stone
 from gomoku_brain.candidates import get_candidate_moves
 from gomoku_brain.directions import DIRECTIONS as _DIRECTIONS
 from gomoku_brain.search_state import SearchState
-
-# Imported from :mod:`gomoku_brain.threat` — that module's top-level
-# definitions execute *before* it imports from this module, so by the
-# time this import resolves the helper names are present on the
-# partially-loaded ``threat`` module.  See ``threat.py`` for the
-# definitions.
-from gomoku_brain.threat import (
+from gomoku_brain.threat_detect import (
     _find_four_threats,
     _find_three_threats,
     _find_winning_move,
@@ -199,6 +193,7 @@ def classify_vcf_breakers(
     candidates: list[Move],
     stone: Stone,
     vcf_depth: int,
+    cache: _ThreatCache | None = None,
 ) -> tuple[list[Move], list[Move]]:
     """Classify VCF breakers as (durable, all).
 
@@ -218,18 +213,25 @@ def classify_vcf_breakers(
        distraction).  Unblockable fours (``defence is None``) are wins
        for us and count as durable.
 
+    ``cache`` is an optional shared VCF transposition table — when
+    multiple VCF calls within one decision visit overlapping
+    sub-positions (e.g. our breaker probes after attacker fours), reusing
+    proofs across them avoids redundant deep search.
+
     Shared between :class:`ThreatBrain._vcf_aware_search` and
     :meth:`AlphaBetaBrain._root_vcf` so both enforce the same semantics.
     """
     state = SearchState.from_board(board, stone)
     opp = stone.opponent()
+    if cache is None:
+        cache = {}
     breakers: list[Move] = []
     durable: list[Move] = []
 
     for move in candidates:
         state.make(move.row, move.col, stone)
         try:
-            if _vcf_state(state, opp, vcf_depth, is_attacker=True, cache={}) is not None:
+            if _vcf_state(state, opp, vcf_depth, is_attacker=True, cache=cache) is not None:
                 continue
             breakers.append(move)
 
@@ -245,7 +247,7 @@ def classify_vcf_breakers(
                     continue
                 state.make(defence.row, defence.col, opp)
                 try:
-                    if _vcf_state(state, opp, vcf_depth, is_attacker=True, cache={}) is not None:
+                    if _vcf_state(state, opp, vcf_depth, is_attacker=True, cache=cache) is not None:
                         is_durable = False
                         break
                 finally:
@@ -264,7 +266,14 @@ def _vct_defence_moves_state(state: SearchState, attack_move: Move, stone: Stone
     Mirrors :func:`_vct_defence_moves` but operates on a mutable
     :class:`SearchState` — ``state`` is expected to be the pre-attack
     position and is returned to the same ply on exit.
+
+    On the JIT path the per-candidate counter-four probe uses
+    ``has_any_four_threat_grid`` (short-circuits on first hit) over
+    a candidate list regenerated after each defender placement, replacing
+    the previous full ``_find_four_threats`` enumeration.
     """
+    from gomoku_brain.evaluate import _should_use_jit
+
     opp = stone.opponent()
 
     # Natural end-cell defences of the live three
@@ -275,18 +284,42 @@ def _vct_defence_moves_state(state: SearchState, attack_move: Move, stone: Stone
             for d in defs:
                 end_cells.add((d.row, d.col))
 
-    # Place the attack, then scan for counter four-threats
     state.make(attack_move.row, attack_move.col, stone)
     try:
-        for candidate in get_candidate_moves(state, radius=2):
-            if (candidate.row, candidate.col) in end_cells:
-                continue
-            state.make(candidate.row, candidate.col, opp)
-            try:
-                if _find_four_threats(state, opp):
-                    end_cells.add((candidate.row, candidate.col))
-            finally:
-                state.unmake()
+        if _should_use_jit():
+            from gomoku_brain.evaluate_jit import (
+                get_candidates_grid,
+                get_dirs,
+                has_any_four_threat_grid,
+            )
+            from gomoku_brain.grid_utils import occupied_coords
+
+            dirs = get_dirs()
+            opp_int = int(opp)
+            size = state.size
+            grid = state.grid  # mutable mirror updated by make/unmake
+
+            for candidate in get_candidate_moves(state, radius=2):
+                if (candidate.row, candidate.col) in end_cells:
+                    continue
+                state.make(candidate.row, candidate.col, opp)
+                try:
+                    occ = occupied_coords(state)
+                    cands = get_candidates_grid(grid, size, occ, 2)
+                    if has_any_four_threat_grid(grid, size, cands, opp_int, dirs):
+                        end_cells.add((candidate.row, candidate.col))
+                finally:
+                    state.unmake()
+        else:
+            for candidate in get_candidate_moves(state, radius=2):
+                if (candidate.row, candidate.col) in end_cells:
+                    continue
+                state.make(candidate.row, candidate.col, opp)
+                try:
+                    if _find_four_threats(state, opp):
+                        end_cells.add((candidate.row, candidate.col))
+                finally:
+                    state.unmake()
     finally:
         state.unmake()
 
@@ -294,7 +327,12 @@ def _vct_defence_moves_state(state: SearchState, attack_move: Move, stone: Stone
 
 
 def _vct_defence_moves(board: Board, attack_move: Move, stone: Stone) -> list[Move]:
-    """Board-accepting wrapper over :func:`_vct_defence_moves_state`."""
+    """Board-accepting wrapper over :func:`_vct_defence_moves_state`.
+
+    Production callers (``_vct_state``) operate on a ``SearchState`` and
+    invoke ``_vct_defence_moves_state`` directly; this wrapper exists for
+    tests that pass a Pydantic ``Board``.
+    """
     state = SearchState.from_board(board, stone)
     return _vct_defence_moves_state(state, attack_move, stone)
 

@@ -28,12 +28,12 @@ from gomoku.board import Board
 from gomoku.models import Move, Stone
 
 from gomoku_brain.search_state import SearchState
-from gomoku_brain.threat import (
+from gomoku_brain.threat_detect import (
     _find_four_threats,
     _find_three_threats,
     _find_winning_move,
-    _state_is_win,
 )
+from gomoku_brain.threat_search import _state_is_win
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -61,6 +61,7 @@ class _PNSNode:
     """
 
     __slots__ = (
+        "best_child",
         "children",
         "disproof",
         "expanded",
@@ -87,6 +88,10 @@ class _PNSNode:
         # Initial proof/disproof: 1/1 for unknown nodes
         self.proof = 1
         self.disproof = 1
+        # MPN selection cache — set during ``_update_ancestors``.  Reading
+        # this is O(1); the previous ``min(... key=...)`` walk inside
+        # ``_select_mpn`` was O(branching) per tree level.
+        self.best_child: _PNSNode | None = None
 
     @property
     def proved(self) -> bool:
@@ -140,30 +145,83 @@ def _pns_defence_moves(state: SearchState, attacker: Stone) -> list[Move]:
     2. End cells of attacker live-three threats.
     3. Defender's own four-threat moves (counter-fours).
     4. Defender's own three-threat moves (counter-threes).
+
+    On the JIT path the four detection routines share a single
+    ``(grid, occ, candidates, dirs)`` setup — the previous implementation
+    re-derived these four times per AND-node expansion, which is the
+    dominant cost of PNS in dense positions.
     """
+    from gomoku_brain.evaluate import _should_use_jit
+
     defender = attacker.opponent()
     cells: set[tuple[int, int]] = set()
 
-    # 1) Forced blocks of attacker fours
-    for attack, block in _find_four_threats(state, attacker):
-        if block is not None:
-            cells.add((block.row, block.col))
-        else:
-            # Immediate five or live four — occupy the attack cell to prevent it
+    if _should_use_jit():
+        from gomoku_brain.evaluate_jit import (
+            find_four_threats_grid,
+            find_three_threats_grid,
+            get_candidates_grid,
+            get_dirs,
+        )
+        from gomoku_brain.grid_utils import board_to_grid, occupied_coords
+
+        occ = occupied_coords(state)
+        if occ.shape[0] == 0:
+            return []
+        grid = board_to_grid(state)
+        size = state.size
+        dirs = get_dirs()
+        candidates = get_candidates_grid(grid, size, occ, 2)
+
+        atk_int = int(attacker)
+        def_int = int(defender)
+
+        # 1) Attacker fours — forced blocks (or attack cell if unblockable).
+        atk_fours = find_four_threats_grid(grid, size, candidates, atk_int, dirs)
+        for i in range(atk_fours.shape[0]):
+            ar = int(atk_fours[i, 0])
+            ac = int(atk_fours[i, 1])
+            dr_end = int(atk_fours[i, 2])
+            if dr_end < 0:
+                cells.add((ar, ac))
+            else:
+                cells.add((dr_end, int(atk_fours[i, 3])))
+
+        # 2) Attacker live-threes — end-cell blocks.
+        atk_threes = find_three_threats_grid(grid, size, candidates, atk_int, dirs)
+        for i in range(atk_threes.shape[0]):
+            cells.add((int(atk_threes[i, 2]), int(atk_threes[i, 3])))
+            cells.add((int(atk_threes[i, 4]), int(atk_threes[i, 5])))
+
+        # 3) Defender's own four-threats (counter-fours).
+        def_fours = find_four_threats_grid(grid, size, candidates, def_int, dirs)
+        for i in range(def_fours.shape[0]):
+            cells.add((int(def_fours[i, 0]), int(def_fours[i, 1])))
+
+        # 4) Defender's own three-threats (counter-threes).
+        def_threes = find_three_threats_grid(grid, size, candidates, def_int, dirs)
+        for i in range(def_threes.shape[0]):
+            cells.add((int(def_threes[i, 0]), int(def_threes[i, 1])))
+    else:
+        # 1) Forced blocks of attacker fours
+        for attack, block in _find_four_threats(state, attacker):
+            if block is not None:
+                cells.add((block.row, block.col))
+            else:
+                cells.add((attack.row, attack.col))
+
+        # 2) End cells of attacker live threes
+        for _attack, defs in _find_three_threats(state, attacker):
+            for d in defs:
+                cells.add((d.row, d.col))
+
+        # 3) Defender's own four-threats (counter-fours)
+        for attack, _block in _find_four_threats(state, defender):
             cells.add((attack.row, attack.col))
 
-    # 2) End cells of attacker live threes
-    for _attack, defs in _find_three_threats(state, attacker):
-        for d in defs:
-            cells.add((d.row, d.col))
-
-    # 3) Defender's own four-threats (counter-fours)
-    for attack, _block in _find_four_threats(state, defender):
-        cells.add((attack.row, attack.col))
-
-    # 4) Defender's own three-threats (counter-threes)
-    for attack, _defs in _find_three_threats(state, defender):
-        cells.add((attack.row, attack.col))
+        # 4) Defender's own three-threats (counter-threes)
+        for attack, _defs in _find_three_threats(state, defender):
+            cells.add((attack.row, attack.col))
 
     return [Move(row=r, col=c) for r, c in sorted(cells) if state.is_empty(r, c)]
 
@@ -341,18 +399,40 @@ def _expand(node: _PNSNode, state: SearchState) -> None:
 
 
 def _update_ancestors(node: _PNSNode) -> None:
-    """Recompute proof/disproof from children (non-recursive; called bottom-up)."""
+    """Recompute proof/disproof from children (non-recursive; called bottom-up).
+
+    Also caches the most-proving / most-disproving child in
+    ``node.best_child`` so :func:`_select_mpn` can walk the tree in
+    O(depth) rather than O(depth × branching).
+    """
     if not node.children:
         return
 
+    children = node.children
     if node.node_type is _NodeType.OR:
-        node.proof = min(c.proof for c in node.children)
-        dp_sum = sum(c.disproof for c in node.children)
+        best = children[0]
+        best_proof = best.proof
+        dp_sum = best.disproof
+        for c in children[1:]:
+            if c.proof < best_proof:
+                best = c
+                best_proof = c.proof
+            dp_sum += c.disproof
+        node.proof = best_proof
         node.disproof = min(dp_sum, INF)
+        node.best_child = best
     else:
-        pn_sum = sum(c.proof for c in node.children)
+        best = children[0]
+        best_disproof = best.disproof
+        pn_sum = best.proof
+        for c in children[1:]:
+            if c.disproof < best_disproof:
+                best = c
+                best_disproof = c.disproof
+            pn_sum += c.proof
         node.proof = min(pn_sum, INF)
-        node.disproof = min(c.disproof for c in node.children)
+        node.disproof = best_disproof
+        node.best_child = best
 
 
 # ---------------------------------------------------------------------------
@@ -361,14 +441,23 @@ def _update_ancestors(node: _PNSNode) -> None:
 
 
 def _select_mpn(node: _PNSNode) -> tuple[_PNSNode, list[_PNSNode]]:
-    """Walk from root to the most-proving leaf, returning ``(leaf, path)``."""
+    """Walk from root to the most-proving leaf, returning ``(leaf, path)``.
+
+    Uses ``node.best_child`` cached during :func:`_update_ancestors` so the
+    walk is O(depth).  Falls back to a per-level ``min`` only if a node
+    was expanded without subsequent backprop (shouldn't happen in
+    well-formed trees but kept for safety).
+    """
     path = [node]
     current = node
     while current.expanded and current.children:
-        if current.node_type is _NodeType.OR:
-            current = min(current.children, key=lambda c: c.proof)
-        else:
-            current = min(current.children, key=lambda c: c.disproof)
+        nxt = current.best_child
+        if nxt is None:
+            if current.node_type is _NodeType.OR:
+                nxt = min(current.children, key=lambda c: c.proof)
+            else:
+                nxt = min(current.children, key=lambda c: c.disproof)
+        current = nxt
         path.append(current)
     return current, path
 
@@ -394,7 +483,7 @@ def _backpropagate_path(path: list[_PNSNode]) -> None:
 
 
 def pns_threat_search(
-    board: Board,
+    board: Board | SearchState,
     stone: Stone,
     max_nodes: int = 10_000,
     max_time_s: float = 5.0,
@@ -403,11 +492,16 @@ def pns_threat_search(
 
     Returns the first move of a forced winning sequence for *stone*,
     or ``None`` if no win is proved within the node/time budget.
+
+    Accepts an existing :class:`SearchState` to skip the per-call
+    Pydantic→bitboard round-trip; the search restores the state to
+    its starting ply on every iteration boundary, so the caller's
+    state is unchanged on return.
     """
     attacker = stone
     defender = attacker.opponent()
 
-    state = SearchState.from_board(board, stone)
+    state = board if isinstance(board, SearchState) else SearchState.from_board(board, stone)
     root = _PNSNode(stone, _NodeType.OR)
     _evaluate_leaf(root, state, attacker)
 

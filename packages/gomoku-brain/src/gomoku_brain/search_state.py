@@ -101,15 +101,20 @@ class SearchState:
         :meth:`make` call flips it in the usual way.
         """
         size = board.size
-        black = np.zeros(size, dtype=np.uint32)
-        white = np.zeros(size, dtype=np.uint32)
+        # Accumulate row-bitmasks as plain Python ints, then convert each row
+        # to ``np.uint32`` once.  Per-cell ``np.uint32`` shifts box/unbox the
+        # numpy scalar and dominate construction cost on the search hot path
+        # (every ``classify_vcf_breakers`` and ``pns_threat_search`` call).
+        black_ints = [0] * size
+        white_ints = [0] * size
         for r, c in board.occupied:
-            bit = np.uint32(1) << np.uint32(c)
             stone = board.at(r, c)
             if stone is Stone.BLACK:
-                black[r] |= bit
+                black_ints[r] |= 1 << c
             elif stone is Stone.WHITE:
-                white[r] |= bit
+                white_ints[r] |= 1 << c
+        black = np.array(black_ints, dtype=np.uint32)
+        white = np.array(white_ints, dtype=np.uint32)
         zobrist = hash_board(board, side_to_move)
         occ_count = len(board.occupied)
         return cls(size=size, black=black, white=white, zobrist=zobrist, occ_count=occ_count)
