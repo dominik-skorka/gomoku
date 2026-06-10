@@ -11,6 +11,7 @@ from __future__ import annotations
 import time
 
 import logfire
+import numpy as np
 from gomoku.board import Board
 from gomoku.models import Move, Stone
 
@@ -19,6 +20,7 @@ from gomoku_brain.alphabeta_ordering import (
     _is_four_threat_move,
     _split_threats,
 )
+from gomoku_brain.alphabeta_quiescence import EvalCache, QuiesceCtx, quiesce
 from gomoku_brain.brain_base import brain_session
 from gomoku_brain.candidates import get_candidate_moves
 from gomoku_brain.evaluate import evaluate_board
@@ -41,9 +43,6 @@ _MAX_QS_DEPTH = 4
 
 # Type alias for the history heuristic table: (stone, row, col) -> cumulative score.
 HistoryTable = dict[tuple[int, int, int], int]
-
-# Type alias for the evaluation cache: zobrist_hash -> evaluation score.
-EvalCache = dict[int, float]
 
 # Half-width of the aspiration window around the previous iteration's score.
 _ASPIRATION_WINDOW = 50
@@ -103,6 +102,9 @@ class AlphaBetaBrain:
         # when ignored (one int increment per node).
         self.node_count = 0
         self.qs_node_count = 0
+        # Per-search quiescence context — created once per get_move so the
+        # leaf entry points don't allocate a fresh ctx each call.
+        self._qs_ctx: QuiesceCtx | None = None
         self._file_book = None
         if opening_book:
             from pathlib import Path
@@ -169,6 +171,7 @@ class AlphaBetaBrain:
             # History table shared across all ID iterations so it accumulates.
             history: HistoryTable = {}
             eval_cache: EvalCache = {}
+            self._qs_ctx = QuiesceCtx(qs_vcf_depth=self.qs_vcf_depth, eval_cache=eval_cache)
             prev_score: float | None = None
             aspiration_resets = 0
 
@@ -264,12 +267,13 @@ class AlphaBetaBrain:
                 if score >= 100_000:
                     break
 
+            self.qs_node_count = self._qs_ctx.nodes
             assert best_move is not None
 
             if diag is not None:
                 from gomoku.diagnostics import CandidateInfo, SearchStats, ThreatInfo
 
-                from gomoku_brain.threat import _find_four_threats, _find_three_threats
+                from gomoku_brain.threat_detect import _find_four_threats, _find_three_threats
 
                 search_ms = session.elapsed_ms()
                 diag.decision_path = diag.decision_path or "alphabeta"
@@ -332,10 +336,32 @@ class AlphaBetaBrain:
         """Return an immediate winning move for *stone*, or a move that blocks
         the opponent's immediate win.  Returns ``None`` if no urgent move.
 
-        Uses :meth:`SearchState.make` / :meth:`SearchState.unmake` for zero
-        allocation per candidate.
+        On the JIT path the node's candidate list is packed into one array
+        and probed with two ``find_winning_move_grid`` calls — the kernel
+        scans line neighbours in place, so no make/unmake is needed (this
+        used to cost two make/win-check/unmake cycles per candidate per
+        interior node).  The pure-Python fallback keeps the probe loop.
         """
+        from gomoku_brain.evaluate import _should_use_jit
+
         opponent = stone.opponent()
+
+        if _should_use_jit():
+            from gomoku_brain.evaluate_jit import find_winning_move_grid, get_dirs
+
+            cand_arr = np.empty((len(candidates), 2), dtype=np.int32)
+            for i, m in enumerate(candidates):
+                cand_arr[i, 0] = m.row
+                cand_arr[i, 1] = m.col
+            dirs = get_dirs()
+            result = find_winning_move_grid(state.grid, state.size, cand_arr, int(stone), dirs)
+            if result.shape[0] > 0:
+                return Move(row=int(result[0, 0]), col=int(result[0, 1]))
+            result = find_winning_move_grid(state.grid, state.size, cand_arr, int(opponent), dirs)
+            if result.shape[0] > 0:
+                return Move(row=int(result[0, 0]), col=int(result[0, 1]))
+            return None
+
         block: Move | None = None
         for move in candidates:
             # Check our win
@@ -377,16 +403,17 @@ class AlphaBetaBrain:
         """
         skip: set[tuple[int, int]] = set()
         promoted: list[Move] = []
+        cand_coords = {(m.row, m.col) for m in candidates}
 
         # 1. TT best-move first
-        if tt_move is not None and tt_move in candidates:
+        if tt_move is not None and (tt_move.row, tt_move.col) in cand_coords:
             promoted.append(tt_move)
             skip.add((tt_move.row, tt_move.col))
 
         # 2. Killer moves
         if depth in killers:
             for km in killers[depth]:
-                if (km.row, km.col) not in skip and km in candidates:
+                if (km.row, km.col) not in skip and (km.row, km.col) in cand_coords:
                     promoted.append(km)
                     skip.add((km.row, km.col))
 
@@ -438,30 +465,18 @@ class AlphaBetaBrain:
         alpha: float,
         beta: float,
         stone: Stone,
-        tt: TranspositionTable,
         qs_depth: int,
-        eval_cache: EvalCache,
     ) -> float:
         """Quiescence search — thin wrapper around
         :func:`gomoku_brain.alphabeta_quiescence.quiesce`.
 
-        Bundles ``self.qs_vcf_depth`` and the running ``self.qs_node_count``
-        counter into a :class:`QuiesceCtx`, delegates to the free
-        function, and writes the updated counter back.  ``tt`` is
-        accepted but unused — preserved in the signature because the
-        main alpha-beta loop passes it from its own scope.
+        Delegates to the free function with the per-search
+        :class:`QuiesceCtx` created in :meth:`get_move`; the node
+        counter is synced back into ``self.qs_node_count`` once after
+        the iterative-deepening loop.
         """
-        from gomoku_brain.alphabeta_quiescence import QuiesceCtx, quiesce
-
-        del tt  # quiescence does not consult the alpha-beta TT
-        ctx = QuiesceCtx(
-            qs_vcf_depth=self.qs_vcf_depth,
-            eval_cache=eval_cache,
-            nodes=self.qs_node_count,
-        )
-        score = quiesce(state, alpha, beta, stone, ctx, qs_depth)
-        self.qs_node_count = ctx.nodes
-        return score
+        assert self._qs_ctx is not None
+        return quiesce(state, alpha, beta, stone, self._qs_ctx, qs_depth)
 
     # -- Core search ---------------------------------------------------------
 
@@ -543,9 +558,7 @@ class AlphaBetaBrain:
                             -beta,
                             -beta + 1,
                             stone.opponent(),
-                            tt,
                             _MAX_QS_DEPTH,
-                            eval_cache,
                         )
                     else:
                         null_score, _ = self._alphabeta(
@@ -603,7 +616,7 @@ class AlphaBetaBrain:
             candidates = self._order_moves(state, candidates, stone, depth, killers, tt_move, history, eval_cache)
 
         # Cap branching factor to avoid combinatorial explosion.
-        cap = self.early_game_max_candidates if occ_count <= self.early_game_threshold else _MAX_CANDIDATES
+        cap = self.early_game_max_candidates if is_early else _MAX_CANDIDATES
         candidates = candidates[:cap]
 
         best_score = float("-inf")
@@ -658,9 +671,7 @@ class AlphaBetaBrain:
                         -beta,
                         -alpha,
                         stone.opponent(),
-                        tt,
                         _MAX_QS_DEPTH,
-                        eval_cache,
                     )
                 elif i == 0:
                     # First move (expected best): search with full window.

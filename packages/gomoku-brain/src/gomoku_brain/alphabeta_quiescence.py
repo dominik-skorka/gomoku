@@ -25,9 +25,12 @@ from dataclasses import dataclass
 
 from gomoku.models import Move, Stone
 
+from gomoku_brain.alphabeta_ordering import _check_win, _split_threats
 from gomoku_brain.candidates import get_candidate_moves
 from gomoku_brain.evaluate import evaluate_board
 from gomoku_brain.search_state import SearchState
+from gomoku_brain.threat_detect import _find_winning_move, _scan_context
+from gomoku_brain.threat_search import _vcf
 
 EvalCache = dict[int, float]
 
@@ -43,9 +46,9 @@ class QuiesceCtx:
       function reads and writes this cache so successive calls don't
       re-evaluate identical positions.
     * ``nodes`` — incremented once per :func:`quiesce` invocation; the
-      brain reads it back into ``self.qs_node_count`` after each
-      top-level call so the running total survives across the multiple
-      entry points in :meth:`AlphaBetaBrain._alphabeta`.
+      brain reads it back into ``self.qs_node_count`` after the search
+      so the running total survives across the multiple entry points
+      in :meth:`AlphaBetaBrain._alphabeta`.
     """
 
     qs_vcf_depth: int
@@ -60,11 +63,20 @@ def get_threat_moves(state: SearchState, stone: Stone) -> list[Move]:
     Only considers candidates within radius 2 of occupied stones — this
     is a lightweight detector for quiescence, not an exhaustive threat
     enumeration.
+
+    On the JIT path the whole scan happens array-side via
+    ``get_threat_moves_grid``: ``Move`` objects are constructed only for
+    the handful of threat cells, not for every candidate.  (Building a
+    pydantic ``Move`` per candidate per quiescence node used to dominate
+    the entire alpha-beta search cost on quiet positions.)
     """
-    # ``_split_threats`` lives in :mod:`gomoku_brain.alphabeta`; we
-    # lazy-import it to avoid a module-load cycle (alphabeta imports
-    # this module's ``quiesce`` from inside its ``_quiesce`` wrapper).
-    from gomoku_brain.alphabeta import _split_threats
+    ctx = _scan_context(state)
+    if ctx is not None:
+        from gomoku_brain.evaluate_jit import get_threat_moves_grid
+
+        grid, size, candidates, dirs = ctx
+        result = get_threat_moves_grid(grid, size, candidates, int(stone), int(stone.opponent()), dirs)
+        return [Move(row=int(result[i, 0]), col=int(result[i, 1])) for i in range(result.shape[0])]
 
     candidates = get_candidate_moves(state)
     threats, _ = _split_threats(state, candidates, stone)
@@ -87,19 +99,12 @@ def quiesce(
     score from *stone*'s perspective; the caller negates as usual for
     the recursive negamax framing.
     """
-    # Lazy import to break the cycle alphabeta ↔ alphabeta_quiescence;
-    # ``_check_win`` is a JIT-dispatching pattern scanner kept module-
-    # level in :mod:`gomoku_brain.alphabeta`.
-    from gomoku_brain.alphabeta import _check_win
-
     ctx.nodes += 1
     zh = state.zobrist
 
     # -- VCF probe: detect multi-move forced wins that the one-ply
     #    threat loop would miss.
     if ctx.qs_vcf_depth > 0:
-        from gomoku_brain.threat import _find_winning_move, _vcf
-
         # Guard: if the opponent already has a winning move (four/five
         # on the board), we must block — we cannot freely start our own
         # VCF.  Skipping this check caused the engine to return a false
