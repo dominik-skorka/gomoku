@@ -31,7 +31,10 @@ def get_candidate_moves(board: Board, radius: int = _RADIUS) -> list[Move]:
     On an empty board, returns the center cell.
     Dispatches to bitboard JIT, numpy-grid JIT, or pure Python.
     """
-    if not board.occupied:
+    # ``occ_count`` is tracked incrementally on SearchState — checking it
+    # avoids materialising the lazy ``occupied`` set on every call.
+    occ_count = getattr(board, "occ_count", None)
+    if occ_count == 0 or (occ_count is None and not board.occupied):
         center = board.size // 2
         return [Move(row=center, col=center)]
 
