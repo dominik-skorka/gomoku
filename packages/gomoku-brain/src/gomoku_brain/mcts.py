@@ -298,7 +298,7 @@ class MCTSBrain:
             if self.vcf_depth > 0:
                 from gomoku_brain.threat import _vcf
 
-                opp_vcf = _vcf(board, stone.opponent(), self.vcf_depth, is_attacker=True)
+                opp_vcf = _vcf(board, stone.opponent(), self.vcf_depth)
                 if opp_vcf is not None:
                     durable, breakers = classify_vcf_breakers(
                         board, candidates, stone, self.vcf_depth

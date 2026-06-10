@@ -60,7 +60,7 @@ def root_vcf(board: Board, stone: Stone, vcf_depth: int) -> Move | None:
         return instant
 
     # 1) Do we have a forced win?
-    our_vcf = _vcf(board, stone, vcf_depth, is_attacker=True)
+    our_vcf = _vcf(board, stone, vcf_depth)
     if our_vcf is not None:
         logfire.info("AlphaBeta VCF win: {move}", move=str(our_vcf))
         if diag is not None:
@@ -70,7 +70,7 @@ def root_vcf(board: Board, stone: Stone, vcf_depth: int) -> Move | None:
 
     # 2) Does the opponent have a forced win we must disrupt?
     opp = stone.opponent()
-    opp_vcf = _vcf(board, opp, vcf_depth, is_attacker=True)
+    opp_vcf = _vcf(board, opp, vcf_depth)
     if opp_vcf is None:
         if diag is not None:
             diag.notes.append("No VCF for either side")

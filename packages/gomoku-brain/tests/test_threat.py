@@ -39,6 +39,19 @@ class TestFindFourThreats:
         wins = [t for t in threats if t[1] is None]
         assert len(wins) >= 1
 
+    def test_overline_completion_is_unblockable(self):
+        """X.XXXX → filling the gap makes six-in-a-row, a freestyle win.
+
+        Regression: the detector used to classify only exact-five
+        completions as unblockable, so VCF/PNS expansion never played
+        moves that completed six or more.
+        """
+        b = Board(size=9)
+        b = _place(b, [(4, 1), (4, 3), (4, 4), (4, 5), (4, 6)], Stone.BLACK)
+        threats = _find_four_threats(b, Stone.BLACK)
+        gap_wins = [t for t in threats if t[0] == Move(row=4, col=2) and t[1] is None]
+        assert len(gap_wins) == 1
+
 
 # ---------------------------------------------------------------------------
 # Three-threat detection
@@ -67,7 +80,7 @@ class TestVCF:
         b = _place(b, [(4, 2), (4, 3), (4, 4), (4, 5)], Stone.BLACK)
         # Add opponent stones so the board is not trivially empty
         b = _place(b, [(0, 0), (0, 1), (0, 2)], Stone.WHITE)
-        move = _vcf(b, Stone.BLACK, depth=20, is_attacker=True)
+        move = _vcf(b, Stone.BLACK, depth=20)
         assert move is not None
         assert move in (Move(row=4, col=1), Move(row=4, col=6))
 
@@ -76,7 +89,7 @@ class TestVCF:
         b = Board(size=9)
         b = b.place_stone(Move(row=4, col=4), Stone.BLACK)
         b = b.place_stone(Move(row=0, col=0), Stone.WHITE)
-        move = _vcf(b, Stone.BLACK, depth=20, is_attacker=True)
+        move = _vcf(b, Stone.BLACK, depth=20)
         assert move is None
 
     def test_chained_vcf(self):
@@ -88,7 +101,7 @@ class TestVCF:
         b = _place(b, [(6, 2), (6, 3), (6, 4)], Stone.BLACK)
         b = _place(b, [(0, 0), (0, 8), (2, 0), (2, 8), (8, 0), (8, 8)], Stone.WHITE)
 
-        move = _vcf(b, Stone.BLACK, depth=20, is_attacker=True)
+        move = _vcf(b, Stone.BLACK, depth=20)
         # VCF should find a first four-threat move in one of the two rows.
         # Extending an open three creates a live four (unblockable).
         assert move is not None
@@ -105,7 +118,7 @@ class TestVCT:
         b = Board(size=9)
         b = _place(b, [(4, 2), (4, 3), (4, 4), (4, 5)], Stone.BLACK)
         b = _place(b, [(0, 0), (0, 1), (0, 2)], Stone.WHITE)
-        move = _vct(b, Stone.BLACK, depth=8, is_attacker=True)
+        move = _vct(b, Stone.BLACK, depth=8)
         assert move is not None
         assert move in (Move(row=4, col=1), Move(row=4, col=6))
 
@@ -205,7 +218,7 @@ class TestThreatBrain:
         b2 = _place(b2, [(5, 10), (6, 11), (7, 12), (8, 13)], Stone.WHITE)
         # White can win at (4,9) or (9,14)
         # VCF should NOT return the live-four extension for Black
-        result = _vcf(b2, Stone.BLACK, depth=20, is_attacker=True)
+        result = _vcf(b2, Stone.BLACK, depth=20)
         # If VCF returns a move, placing it must not let White win
         if result is not None:
             trial = b2.place_stone(result, Stone.BLACK)
@@ -253,7 +266,7 @@ class TestVCTCounterThreat:
         # crash with the expanded defence set.
         from gomoku_brain.threat import _vct
 
-        move = _vct(b, Stone.BLACK, depth=12, is_attacker=True)
+        move = _vct(b, Stone.BLACK, depth=12)
         # The live four is unblockable, so VCT should still find it
         if move is not None:
             trial = b.place_stone(move, Stone.BLACK)
@@ -322,7 +335,7 @@ class TestVCFAwareSearch:
         assert b.is_valid_move(move)
         # After our move, opponent should no longer have a VCF
         trial = b.place_stone(move, Stone.BLACK)
-        assert _vcf(trial, Stone.WHITE, 20, is_attacker=True) is None
+        assert _vcf(trial, Stone.WHITE, 20) is None
 
     def test_falls_back_to_block_when_nothing_breaks_vcf(self):
         """When no candidate breaks the opponent VCF, block at the VCF cell."""
@@ -360,7 +373,7 @@ class TestOpponentVCTDetection:
         assert b.is_valid_move(move)
         # After our move, opponent should no longer have a VCT
         trial = b.place_stone(move, Stone.BLACK)
-        opp_vct = _vct(trial, Stone.WHITE, 12, is_attacker=True)
+        opp_vct = _vct(trial, Stone.WHITE, 12)
         # Either the VCT is broken, or we made a positionally strong move
         # (VCT breaker check might not fully break all deep threats)
         assert opp_vct is None or move is not None

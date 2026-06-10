@@ -259,7 +259,7 @@ when `vcf_depth > 0` the brain runs a **VCF probe as the opponent**
 before spinning up the tree:
 
 ```python
-opp_vcf = _vcf(board, opponent, vcf_depth, is_attacker=True)
+opp_vcf = _vcf(board, opponent, vcf_depth)
 if opp_vcf is not None:
     # Opponent has a forced win via continuous fours.
     # Restrict root candidates to the proven blocking cells.
