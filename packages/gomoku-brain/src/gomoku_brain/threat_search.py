@@ -40,6 +40,9 @@ from gomoku_brain.threat_detect import (
     _find_four_threats,
     _find_three_threats,
     _find_winning_move,
+    _has_unblockable_four,
+    _scan_context,
+    _ScanCtx,
 )
 
 # Cache entry: (proven, depth_searched, attack_move)
@@ -98,7 +101,6 @@ def _vcf_state(
     state: SearchState,
     stone: Stone,
     depth: int,
-    is_attacker: bool,
     cache: _ThreatCache,
 ) -> Move | None:
     """Recursive VCF worker operating on a mutable :class:`SearchState`.
@@ -119,68 +121,70 @@ def _vcf_state(
         if not proven and stored_depth >= depth:
             return None
 
-    if is_attacker:
-        threats = _find_four_threats(state, stone)
-        opp = stone.opponent()
-        for attack, defence in threats:
-            state.make(attack.row, attack.col, stone)
+    # One scan context per node, shared by the attacker enumeration and
+    # the per-attack opponent probes below.  The probes run after *our*
+    # stone is placed, but they detect *opponent* threats, so the
+    # staleness contract (see :data:`_ScanCtx`) holds.
+    ctx = _scan_context(state)
+    threats = _find_four_threats(state, stone, ctx)
+    opp = stone.opponent()
+    for attack, defence in threats:
+        state.make(attack.row, attack.col, stone)
+        try:
+            if _state_is_win(state, attack.row, attack.col):
+                cache[zh] = (True, depth, attack)
+                return attack
+
+            # Opponent gets to respond — can they win first?
+            if _find_winning_move(state, opp, ctx) is not None:
+                continue
+
+            if defence is None:
+                cache[zh] = (True, depth, attack)
+                return attack
+
+            # Defender must not have a live-four refutation elsewhere.
+            if _has_unblockable_four(state, opp, ctx):
+                continue
+
+            state.make(defence.row, defence.col, opp)
             try:
-                if _state_is_win(state, attack.row, attack.col):
+                if _vcf_state(state, stone, depth - 2, cache=cache) is not None:
                     cache[zh] = (True, depth, attack)
                     return attack
-
-                # Opponent gets to respond — can they win first?
-                if _find_winning_move(state, opp) is not None:
-                    continue
-
-                if defence is None:
-                    cache[zh] = (True, depth, attack)
-                    return attack
-
-                # Defender must not have a live-four refutation elsewhere.
-                opp_threats = _find_four_threats(state, opp)
-                if any(d is None for _, d in opp_threats):
-                    continue
-
-                state.make(defence.row, defence.col, opp)
-                try:
-                    if _vcf_state(state, stone, depth - 2, is_attacker=True, cache=cache) is not None:
-                        cache[zh] = (True, depth, attack)
-                        return attack
-                finally:
-                    state.unmake()
             finally:
                 state.unmake()
+        finally:
+            state.unmake()
 
     cache[zh] = (False, depth, None)
     return None
 
 
 def _vcf(
-    board: Board,
+    board: Board | SearchState,
     stone: Stone,
     depth: int,
-    is_attacker: bool,
     cache: _ThreatCache | None = None,
 ) -> Move | None:
     """Recursive VCF search.
 
-    *Attacker* can only play moves that create four-threats.
-    *Defender* must respond to each four-threat with the forced block.
+    The attacker can only play moves that create four-threats; the
+    defender must respond to each four-threat with the forced block.
     Returns the first attacking move of a winning sequence, or ``None``.
 
     ``cache`` is a transposition table scoped to a single top-level call —
     transposed positions (reached via different attack orderings) are
-    resolved once and reused.  Accepts a Pydantic :class:`Board` at the
-    entry point; recursion uses a mutable :class:`SearchState` to avoid
-    per-node allocations.
+    resolved once and reused.  Accepts a Pydantic :class:`Board` or an
+    existing :class:`SearchState` at the entry point; recursion uses the
+    mutable state to avoid per-node allocations.
     """
     if depth <= 0:
         return None
     if cache is None:
         cache = {}
-    state = SearchState.from_board(board, stone)
-    return _vcf_state(state, stone, depth, is_attacker, cache)
+    state = board if isinstance(board, SearchState) else SearchState.from_board(board, stone)
+    return _vcf_state(state, stone, depth, cache)
 
 
 # ---------------------------------------------------------------------------
@@ -189,7 +193,7 @@ def _vcf(
 
 
 def classify_vcf_breakers(
-    board: Board,
+    board: Board | SearchState,
     candidates: list[Move],
     stone: Stone,
     vcf_depth: int,
@@ -221,7 +225,7 @@ def classify_vcf_breakers(
     Shared between :class:`ThreatBrain._vcf_aware_search` and
     :meth:`AlphaBetaBrain._root_vcf` so both enforce the same semantics.
     """
-    state = SearchState.from_board(board, stone)
+    state = board if isinstance(board, SearchState) else SearchState.from_board(board, stone)
     opp = stone.opponent()
     if cache is None:
         cache = {}
@@ -231,7 +235,7 @@ def classify_vcf_breakers(
     for move in candidates:
         state.make(move.row, move.col, stone)
         try:
-            if _vcf_state(state, opp, vcf_depth, is_attacker=True, cache=cache) is not None:
+            if _vcf_state(state, opp, vcf_depth, cache=cache) is not None:
                 continue
             breakers.append(move)
 
@@ -247,7 +251,7 @@ def classify_vcf_breakers(
                     continue
                 state.make(defence.row, defence.col, opp)
                 try:
-                    if _vcf_state(state, opp, vcf_depth, is_attacker=True, cache=cache) is not None:
+                    if _vcf_state(state, opp, vcf_depth, cache=cache) is not None:
                         is_durable = False
                         break
                 finally:
@@ -260,12 +264,18 @@ def classify_vcf_breakers(
     return durable, breakers
 
 
-def _vct_defence_moves_state(state: SearchState, attack_move: Move, stone: Stone) -> list[Move]:
+def _vct_defence_moves_state(
+    state: SearchState,
+    attack_move: Move,
+    stone: Stone,
+    ctx: _ScanCtx | None = None,
+) -> list[Move]:
     """Compute the full defence set for a three-threat played by *stone*.
 
     Mirrors :func:`_vct_defence_moves` but operates on a mutable
     :class:`SearchState` — ``state`` is expected to be the pre-attack
-    position and is returned to the same ply on exit.
+    position and is returned to the same ply on exit.  ``ctx`` is an
+    optional scan context for that pre-attack position.
 
     On the JIT path the per-candidate counter-four probe uses
     ``has_any_four_threat_grid`` (short-circuits on first hit) over
@@ -277,7 +287,7 @@ def _vct_defence_moves_state(state: SearchState, attack_move: Move, stone: Stone
     opp = stone.opponent()
 
     # Natural end-cell defences of the live three
-    three_threats = _find_three_threats(state, stone)
+    three_threats = _find_three_threats(state, stone, ctx)
     end_cells: set[tuple[int, int]] = set()
     for atk, defs in three_threats:
         if atk == attack_move:
@@ -337,11 +347,44 @@ def _vct_defence_moves(board: Board, attack_move: Move, stone: Stone) -> list[Mo
     return _vct_defence_moves_state(state, attack_move, stone)
 
 
+def _defence_is_refuted(
+    state: SearchState,
+    stone: Stone,
+    depth: int,
+    vct_cache: _ThreatCache,
+    vcf_cache: _ThreatCache,
+) -> bool:
+    """Return True if the defender's reply (just played) still loses to VCT.
+
+    ``state`` is positioned right after a defence move.  If that move
+    created counter four-threats for the defender, the attacker must
+    neutralise them first: an unblockable counter-four, or two distinct
+    forced block cells, refute the attack outright; a single forced
+    block is played and the search continues below it.
+    """
+    opp = stone.opponent()
+    opponent_fours = _find_four_threats(state, opp)
+    if not opponent_fours:
+        return _vct_state(state, stone, depth - 2, vct_cache, vcf_cache) is not None
+    if any(d is None for _, d in opponent_fours):
+        return False
+    unique_blocks = {(m.row, m.col) for _, m in opponent_fours if m is not None}
+    if len(unique_blocks) >= 2:
+        return False
+    _, block_move = opponent_fours[0]
+    if block_move is None or not state.is_empty(block_move.row, block_move.col):
+        return False
+    state.make(block_move.row, block_move.col, stone)
+    try:
+        return _vct_state(state, stone, depth - 2, vct_cache, vcf_cache) is not None
+    finally:
+        state.unmake()
+
+
 def _vct_state(
     state: SearchState,
     stone: Stone,
     depth: int,
-    is_attacker: bool,
     vct_cache: _ThreatCache,
     vcf_cache: _ThreatCache,
 ) -> Move | None:
@@ -358,107 +401,65 @@ def _vct_state(
         if not proven and stored_depth >= depth:
             return None
 
-    if is_attacker:
-        # 1) Try VCF first (four-threats are stronger)
-        vcf_result = _vcf_state(state, stone, depth, is_attacker=True, cache=vcf_cache)
-        if vcf_result is not None:
-            vct_cache[zh] = (True, depth, vcf_result)
-            return vcf_result
+    # 1) Try VCF first (four-threats are stronger)
+    vcf_result = _vcf_state(state, stone, depth, cache=vcf_cache)
+    if vcf_result is not None:
+        vct_cache[zh] = (True, depth, vcf_result)
+        return vcf_result
 
-        # 2) Try three-threats
-        three_threats = _find_three_threats(state, stone)
-        opp = stone.opponent()
-        for attack, _naive_defences in three_threats:
-            # Defence set is computed on the *pre-attack* state.
-            defence_moves = _vct_defence_moves_state(state, attack, stone)
+    # 2) Try three-threats.  One scan context for this node, shared by the
+    # attacker enumeration, per-attack defence sets (computed pre-attack),
+    # and the post-attack opponent win probes (opponent hasn't moved).
+    ctx = _scan_context(state)
+    three_threats = _find_three_threats(state, stone, ctx)
+    opp = stone.opponent()
+    for attack, _naive_defences in three_threats:
+        # Defence set is computed on the *pre-attack* state.
+        defence_moves = _vct_defence_moves_state(state, attack, stone, ctx)
 
-            state.make(attack.row, attack.col, stone)
-            try:
-                if _state_is_win(state, attack.row, attack.col):
-                    vct_cache[zh] = (True, depth, attack)
-                    return attack
+        state.make(attack.row, attack.col, stone)
+        try:
+            if _state_is_win(state, attack.row, attack.col):
+                vct_cache[zh] = (True, depth, attack)
+                return attack
 
-                if _find_winning_move(state, opp) is not None:
+            if _find_winning_move(state, opp, ctx) is not None:
+                continue
+
+            all_refuted = bool(defence_moves)
+            for defence in defence_moves:
+                if not state.is_empty(defence.row, defence.col):
                     continue
+                state.make(defence.row, defence.col, opp)
+                try:
+                    if not _defence_is_refuted(state, stone, depth, vct_cache, vcf_cache):
+                        all_refuted = False
+                        break
+                finally:
+                    state.unmake()
 
-                all_refuted = True
-                if not defence_moves:
-                    all_refuted = False
-                else:
-                    for defence in defence_moves:
-                        if not state.is_empty(defence.row, defence.col):
-                            continue
-                        state.make(defence.row, defence.col, opp)
-                        try:
-                            opponent_fours = _find_four_threats(state, opp)
-                            if opponent_fours:
-                                if any(d is None for _, d in opponent_fours):
-                                    all_refuted = False
-                                    break
-                                unique_blocks = {(m.row, m.col) for _, m in opponent_fours if m is not None}
-                                if len(unique_blocks) >= 2:
-                                    all_refuted = False
-                                    break
-                                _, block_move = opponent_fours[0]
-                                if block_move is None or not state.is_empty(block_move.row, block_move.col):
-                                    all_refuted = False
-                                    break
-                                state.make(block_move.row, block_move.col, stone)
-                                try:
-                                    if (
-                                        _vct_state(
-                                            state,
-                                            stone,
-                                            depth - 2,
-                                            is_attacker=True,
-                                            vct_cache=vct_cache,
-                                            vcf_cache=vcf_cache,
-                                        )
-                                        is None
-                                    ):
-                                        all_refuted = False
-                                        break
-                                finally:
-                                    state.unmake()
-                            elif (
-                                _vct_state(
-                                    state,
-                                    stone,
-                                    depth - 2,
-                                    is_attacker=True,
-                                    vct_cache=vct_cache,
-                                    vcf_cache=vcf_cache,
-                                )
-                                is None
-                            ):
-                                all_refuted = False
-                                break
-                        finally:
-                            state.unmake()
-
-                if all_refuted:
-                    vct_cache[zh] = (True, depth, attack)
-                    return attack
-            finally:
-                state.unmake()
+            if all_refuted:
+                vct_cache[zh] = (True, depth, attack)
+                return attack
+        finally:
+            state.unmake()
 
     vct_cache[zh] = (False, depth, None)
     return None
 
 
 def _vct(
-    board: Board,
+    board: Board | SearchState,
     stone: Stone,
     depth: int,
-    is_attacker: bool,
     vct_cache: _ThreatCache | None = None,
     vcf_cache: _ThreatCache | None = None,
 ) -> Move | None:
     """Recursive VCT search.
 
-    Attacker plays four-threats *and* live-three threats.
-    Defender tries all reasonable defence moves: the two open-end cells of the
-    threat **and** any move that creates a counter four-threat.
+    The attacker plays four-threats *and* live-three threats.  The
+    defender tries all reasonable defence moves: the two open-end cells
+    of the threat **and** any move that creates a counter four-threat.
 
     ``vct_cache`` memoises VCT results across transpositions in the current
     top-level call.  ``vcf_cache`` is a separate table shared with the inner
@@ -472,5 +473,5 @@ def _vct(
         vct_cache = {}
     if vcf_cache is None:
         vcf_cache = {}
-    state = SearchState.from_board(board, stone)
-    return _vct_state(state, stone, depth, is_attacker, vct_cache, vcf_cache)
+    state = board if isinstance(board, SearchState) else SearchState.from_board(board, stone)
+    return _vct_state(state, stone, depth, vct_cache, vcf_cache)

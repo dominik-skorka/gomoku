@@ -446,12 +446,19 @@ def find_winning_move_grid(
     Scans the directional neighbours of each candidate cell in place.
     Mirrors the pure-Python ``_find_winning_move`` but uses the int8
     grid for speed.
+
+    Occupied candidate cells are skipped, so a candidate list computed
+    *before* additional stones were placed stays valid — any cell that
+    completes five for *stone* is adjacent to an existing *stone* stone
+    and therefore already in the stale list.
     """
     out = np.empty((1, 2), dtype=np.int32)
     n = candidates.shape[0]
     for i in range(n):
         r = candidates[i, 0]
         c = candidates[i, 1]
+        if grid[r, c] != 0:
+            continue
         for d in range(dirs.shape[0]):
             dr = dirs[d, 0]
             dc = dirs[d, 1]
@@ -532,6 +539,69 @@ def has_any_four_threat_grid(
         if grid[r, c] != 0:
             continue
         if is_four_threat(grid, size, r, c, stone, dirs):
+            return True
+    return False
+
+
+@njit(cache=True)
+def has_unblockable_four_grid(
+    grid: NDArray,  # type: ignore[type-arg]
+    size: int,
+    candidates: NDArray,  # type: ignore[type-arg]
+    stone: int,
+    dirs: NDArray,  # type: ignore[type-arg]
+) -> bool:
+    """Return True if *stone* has an unblockable four-threat cell.
+
+    Unblockable means a five-or-more completion, a live four (both ends
+    open), or a double-four (two dead-fours from the same cell) — the
+    same classification ``find_four_threats_grid`` encodes as
+    ``def_r == -1``, but aggregated per candidate and short-circuiting
+    on the first hit.  Used by the VCF defender-refutation check, which
+    only needs the boolean.
+
+    Occupied candidate cells are skipped, so stale candidate lists are
+    safe (see ``find_winning_move_grid``).
+    """
+    n = candidates.shape[0]
+    for i in range(n):
+        r = candidates[i, 0]
+        c = candidates[i, 1]
+        if grid[r, c] != 0:
+            continue
+        dead_fours = 0
+        for d in range(dirs.shape[0]):
+            dr = dirs[d, 0]
+            dc = dirs[d, 1]
+            count = 0
+            open_ends = 0
+
+            rr = r + dr
+            cc = c + dc
+            while 0 <= rr < size and 0 <= cc < size and grid[rr, cc] == stone:
+                count += 1
+                rr += dr
+                cc += dc
+            if 0 <= rr < size and 0 <= cc < size and grid[rr, cc] == 0:
+                open_ends += 1
+
+            rr = r - dr
+            cc = c - dc
+            while 0 <= rr < size and 0 <= cc < size and grid[rr, cc] == stone:
+                count += 1
+                rr -= dr
+                cc -= dc
+            if 0 <= rr < size and 0 <= cc < size and grid[rr, cc] == 0:
+                open_ends += 1
+
+            total = count + 1
+            if total >= 5:
+                return True
+            if total == 4 and open_ends == 2:
+                return True
+            if total == 4 and open_ends == 1:
+                dead_fours += 1
+        if dead_fours >= 2:
             return True
     return False
 
@@ -632,6 +702,9 @@ def find_four_threats_grid(
     Mirrors the per-direction scan + per-move aggregation logic in
     ``gomoku_brain.threat._find_four_threats``.  See that docstring for
     classification rules.
+
+    Occupied candidate cells are skipped, so stale candidate lists are
+    safe (see ``find_winning_move_grid``).
     """
     n = candidates.shape[0]
     # Per-cell aggregation.  A move can produce several (direction-specific)
@@ -646,6 +719,8 @@ def find_four_threats_grid(
     for i in range(n):
         r = candidates[i, 0]
         c = candidates[i, 1]
+        if grid[r, c] != 0:
+            continue
         for d in range(dirs.shape[0]):
             dr = dirs[d, 0]
             dc = dirs[d, 1]
@@ -685,7 +760,9 @@ def find_four_threats_grid(
 
             total = count + 1
 
-            if total == 5:
+            # >= 5 (not == 5): freestyle counts overlines as wins, so a
+            # move completing six-or-more is just as unblockable.
+            if total >= 5:
                 unblockable[r, c] = True
             elif total == 4 and open_ends == 2:
                 unblockable[r, c] = True
@@ -739,6 +816,9 @@ def find_three_threats_grid(
     One entry per ``(candidate, direction)`` pair that forms a live three.
     The same candidate may appear multiple times for different directions,
     matching the pure-Python implementation.
+
+    Occupied candidate cells are skipped, so stale candidate lists are
+    safe (see ``find_winning_move_grid``).
     """
     n = candidates.shape[0]
     # Upper bound: n candidates × 4 directions.
@@ -748,6 +828,8 @@ def find_three_threats_grid(
     for i in range(n):
         r = candidates[i, 0]
         c = candidates[i, 1]
+        if grid[r, c] != 0:
+            continue
         for d in range(dirs.shape[0]):
             dr = dirs[d, 0]
             dc = dirs[d, 1]

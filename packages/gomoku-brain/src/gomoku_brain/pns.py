@@ -32,6 +32,8 @@ from gomoku_brain.threat_detect import (
     _find_four_threats,
     _find_three_threats,
     _find_winning_move,
+    _scan_context,
+    _ScanCtx,
 )
 from gomoku_brain.threat_search import _state_is_win
 
@@ -107,23 +109,33 @@ class _PNSNode:
 # ---------------------------------------------------------------------------
 
 
-def _evaluate_leaf(node: _PNSNode, state: SearchState, attacker: Stone) -> None:
+def _evaluate_leaf(
+    node: _PNSNode,
+    state: SearchState,
+    attacker: Stone,
+    ctx: _ScanCtx | None = None,
+) -> None:
     """Lightweight leaf evaluation: check immediate wins only.
 
     ``state`` must already reflect the position at ``node``.  Full
     threat-existence detection is deferred to expansion time — if an OR
     node has no threats, expansion produces no children and the node is
     disproved then.
+
+    ``ctx`` is the expanding parent's scan context.  Leaf evaluation
+    always probes the side that did *not* play the move leading to the
+    leaf, so the parent's candidate snapshot is still valid for it (see
+    the staleness contract on ``_ScanCtx``).
     """
     defender = attacker.opponent()
 
     if node.node_type is _NodeType.OR:
-        if _find_winning_move(state, attacker) is not None:
+        if _find_winning_move(state, attacker, ctx) is not None:
             node.proof = 0
             node.disproof = INF
             return
     else:
-        if _find_winning_move(state, defender) is not None:
+        if _find_winning_move(state, defender, ctx) is not None:
             node.proof = INF
             node.disproof = 0
             return
@@ -137,7 +149,11 @@ def _evaluate_leaf(node: _PNSNode, state: SearchState, attacker: Stone) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _pns_defence_moves(state: SearchState, attacker: Stone) -> list[Move]:
+def _pns_defence_moves(
+    state: SearchState,
+    attacker: Stone,
+    ctx: _ScanCtx | None = None,
+) -> list[Move]:
     """Compute defender moves for an AND node: blocks + counter-threats.
 
     Includes:
@@ -146,32 +162,19 @@ def _pns_defence_moves(state: SearchState, attacker: Stone) -> list[Move]:
     3. Defender's own four-threat moves (counter-fours).
     4. Defender's own three-threat moves (counter-threes).
 
-    On the JIT path the four detection routines share a single
-    ``(grid, occ, candidates, dirs)`` setup — the previous implementation
-    re-derived these four times per AND-node expansion, which is the
-    dominant cost of PNS in dense positions.
+    On the JIT path the four detection routines share one scan context —
+    ``ctx`` (the expanding node's context, built at the node's own
+    position) when provided, else one derived here.
     """
-    from gomoku_brain.evaluate import _should_use_jit
-
     defender = attacker.opponent()
     cells: set[tuple[int, int]] = set()
 
-    if _should_use_jit():
-        from gomoku_brain.evaluate_jit import (
-            find_four_threats_grid,
-            find_three_threats_grid,
-            get_candidates_grid,
-            get_dirs,
-        )
-        from gomoku_brain.grid_utils import board_to_grid, occupied_coords
+    if ctx is None:
+        ctx = _scan_context(state)
+    if ctx is not None:
+        from gomoku_brain.evaluate_jit import find_four_threats_grid, find_three_threats_grid
 
-        occ = occupied_coords(state)
-        if occ.shape[0] == 0:
-            return []
-        grid = board_to_grid(state)
-        size = state.size
-        dirs = get_dirs()
-        candidates = get_candidates_grid(grid, size, occ, 2)
+        grid, size, candidates, dirs = ctx
 
         atk_int = int(attacker)
         def_int = int(defender)
@@ -237,16 +240,22 @@ def _expand(node: _PNSNode, state: SearchState) -> None:
     Precondition: ``state`` is at ``node``'s position.  Postcondition:
     ``state`` is restored to ``node``'s position (intermediate
     make/unmake cycles are balanced by ``try`` / ``finally`` blocks).
+
+    One scan context is built per expansion and shared across every
+    detection call — node-level enumeration runs at the context's own
+    position, and all post-make probes target the side that did not
+    just move, so the staleness contract on ``_ScanCtx`` holds.
     """
     node.expanded = True
     attacker = node.stone
     defender = attacker.opponent()
+    ctx = _scan_context(state)
 
     if node.node_type is _NodeType.OR:
         # Attacker moves: four-threats and three-threats only.
 
         # Immediate win — no need to materialise the child position.
-        win_move = _find_winning_move(state, attacker)
+        win_move = _find_winning_move(state, attacker, ctx)
         if win_move is not None:
             child = _PNSNode(attacker, _NodeType.AND, move=win_move, parent=node)
             child.proof = 0
@@ -256,13 +265,13 @@ def _expand(node: _PNSNode, state: SearchState) -> None:
             return
 
         # If defender has an immediate win, attacker must block it.
-        def_win = _find_winning_move(state, defender)
+        def_win = _find_winning_move(state, defender, ctx)
         if def_win is not None:
             if state.is_empty(def_win.row, def_win.col):
                 state.make(def_win.row, def_win.col, attacker)
                 try:
                     child = _PNSNode(attacker, _NodeType.AND, move=def_win, parent=node)
-                    _evaluate_leaf(child, state, attacker)
+                    _evaluate_leaf(child, state, attacker, ctx)
                     node.children.append(child)
                 finally:
                     state.unmake()
@@ -274,7 +283,7 @@ def _expand(node: _PNSNode, state: SearchState) -> None:
 
         # Four-threats
         seen_moves: set[tuple[int, int]] = set()
-        for attack, _defence in _find_four_threats(state, attacker):
+        for attack, _defence in _find_four_threats(state, attacker, ctx):
             key = (attack.row, attack.col)
             if key in seen_moves:
                 continue
@@ -290,17 +299,17 @@ def _expand(node: _PNSNode, state: SearchState) -> None:
                     _update_ancestors(node)
                     return
 
-                if _find_winning_move(state, defender) is not None:
+                if _find_winning_move(state, defender, ctx) is not None:
                     continue
 
                 child = _PNSNode(attacker, _NodeType.AND, move=attack, parent=node)
-                _evaluate_leaf(child, state, attacker)
+                _evaluate_leaf(child, state, attacker, ctx)
                 node.children.append(child)
             finally:
                 state.unmake()
 
         # Three-threats
-        for attack, _defs in _find_three_threats(state, attacker):
+        for attack, _defs in _find_three_threats(state, attacker, ctx):
             key = (attack.row, attack.col)
             if key in seen_moves:
                 continue
@@ -316,11 +325,11 @@ def _expand(node: _PNSNode, state: SearchState) -> None:
                     _update_ancestors(node)
                     return
 
-                if _find_winning_move(state, defender) is not None:
+                if _find_winning_move(state, defender, ctx) is not None:
                     continue
 
                 child = _PNSNode(attacker, _NodeType.AND, move=attack, parent=node)
-                _evaluate_leaf(child, state, attacker)
+                _evaluate_leaf(child, state, attacker, ctx)
                 node.children.append(child)
             finally:
                 state.unmake()
@@ -336,11 +345,11 @@ def _expand(node: _PNSNode, state: SearchState) -> None:
         # If attacker can win immediately, defender MUST block at that cell.
         # If attacker has multiple winning cells (e.g. live four), the
         # node is effectively proved — defender can only block one.
-        atk_win = _find_winning_move(state, attacker)
+        atk_win = _find_winning_move(state, attacker, ctx)
         if atk_win is not None:
             state.make(atk_win.row, atk_win.col, defender)
             try:
-                if _find_winning_move(state, attacker) is not None:
+                if _find_winning_move(state, attacker, ctx) is not None:
                     # Multiple winning cells — defender can't block all → proved
                     node.proof = 0
                     node.disproof = INF
@@ -357,14 +366,14 @@ def _expand(node: _PNSNode, state: SearchState) -> None:
                     _update_ancestors(node)
                     return
                 child = _PNSNode(attacker, _NodeType.OR, move=atk_win, parent=node)
-                _evaluate_leaf(child, state, attacker)
+                _evaluate_leaf(child, state, attacker, ctx)
                 node.children.append(child)
                 _update_ancestors(node)
                 return
             finally:
                 state.unmake()
 
-        defences = _pns_defence_moves(state, attacker)
+        defences = _pns_defence_moves(state, attacker, ctx)
 
         if not defences:
             # No blocks or counter-threats -> attacker's threat is unanswerable
@@ -385,7 +394,7 @@ def _expand(node: _PNSNode, state: SearchState) -> None:
                     return
 
                 child = _PNSNode(attacker, _NodeType.OR, move=cand, parent=node)
-                _evaluate_leaf(child, state, attacker)
+                _evaluate_leaf(child, state, attacker, ctx)
                 node.children.append(child)
             finally:
                 state.unmake()

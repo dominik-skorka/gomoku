@@ -39,7 +39,7 @@ class TestThreatSearchDirectImport:
         b = Board(size=15)
         for c in range(4, 7):
             b = b.place_stone(Move(row=7, col=c), Stone.BLACK)
-        result = _vcf(b, Stone.BLACK, depth=2, is_attacker=True)
+        result = _vcf(b, Stone.BLACK, depth=2)
         assert result is not None
         # Either end of the live three completes a four-threat.
         assert (result.row, result.col) in {(7, 3), (7, 7)}
@@ -92,8 +92,8 @@ class TestRoundTripBehaviourMatches:
         b = Board(size=15)
         for c in range(4, 7):
             b = b.place_stone(Move(row=7, col=c), Stone.BLACK)
-        a = via_threat(b, Stone.BLACK, depth=2, is_attacker=True)
-        d = direct(b, Stone.BLACK, depth=2, is_attacker=True)
+        a = via_threat(b, Stone.BLACK, depth=2)
+        d = direct(b, Stone.BLACK, depth=2)
         assert a == d
 
     def test_classify_vcf_breakers_via_both_paths_agrees(self):

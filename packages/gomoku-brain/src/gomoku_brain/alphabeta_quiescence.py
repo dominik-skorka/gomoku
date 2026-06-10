@@ -98,20 +98,16 @@ def quiesce(
     # -- VCF probe: detect multi-move forced wins that the one-ply
     #    threat loop would miss.
     if ctx.qs_vcf_depth > 0:
-        from gomoku_brain.grid_utils import grid_to_board
         from gomoku_brain.threat import _find_winning_move, _vcf
-
-        # _vcf requires a Pydantic Board — reconstruct from bitboards.
-        vcf_board = grid_to_board(state.grid, state.size)
 
         # Guard: if the opponent already has a winning move (four/five
         # on the board), we must block — we cannot freely start our own
         # VCF.  Skipping this check caused the engine to return a false
         # +100 000 even when the opponent had an unstoppable live-4.
+        # _vcf accepts the SearchState directly and leaves it at the
+        # entry ply (make/unmake balanced).
         opp = stone.opponent()
-        if _find_winning_move(vcf_board, opp) is None and _vcf(
-            vcf_board, stone, ctx.qs_vcf_depth, is_attacker=True
-        ) is not None:
+        if _find_winning_move(state, opp) is None and _vcf(state, stone, ctx.qs_vcf_depth) is not None:
             return 100_000.0
 
     # Standing pat — static evaluation as a lower bound.

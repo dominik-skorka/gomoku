@@ -29,6 +29,12 @@ from numpy.typing import NDArray
 
 from gomoku_brain.zobrist import _TABLE, SIDE_KEY, hash_board
 
+# Precomputed per-column bit masks.  ``make``/``unmake`` run millions of
+# times per search; building ``np.uint32`` scalars and shifting on every
+# call dominated their cost.
+_BIT: list[np.uint32] = [np.uint32(1 << c) for c in range(32)]
+_BIT_INV: list[np.uint32] = [np.uint32(~(1 << c) & 0xFFFFFFFF) for c in range(32)]
+
 
 class SearchState:
     """Mutable bitboard with a preallocated undo stack.
@@ -162,7 +168,7 @@ class SearchState:
         self.zobrist ^= _TABLE[row][col][stone_int - 1]
         self.zobrist ^= SIDE_KEY
         # Set the bit on the colour's bitboard.
-        bit = np.uint32(1) << np.uint32(col)
+        bit = _BIT[col]
         if stone_int == 1:
             self.black[row] |= bit
         else:
@@ -188,7 +194,7 @@ class SearchState:
         col = int(self._undo_col[p])
         stone_int = int(self._undo_stone[p])
         # Clear the bit.
-        bit_mask = ~(np.uint32(1) << np.uint32(col))
+        bit_mask = _BIT_INV[col]
         if stone_int == 1:
             self.black[row] &= bit_mask
         else:
@@ -207,16 +213,12 @@ class SearchState:
     # ------------------------------------------------------------------
 
     def at(self, row: int, col: int) -> Stone:
-        bit = np.uint32(1) << np.uint32(col)
-        if self.black[row] & bit:
-            return Stone.BLACK
-        if self.white[row] & bit:
-            return Stone.WHITE
-        return Stone.EMPTY
+        # The int8 grid mirror is kept in lockstep by make/unmake — one
+        # indexed read beats two bitboard mask tests.
+        return Stone(int(self.grid[row, col]))
 
     def is_empty(self, row: int, col: int) -> bool:
-        bit = np.uint32(1) << np.uint32(col)
-        return not (self.black[row] & bit) and not (self.white[row] & bit)
+        return int(self.grid[row, col]) == 0
 
     @property
     def occupied(self) -> set[tuple[int, int]]:
