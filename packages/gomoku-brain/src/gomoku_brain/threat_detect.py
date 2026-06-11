@@ -18,6 +18,7 @@ from gomoku.models import Move, Stone
 
 from gomoku_brain.candidates import get_candidate_moves
 from gomoku_brain.directions import DIRECTIONS as _DIRECTIONS
+from gomoku_brain.search_state import SearchState
 
 # Shared JIT scan context: ``(grid, size, candidates, dirs)``.
 #
@@ -37,21 +38,63 @@ from gomoku_brain.directions import DIRECTIONS as _DIRECTIONS
 # cells may neighbour only the new stone).
 _ScanCtx = tuple
 
+# Lazily-resolved (get_candidates_grid, dirs) pair: ``None`` = not yet
+# resolved, ``False`` = JIT disabled.  ``_scan_context`` runs ~20k times
+# per search; re-importing the kernels and re-checking the JIT setting on
+# every call used to cost more than the (memoised) kernel work itself.
+_SCAN_KIT: tuple | None | bool = None
 
-def _scan_context(board: Board) -> _ScanCtx | None:
-    """Build the shared JIT scan context for *board*, or ``None`` when JIT is off."""
+
+def _resolve_scan_kit() -> tuple | bool:
+    global _SCAN_KIT
     from gomoku_brain.evaluate import _should_use_jit
 
-    if not _should_use_jit():
-        return None
+    if _should_use_jit():
+        from gomoku_brain.evaluate_jit import get_candidates_grid, get_dirs
 
-    from gomoku_brain.evaluate_jit import get_candidates_grid, get_dirs
+        _SCAN_KIT = (get_candidates_grid, get_dirs())
+    else:
+        _SCAN_KIT = False
+    return _SCAN_KIT
+
+
+def _scan_context(board: Board) -> _ScanCtx | None:
+    """Build the shared JIT scan context for *board*, or ``None`` when JIT is off.
+
+    For :class:`SearchState` the derived candidate array is memoised
+    per ply, keyed by the zobrist hash it was derived from — quiescence,
+    the VCF guard, and the VCF root each build a context for the same
+    position, so the dilation kernel runs once per (ply, position)
+    instead of once per call.  A make at the same ply changes the hash,
+    so a stale slot simply misses; ancestor slots survive the
+    make/unmake churn of child subtrees.
+    """
+    kit = _SCAN_KIT
+    if kit is None:
+        kit = _resolve_scan_kit()
+    if kit is False:
+        return None
+    get_candidates_grid, dirs = kit
+
+    if isinstance(board, SearchState):
+        ply = board.ply
+        cached = board._ctx_candidates[ply]
+        if cached is not None and board._ctx_zobrist[ply] == board.zobrist:
+            return board.grid, board.size, cached, dirs
+        candidates = get_candidates_grid(
+            board.grid, board.size, board._occ_arr[: board.occ_count], 2
+        )
+        board._ctx_zobrist[ply] = board.zobrist
+        board._ctx_candidates[ply] = candidates
+        board._ctx_moves[ply] = None
+        return board.grid, board.size, candidates, dirs
+
     from gomoku_brain.grid_utils import board_to_grid, occupied_coords
 
     occ = occupied_coords(board)
     grid = board_to_grid(board)
     candidates = get_candidates_grid(grid, board.size, occ, 2)
-    return grid, board.size, candidates, get_dirs()
+    return grid, board.size, candidates, dirs
 
 
 def _line_cells(
