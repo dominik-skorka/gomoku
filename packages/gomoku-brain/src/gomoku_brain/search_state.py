@@ -47,6 +47,9 @@ class SearchState:
     """
 
     __slots__ = (
+        "_ctx_candidates",
+        "_ctx_moves",
+        "_ctx_zobrist",
         "_eval_stack",
         "_eval_valid",
         "_occ",
@@ -112,6 +115,17 @@ class SearchState:
         # ``gomoku_brain.evaluate`` can fill gaps with local deltas.
         self._eval_stack = np.zeros(cap, dtype=np.float64)
         self._eval_valid = np.zeros(cap, dtype=np.bool_)
+        # Per-ply memo of the radius-2 candidate scan, keyed by the
+        # zobrist hash of the position each slot was derived from (no
+        # explicit invalidation: a make at the same ply changes the
+        # hash, so a stale slot simply misses; ancestor slots survive
+        # the make/unmake churn of child subtrees).  ``_ctx_candidates``
+        # holds the int32 arrays consumed by JIT kernels;
+        # ``_ctx_moves`` the corresponding Move lists (returned as
+        # copies — callers slice and re-order their lists).
+        self._ctx_zobrist: list[int] = [0] * cap
+        self._ctx_candidates: list[NDArray[np.int32] | None] = [None] * cap
+        self._ctx_moves: list[list | None] = [None] * cap  # list[Move] slots
         # Lazy set cache — off the hot path, invalidated on make/unmake.
         self._occ: set[tuple[int, int]] | None = None
 
