@@ -287,6 +287,136 @@ def _evaluate_board_python(board: Board, stone: Stone) -> float:
 
 
 # ---------------------------------------------------------------------------
+# Incremental evaluation on SearchState
+# ---------------------------------------------------------------------------
+
+# Maximum plies to walk back looking for a cached ancestor evaluation.
+# Each gap ply costs one local-delta kernel call (~a quarter of a full
+# evaluation), so beyond a few plies a fresh full evaluation wins.
+_EVAL_WALKBACK_CAP = 4
+
+# Lazily-resolved (dirs, table, fork_threshold, fork_bonus, open_three_bonus)
+# kernel-constant bundle — avoids five accessor calls per evaluation.
+_jit_consts: tuple | None = None  # type: ignore[type-arg]
+
+
+def _eval_state_black(state) -> float:  # type: ignore[no-untyped-def]
+    """Black-positive evaluation of a :class:`SearchState`, incrementally.
+
+    Uses the per-ply cache on the state: if an ancestor ply within
+    ``_EVAL_WALKBACK_CAP`` has a cached value, the gap is filled with
+    one :func:`evaluate_delta_grid` call per ply (the gap moves are
+    stripped from the grid mirror and re-applied one by one, so each
+    delta sees exactly its own position).  Otherwise a full
+    ``evaluate_grid`` runs, and the parent ply is back-filled with one
+    delta so sibling probes after the next make/unmake hit the cache.
+
+    Every term is an integer accumulated in float64, so the incremental
+    sum is bit-identical to a full recomputation.
+    """
+    global _jit_consts
+    if _jit_consts is None:
+        from gomoku_brain.evaluate_jit import (
+            get_dirs,
+            get_fork_bonus,
+            get_fork_threshold,
+            get_open_three_bonus,
+            get_pattern_table,
+        )
+
+        _jit_consts = (
+            get_dirs(),
+            get_pattern_table(),
+            get_fork_threshold(),
+            get_fork_bonus(),
+            get_open_three_bonus(),
+        )
+    from gomoku_brain.evaluate_jit import evaluate_delta_grid, evaluate_grid
+
+    dirs, table, fork_threshold, fork_bonus, open_three_bonus = _jit_consts
+    p = state.ply
+    valid = state._eval_valid
+    stack = state._eval_stack
+    if valid[p]:
+        return float(stack[p])
+
+    grid = state.grid
+    size = state.size
+
+    # Nearest cached ancestor within the walk-back cap.
+    anc = -1
+    floor = p - _EVAL_WALKBACK_CAP
+    q = p - 1
+    while q >= 0 and q >= floor:
+        if valid[q]:
+            anc = q
+            break
+        q -= 1
+
+    if anc >= 0 and anc == p - 1:
+        # Common case: parent cached — one delta for the last move.
+        e = float(stack[anc]) + evaluate_delta_grid(
+            grid,
+            size,
+            int(state._undo_row[anc]),
+            int(state._undo_col[anc]),
+            dirs,
+            table,
+            fork_threshold,
+            fork_bonus,
+            open_three_bonus,
+        )
+        stack[p] = e
+        valid[p] = True
+    elif anc >= 0:
+        # Strip the gap moves from the grid mirror, then re-apply them
+        # one by one so each delta is computed on its own position.
+        # Bitboards / zobrist are untouched — only the int8 mirror.
+        for k in range(anc, p):
+            grid[state._undo_row[k], state._undo_col[k]] = 0
+        e = float(stack[anc])
+        try:
+            for k in range(anc, p):
+                r = int(state._undo_row[k])
+                c = int(state._undo_col[k])
+                grid[r, c] = state._undo_stone[k]
+                e += evaluate_delta_grid(
+                    grid, size, r, c, dirs, table, fork_threshold, fork_bonus, open_three_bonus
+                )
+                stack[k + 1] = e
+                valid[k + 1] = True
+        finally:
+            for k in range(anc, p):
+                grid[state._undo_row[k], state._undo_col[k]] = state._undo_stone[k]
+    else:
+        from gomoku_brain.grid_utils import occupied_coords
+
+        occ = occupied_coords(state)
+        e = float(
+            evaluate_grid(
+                grid, size, occ, 1, dirs, table, fork_threshold, fork_bonus, open_three_bonus
+            )
+        )
+        stack[p] = e
+        valid[p] = True
+        if p > 0:
+            # Back-fill the parent so sibling evaluations hit the cache.
+            stack[p - 1] = e - evaluate_delta_grid(
+                grid,
+                size,
+                int(state._undo_row[p - 1]),
+                int(state._undo_col[p - 1]),
+                dirs,
+                table,
+                fork_threshold,
+                fork_bonus,
+                open_three_bonus,
+            )
+            valid[p - 1] = True
+    return e
+
+
+# ---------------------------------------------------------------------------
 # Public entry point
 # ---------------------------------------------------------------------------
 
@@ -294,14 +424,24 @@ def _evaluate_board_python(board: Board, stone: Stone) -> float:
 def evaluate_board(board: Board, stone: Stone) -> float:
     """Evaluate the board from ``stone``'s perspective. Higher is better.
 
-    Dispatches to bitboard JIT when ``[bitboard] enabled = true``,
-    else to numpy-grid JIT when ``[evaluation] use_jit = true``,
-    otherwise uses pure Python.
+    :class:`SearchState` boards use the incremental per-ply evaluation
+    cache (see :func:`_eval_state_black`) when JIT is enabled.  Other
+    board types dispatch to bitboard JIT when ``[bitboard] enabled =
+    true``, else to numpy-grid JIT when ``[evaluation] use_jit = true``,
+    otherwise pure Python.
 
     The return value is clamped to [-``_EVAL_CLAMP``, ``_EVAL_CLAMP``] so that
     heuristic sums can never be confused with the win/loss scores (±100 000)
     used by the search.
     """
+    if _should_use_jit():
+        from gomoku_brain.search_state import SearchState
+
+        if isinstance(board, SearchState):
+            e = _eval_state_black(board)
+            raw = e if stone is Stone.BLACK else -e
+            return max(-_EVAL_CLAMP, min(_EVAL_CLAMP, raw))
+
     from gomoku_brain.bitboard import _should_use_bitboard
 
     if _should_use_bitboard():
