@@ -128,3 +128,53 @@ class TestRegisterBrain:
             assert resolve_brain("custom_alias", BrainSettings()) == ("custom_alias", {})
         finally:
             BRAINS.pop("custom_alias", None)
+
+
+class TestThreatFallbackTuning:
+    def test_default_threat_brain_has_untuned_fallback(self):
+        """Without a fallback table, the alpha-beta fallback keeps bare
+        defaults at the threat brain's depth — behaviour unchanged."""
+        brain = get_brain("threat", depth=5)
+        fb = brain._fallback
+        assert isinstance(fb, AlphaBetaBrain)
+        assert fb.depth == 5
+        assert fb.qs_vcf_depth == 0
+        assert fb.lmr is False
+        assert fb.null_move_pruning is False
+
+    def test_fallback_table_tunes_the_fallback(self):
+        bs = BrainSettings.model_validate(
+            {
+                "tuned_threat": {
+                    "type": "threat",
+                    "depth": 4,
+                    "fallback": {
+                        "qs_vcf_depth": 12,
+                        "threat_extensions": 2,
+                        "null_move_pruning": True,
+                        "lmr": True,
+                        "time_limit_s": 120.0,
+                    },
+                }
+            }
+        )
+        brain = get_brain_from_settings("tuned_threat", bs)
+        fb = brain._fallback
+        assert fb.qs_vcf_depth == 12
+        assert fb.threat_extensions == 2
+        assert fb.null_move_pruning is True
+        assert fb.lmr is True
+        assert fb.time_limit_s == 120.0
+        # vcf_depth stays off — the threat brain already ran VCF itself.
+        assert fb.vcf_depth == 0
+
+    def test_alphabeta_alias_keeps_early_game_settings(self):
+        """Regression: early_game_* keys used to be silently dropped by
+        AlphaBetaBrainSettings (pydantic ignores extras), so the TOML
+        values never reached the brain."""
+        bs = BrainSettings.model_validate(
+            {"ab": {"type": "alphabeta", "early_game_max_candidates": 8, "early_game_futility_margin": 600}}
+        )
+        brain = get_brain_from_settings("ab", bs)
+        assert brain.early_game_max_candidates == 8
+        assert brain.early_game_futility_margin == 600
