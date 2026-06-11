@@ -226,6 +226,28 @@ pns_nodes = 10_000
 # Default: 5.0 | Valid range: 0.1–60.0
 pns_time_s = 5.0
 
+# Tuning for the alpha-beta fallback used when no forced win is found.
+# Mirrors [brains.alphabeta] except vcf_depth stays 0: the threat brain
+# has already proven both sides VCF-free before falling back, so a
+# root-VCF precheck in the fallback would repeat that work.
+# Note: depth here overrides the top-level depth (both default to 4).
+[brains.threat.fallback]
+depth = 4
+qs_vcf_depth = 12
+threat_ordering = true
+threat_extensions = 2
+null_move_pruning = true
+null_move_reduction = 2
+lmr = true
+lmr_threshold = 3
+lmr_min_depth = 3
+early_game_radius = 1
+early_game_threshold = 6
+early_game_max_candidates = 10
+early_game_lmr_threshold = 2
+early_game_futility_margin = 800
+time_limit_s = 120.0
+
 # -----------------------------------------------------------------------------
 # Brain: mcts — Monte Carlo Tree Search with PUCT formula, heuristic priors,
 # Dirichlet noise, and heuristic leaf evaluation (AlphaGo Zero-inspired,

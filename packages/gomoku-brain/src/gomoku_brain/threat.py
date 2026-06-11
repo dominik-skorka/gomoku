@@ -124,6 +124,7 @@ class ThreatBrain:
         threat_search: str = "pns",
         pns_nodes: int = 10_000,
         pns_time_s: float = 5.0,
+        fallback: dict[str, object] | None = None,
     ) -> None:
         self.depth = depth
         self.vcf_depth = vcf_depth
@@ -131,7 +132,15 @@ class ThreatBrain:
         self.threat_search = threat_search
         self.pns_nodes = pns_nodes
         self.pns_time_s = pns_time_s
-        self._fallback = AlphaBetaBrain(depth=depth)
+        # ``fallback`` carries AlphaBetaBrain tuning (qs_vcf_depth, LMR,
+        # null-move, time limit, ...) for the no-forced-win path —
+        # without it the fallback ran with bare defaults while the
+        # standalone [brains.alphabeta] alias was fully tuned.  Keys in
+        # ``fallback`` win over the top-level ``depth``.  ``vcf_depth``
+        # is deliberately not defaulted here: the threat brain has
+        # already proven both sides VCF-free before falling back, so a
+        # root-VCF precheck in the fallback would be redundant work.
+        self._fallback = AlphaBetaBrain(**{"depth": depth, **(fallback or {})})
 
     @property
     def name(self) -> str:
