@@ -95,12 +95,10 @@ def _split_threats(
         for m in moves:
             if is_four_threat(grid, size, m.row, m.col, stone_int, dirs) or is_four_threat(
                 grid, size, m.row, m.col, opp_int, dirs
-            ):
-                threat_list.append(m)
-            elif include_forks and (
+            ) or (include_forks and (
                 _count_open_threes_at(board, m.row, m.col, stone) >= 2
                 or _count_open_threes_at(board, m.row, m.col, stone.opponent()) >= 2
-            ):
+            )):
                 threat_list.append(m)
             else:
                 non_threat.append(m)
@@ -136,12 +134,10 @@ def _split_threats(
                 if opp >= 4:
                     is_threat = True
                     break
-        if is_threat:
-            threat_list.append(move)
-        elif include_forks and (
+        if is_threat or (include_forks and (
             _count_open_threes_at(board, move.row, move.col, stone) >= 2
             or _count_open_threes_at(board, move.row, move.col, opponent) >= 2
-        ):
+        )):
             threat_list.append(move)
         else:
             non_threat.append(move)
@@ -200,6 +196,4 @@ def _is_four_threat_move(
     # either side — nearly as forcing as a four-threat.
     if _count_open_threes_at(board, move.row, move.col, stone) >= 2:
         return True
-    if _count_open_threes_at(board, move.row, move.col, opp) >= 2:
-        return True
-    return False
+    return _count_open_threes_at(board, move.row, move.col, opp) >= 2

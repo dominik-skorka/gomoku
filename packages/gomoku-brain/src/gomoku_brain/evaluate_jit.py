@@ -964,9 +964,7 @@ def find_four_threats_grid(
 
             # >= 5 (not == 5): freestyle counts overlines as wins, so a
             # move completing six-or-more is just as unblockable.
-            if total >= 5:
-                unblockable[r, c] = True
-            elif total == 4 and open_ends == 2:
+            if total >= 5 or (total == 4 and open_ends == 2):
                 unblockable[r, c] = True
             elif total == 4 and open_ends == 1:
                 if pos_end_r >= 0:

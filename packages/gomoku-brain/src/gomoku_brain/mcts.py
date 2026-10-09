@@ -42,7 +42,6 @@ from gomoku_brain.candidates import get_candidate_moves
 from gomoku_brain.search_state import SearchState
 from gomoku_brain.threat import classify_vcf_breakers, probe_immediate
 
-
 # ---------------------------------------------------------------------------
 # Heuristic prior scoring (JIT-backed, with Python fallback)
 # ---------------------------------------------------------------------------

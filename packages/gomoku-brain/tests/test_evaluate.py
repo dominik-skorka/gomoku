@@ -98,7 +98,7 @@ class TestFindForkCells:
         b = _place(b, [(0, 0)], Stone.WHITE)
         forks = find_fork_cells(b, Stone.BLACK)
         # Cells at (4,2) and (4,6) are extensions of ONE line — not forks
-        for f in forks:
+        for _f in forks:
             # Any fork cell found should not be a pure single-line extension
             # This is a soft check — the heuristic might flag cells near
             # the line that also touch the diagonal, which is acceptable
