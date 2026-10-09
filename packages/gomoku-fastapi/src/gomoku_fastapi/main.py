@@ -56,7 +56,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     # a no-op for the in-process store (the process is exiting anyway)
     # but matters for tests that build apps in a loop.
     store = get_session_store()
-    store._sessions.clear()
+    store.clear()
 
 
 def create_app() -> FastAPI:

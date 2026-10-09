@@ -20,6 +20,7 @@ expiration moves into Redis and this concern disappears.
 
 from __future__ import annotations
 
+import shutil
 import threading
 import time
 import uuid
@@ -60,6 +61,16 @@ class Session:
         """Bump ``last_accessed_at`` so the next sweep doesn't evict us."""
         self.last_accessed_at = time.monotonic()
 
+    def cleanup(self) -> None:
+        """Remove the per-session recording / diagnostics temp dirs.
+
+        Best-effort: a missing or undeletable directory is ignored so
+        eviction never fails because of the filesystem.
+        """
+        for path in (self.record_dir, self.diag_dir):
+            if path:
+                shutil.rmtree(path, ignore_errors=True)
+
 
 class SessionNotFoundError(LookupError):
     """Raised by :meth:`SessionStore.get` when an ID isn't in the store."""
@@ -87,15 +98,16 @@ class SessionStore:
         hyphens — keeps URLs short and easy to copy-paste."""
         return uuid.uuid4().hex
 
-    def _sweep_locked(self, now: float) -> None:
+    def _sweep_locked(self, now: float) -> list[Session]:
         """Evict sessions whose last access is older than the TTL.
 
-        Caller MUST hold ``self._lock``.
+        Caller MUST hold ``self._lock`` and, after releasing it, call
+        :meth:`Session.cleanup` on the returned sessions (filesystem work
+        stays outside the lock).
         """
         cutoff = now - self.ttl_seconds
         stale = [sid for sid, sess in self._sessions.items() if sess.last_accessed_at < cutoff]
-        for sid in stale:
-            del self._sessions[sid]
+        return [self._sessions.pop(sid) for sid in stale]
 
     def create(
         self,
@@ -109,7 +121,7 @@ class SessionStore:
         """Register *runner* under a fresh ID and return the :class:`Session`."""
         now = time.monotonic()
         with self._lock:
-            self._sweep_locked(now)
+            evicted = self._sweep_locked(now)
             session = Session(
                 id=self._new_id(),
                 runner=runner,
@@ -121,6 +133,8 @@ class SessionStore:
                 diag_dir=diag_dir,
             )
             self._sessions[session.id] = session
+        for old in evicted:
+            old.cleanup()
         return session
 
     def get(self, session_id: str) -> Session:
@@ -135,20 +149,37 @@ class SessionStore:
             session = self._sessions.get(session_id)
             if session is None:
                 raise SessionNotFoundError(session_id)
-            if session.last_accessed_at < now - self.ttl_seconds:
+            expired = session.last_accessed_at < now - self.ttl_seconds
+            if expired:
                 # Expired between the last access and this lookup.  Evict
                 # before raising so the next call doesn't see it either.
                 del self._sessions[session_id]
-                raise SessionNotFoundError(session_id)
-            session.touch()
+            else:
+                session.touch()
+        if expired:
+            session.cleanup()
+            raise SessionNotFoundError(session_id)
         return session
 
     def delete(self, session_id: str) -> bool:
         """Remove *session_id* from the store.  Returns ``True`` when
         the ID was present, ``False`` for an unknown ID — the caller
-        decides whether unknown == 204 or 404."""
+        decides whether unknown == 204 or 404.  The session's recording /
+        diagnostics temp dirs are removed with it."""
         with self._lock:
-            return self._sessions.pop(session_id, None) is not None
+            session = self._sessions.pop(session_id, None)
+        if session is None:
+            return False
+        session.cleanup()
+        return True
+
+    def clear(self) -> None:
+        """Drop every session and its temp dirs (used on shutdown)."""
+        with self._lock:
+            sessions = list(self._sessions.values())
+            self._sessions.clear()
+        for session in sessions:
+            session.cleanup()
 
 
 __all__ = [
