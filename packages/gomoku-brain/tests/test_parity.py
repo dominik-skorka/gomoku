@@ -21,7 +21,6 @@ import pytest
 from gomoku.board import Board
 from gomoku.models import Move, Stone
 from gomoku.rules import check_winner
-
 from gomoku_brain.bitboard_jit import (
     check_winner_at_bb,
     evaluate_bb,

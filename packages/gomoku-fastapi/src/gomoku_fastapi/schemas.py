@@ -184,7 +184,8 @@ class CreateGameRequest(BaseModel):
             "When ``true``, the session writes its moves to a "
             "``gomoku_*.json`` recording in a per-session temp dir.  "
             "The path appears on ``GET /v1/games/{id}`` as "
-            "``record_dir`` so clients can fetch the file out-of-band."
+            "``record_dir`` so clients can fetch the file out-of-band.  "
+            "The directory is removed when the session is deleted or expires."
         ),
     )
     diagnostics: bool = Field(

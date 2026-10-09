@@ -21,6 +21,7 @@ from gomoku_brain.alphabeta_ordering import (
     _split_threats,
 )
 from gomoku_brain.alphabeta_quiescence import EvalCache, QuiesceCtx, quiesce
+from gomoku_brain.alphabeta_root import root_vcf
 from gomoku_brain.brain_base import brain_session
 from gomoku_brain.candidates import get_candidate_moves
 from gomoku_brain.evaluate import evaluate_board
@@ -147,8 +148,6 @@ class AlphaBetaBrain:
 
             # -- Root-level VCF pre-check ------------------------------------
             if self.vcf_depth > 0:
-                from gomoku_brain.alphabeta_root import root_vcf
-
                 vcf_move = root_vcf(board, stone, self.vcf_depth)
                 if vcf_move is not None:
                     if diag is not None:

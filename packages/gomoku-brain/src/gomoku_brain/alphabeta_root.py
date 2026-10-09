@@ -23,8 +23,11 @@ import logfire
 from gomoku.board import Board
 from gomoku.models import Move, Stone
 
+from gomoku_brain.alphabeta_ordering import _scored_moves
 from gomoku_brain.candidates import get_candidate_moves
 from gomoku_brain.search_state import SearchState
+from gomoku_brain.threat_detect import _find_winning_move
+from gomoku_brain.threat_search import _vcf, classify_vcf_breakers
 
 
 def root_vcf(board: Board, stone: Stone, vcf_depth: int) -> Move | None:
@@ -46,8 +49,6 @@ def root_vcf(board: Board, stone: Stone, vcf_depth: int) -> Move | None:
     method did, so post-game analysis sees no behavioural change.
     """
     from gomoku.diagnostics import current_move_diagnostics
-
-    from gomoku_brain.threat import _find_winning_move, _vcf, classify_vcf_breakers
 
     diag = current_move_diagnostics()
 
@@ -118,7 +119,5 @@ def root_vcf(board: Board, stone: Stone, vcf_depth: int) -> Move | None:
 
     # Multiple breakers — pick via evaluation (make/unmake on one state
     # instead of a Pydantic board copy per breaker).
-    from gomoku_brain.threat import _scored_moves
-
     state = SearchState.from_board(board, stone)
     return _scored_moves(state, effective, stone)[0][1]

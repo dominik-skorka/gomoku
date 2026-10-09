@@ -146,9 +146,7 @@ def _find_four_threats_python(board: Board, stone: Stone) -> list[tuple[Move, Mo
             defence: Move | None
             # >= 5 (not == 5): freestyle counts overlines as wins, so a
             # move completing six-or-more is just as unblockable.
-            if total >= 5:
-                defence = None
-            elif total == 4 and open_ends == 2:
+            if total >= 5 or (total == 4 and open_ends == 2):
                 defence = None
             elif total == 4 and open_ends == 1 and end_cells:
                 dr2, dc2 = end_cells[0]
@@ -163,9 +161,7 @@ def _find_four_threats_python(board: Board, stone: Stone) -> list[tuple[Move, Mo
 
     threats: list[tuple[Move, Move | None]] = []
     for move, defences in by_move.values():
-        if any(d is None for d in defences):
-            threats.append((move, None))
-        elif len(defences) >= 2:
+        if any(d is None for d in defences) or len(defences) >= 2:
             threats.append((move, None))
         else:
             threats.append((move, defences[0]))

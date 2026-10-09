@@ -137,7 +137,6 @@ class TestPnsCounterThreats:
         one four-threat for the attacker.  A proof violating either
         invariant is unsound."""
         from gomoku.rules import check_winner
-
         from gomoku_brain.threat import _find_four_threats
 
         b = Board(size=15)

@@ -222,6 +222,18 @@ class ApiSettings(BaseModel):
             "those routes only.  Set empty to fall back to the default."
         ),
     )
+    max_time_limit_s: float = Field(
+        default=10.0,
+        ge=0.0,
+        le=600.0,
+        description=(
+            "Upper bound, in seconds, on the wall-clock search budget of a single "
+            "API request.  Applied to ``time_limit_s`` of alpha-beta brains (an "
+            "unlimited ``0`` becomes this value), to the alpha-beta fallback of "
+            "the threat brain and to its ``pns_time_s``.  Brain overrides cannot "
+            "exceed it.  ``0`` disables the cap.  The CLI is unaffected."
+        ),
+    )
     logfire_send: bool = Field(
         default=False,
         description=(

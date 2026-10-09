@@ -64,6 +64,31 @@ SettingsDep = Annotated[GomokuSettings, Depends(get_settings)]
 SessionStoreDep = Annotated[SessionStore, Depends(get_session_store)]
 
 
+def _cap_time_budget(brain_type: str, kwargs: dict[str, Any], cap: float) -> dict[str, Any]:
+    """Clamp the search time budget in *kwargs* to *cap* seconds (``cap > 0``).
+
+    ``time_limit_s == 0`` means "unlimited" for alpha-beta, so it is
+    replaced by the cap rather than min()-ed.  The threat brain carries
+    its alpha-beta tuning under ``fallback``; when none is configured an
+    entry holding only the cap is added (the fallback keeps the
+    top-level depth in that case).
+    """
+    kwargs = dict(kwargs)
+
+    def capped(limit: float) -> float:
+        return min(limit, cap) if limit > 0 else cap
+
+    if brain_type == "alphabeta":
+        kwargs["time_limit_s"] = capped(kwargs.get("time_limit_s", 0.0))
+    elif brain_type == "threat":
+        fallback = dict(kwargs.get("fallback") or {})
+        fallback["time_limit_s"] = capped(fallback.get("time_limit_s", 0.0))
+        kwargs["fallback"] = fallback
+        if "pns_time_s" in kwargs:
+            kwargs["pns_time_s"] = min(kwargs["pns_time_s"], cap)
+    return kwargs
+
+
 def build_brain(
     name: str,
     overrides: dict[str, Any] | None,
@@ -111,6 +136,10 @@ def build_brain(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail={"error": "invalid_brain_overrides", "message": str(exc)},
             ) from exc
+
+    cap = settings.api.max_time_limit_s
+    if cap > 0:
+        kwargs = _cap_time_budget(brain_type, kwargs, cap)
 
     # ``get_brain_from_settings`` would re-resolve the alias — but we already
     # have the validated kwargs, so instantiate the class directly.
