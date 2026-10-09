@@ -18,6 +18,8 @@ from gomoku.models import Move, Stone
 from gomoku.rules import check_winner
 
 from gomoku_brain.directions import DIRECTIONS as _DIRECTIONS
+from gomoku_brain.evaluate import evaluate_board
+from gomoku_brain.search_state import SearchState
 
 
 def _check_win(board: Board, move: Move) -> bool:
@@ -197,3 +199,21 @@ def _is_four_threat_move(
     if _count_open_threes_at(board, move.row, move.col, stone) >= 2:
         return True
     return _count_open_threes_at(board, move.row, move.col, opp) >= 2
+
+
+def _scored_moves(state: SearchState, moves: list[Move], stone: Stone) -> list[tuple[float, Move]]:
+    """Score each move with a static eval after playing it, best first.
+
+    Static eval is cheap on the JIT path (<~50us per call).  ``state`` is
+    returned to its entry ply.
+    """
+    scored: list[tuple[float, Move]] = []
+    for move in moves:
+        state.make(move.row, move.col, stone)
+        try:
+            score = evaluate_board(state, stone)
+        finally:
+            state.unmake()
+        scored.append((score, move))
+    scored.sort(key=lambda item: item[0], reverse=True)
+    return scored

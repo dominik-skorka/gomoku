@@ -21,9 +21,10 @@ from gomoku.board import Board
 from gomoku.models import Move, Stone
 
 from gomoku_brain.alphabeta import AlphaBetaBrain
+from gomoku_brain.alphabeta_ordering import _scored_moves
 from gomoku_brain.brain_base import brain_session
 from gomoku_brain.candidates import get_candidate_moves
-from gomoku_brain.evaluate import evaluate_board, find_fork_cells
+from gomoku_brain.evaluate import find_fork_cells
 from gomoku_brain.pns import pns_threat_search
 from gomoku_brain.search_state import SearchState
 from gomoku_brain.threat_detect import (
@@ -83,24 +84,6 @@ _MIN_PROBE_TIME_S = 0.05
 
 # Radius used for candidate generation throughout the threat brain.
 _CANDIDATE_RADIUS = 2
-
-
-def _scored_moves(state: SearchState, moves: list[Move], stone: Stone) -> list[tuple[float, Move]]:
-    """Score each move with a static eval after playing it, best first.
-
-    Static eval is cheap on the JIT path (<~50us per call).  ``state`` is
-    returned to its entry ply.
-    """
-    scored: list[tuple[float, Move]] = []
-    for move in moves:
-        state.make(move.row, move.col, stone)
-        try:
-            score = evaluate_board(state, stone)
-        finally:
-            state.unmake()
-        scored.append((score, move))
-    scored.sort(key=lambda item: item[0], reverse=True)
-    return scored
 
 
 # ---------------------------------------------------------------------------
