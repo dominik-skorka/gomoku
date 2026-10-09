@@ -72,31 +72,62 @@ class TTEntry(NamedTuple):
     best_move: Move | None
 
 
+# Default capacity of one TT generation (see :class:`TranspositionTable`).
+# At roughly 250 B per entry the worst case (two full generations) stays
+# around 250 MB, which a long ``time_limit_s`` search can no longer exceed.
+DEFAULT_TT_MAX_ENTRIES = 500_000
+
+
 class TranspositionTable:
-    """Simple dict-based transposition table with depth-preferred replacement."""
+    """Bounded dict-based transposition table with depth-preferred replacement.
 
-    __slots__ = ("_table", "hits", "probes")
+    Memory is bounded by two generations of at most ``max_entries`` each.
+    Stores go to the *current* generation; when it fills up it becomes the
+    *old* generation (the previous old one is dropped) and a fresh current
+    one starts.  Probes check the current generation first, then the old
+    one and promote an old hit, so recently used positions survive a
+    rollover while stale ones age out.
+    """
 
-    def __init__(self) -> None:
-        self._table: dict[int, TTEntry] = {}
+    __slots__ = ("_current", "_old", "hits", "max_entries", "probes")
+
+    def __init__(self, max_entries: int = DEFAULT_TT_MAX_ENTRIES) -> None:
+        if max_entries < 1:
+            raise ValueError("max_entries must be >= 1")
+        self.max_entries = max_entries
+        self._current: dict[int, TTEntry] = {}
+        self._old: dict[int, TTEntry] = {}
         # Lightweight counters for diagnostics; they never affect search behaviour.
         self.hits: int = 0
         self.probes: int = 0
 
     def probe(self, key: int) -> TTEntry | None:
         self.probes += 1
-        entry = self._table.get(key)
-        if entry is not None and entry.key == key:
+        entry = self._current.get(key)
+        if entry is None:
+            entry = self._old.get(key)
+            if entry is None:
+                return None
+            self._insert(key, entry)  # promote so it survives the next rollover
+        if entry.key == key:
             self.hits += 1
             return entry
         return None
 
     def store(self, key: int, depth: int, score: float, flag: BoundType, best_move: Move | None) -> None:
-        existing = self._table.get(key)
+        existing = self._current.get(key)
+        if existing is None:
+            existing = self._old.get(key)
         # Depth-preferred replacement: keep deeper entries.
         if existing is not None and existing.key == key and existing.depth > depth:
             return
-        self._table[key] = TTEntry(key, depth, score, flag, best_move)
+        self._insert(key, TTEntry(key, depth, score, flag, best_move))
+
+    def _insert(self, key: int, entry: TTEntry) -> None:
+        if len(self._current) >= self.max_entries and key not in self._current:
+            self._old = self._current
+            self._current = {}
+        self._current[key] = entry
 
     def __len__(self) -> int:
-        return len(self._table)
+        return len(self._current) + sum(1 for k in self._old if k not in self._current)
