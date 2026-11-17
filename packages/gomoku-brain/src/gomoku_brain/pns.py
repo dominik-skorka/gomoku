@@ -43,6 +43,19 @@ from gomoku_brain.threat_search import _state_is_win
 
 INF = 1_000_000_000  # Practical infinity for proof/disproof numbers
 
+# Position table for one search: zobrist hash -> the node for that
+# position.  A position reached through a different move order links to
+# the node that already exists, so the search runs on a DAG instead of
+# re-searching the same subtree per move order — 30-65% of all
+# expansions in unproductive searches used to be such repeats.
+#
+# Sharing is sound because a node's status is a pure property of its
+# position: stones are only ever added (no repetition, so the graph is
+# acyclic), and the node/time budget never marks anything solved.  The
+# hash encodes the side to move, and attacker/defender strictly
+# alternate, so one key never maps to both an OR and an AND node.
+_NodeTable = dict[int, "_PNSNode"]
+
 
 class _NodeType(Enum):
     OR = auto()  # attacker to move
@@ -55,58 +68,50 @@ class _NodeType(Enum):
 
 
 class _PNSNode:
-    """A single node in the proof-number search tree.
+    """A single position in the proof-number search graph.
 
-    Stores only the move that led here and the parent pointer — the
-    position itself is materialised on demand by replaying moves into
-    the shared :class:`SearchState` owned by :func:`pns_threat_search`.
+    The position itself is materialised on demand by replaying edge
+    moves into the shared :class:`SearchState` owned by
+    :func:`pns_threat_search`.  Moves live on the edges (``moves[i]``
+    leads to ``children[i]``) because a node can have several parents.
     """
 
     __slots__ = (
-        "best_child",
+        "best_index",
         "children",
         "disproof",
         "expanded",
-        "move",
+        "moves",
         "node_type",
-        "parent",
         "proof",
-        "stone",
     )
 
-    def __init__(
-        self,
-        stone: Stone,
-        node_type: _NodeType,
-        move: Move | None = None,
-        parent: _PNSNode | None = None,
-    ) -> None:
-        self.stone = stone  # the *attacker* colour (constant through tree)
+    def __init__(self, node_type: _NodeType) -> None:
         self.node_type = node_type
-        self.move = move  # the move that led to this node
-        self.parent = parent
         self.expanded = False
         self.children: list[_PNSNode] = []
+        self.moves: list[Move] = []
         # Initial proof/disproof: 1/1 for unknown nodes
         self.proof = 1
         self.disproof = 1
-        # MPN selection cache — set during ``_update_ancestors``.  Reading
-        # this is O(1); the previous ``min(... key=...)`` walk inside
-        # ``_select_mpn`` was O(branching) per tree level.
-        self.best_child: _PNSNode | None = None
-
-    @property
-    def proved(self) -> bool:
-        return self.proof == 0
-
-    @property
-    def disproved(self) -> bool:
-        return self.disproof == 0
+        # Index of the most-proving child, cached by ``_update_ancestors``
+        # so ``_select_mpn`` walks the graph in O(depth).
+        self.best_index = -1
 
 
 # ---------------------------------------------------------------------------
 # Evaluation of leaf nodes
 # ---------------------------------------------------------------------------
+
+
+def _mark(node: _PNSNode, proved: bool) -> None:
+    """Mark ``node`` as solved."""
+    if proved:
+        node.proof = 0
+        node.disproof = INF
+    else:
+        node.proof = INF
+        node.disproof = 0
 
 
 def _evaluate_leaf(
@@ -234,12 +239,32 @@ def _pns_defence_moves(
 # ---------------------------------------------------------------------------
 
 
-def _expand(node: _PNSNode, state: SearchState) -> None:
-    """Generate children for ``node``.
+def _child_at(state: SearchState, node_type: _NodeType, table: _NodeTable) -> tuple[_PNSNode, bool]:
+    """Return ``(node, is_new)`` for the position ``state`` is currently at."""
+    key = state.zobrist
+    child = table.get(key)
+    if child is not None:
+        return child, False
+    child = _PNSNode(node_type)
+    table[key] = child
+    return child, True
+
+
+def _link(node: _PNSNode, child: _PNSNode, move: Move) -> None:
+    node.children.append(child)
+    node.moves.append(move)
+
+
+def _expand(node: _PNSNode, state: SearchState, attacker: Stone, table: _NodeTable) -> int:
+    """Generate children for ``node``; return how many new nodes were created.
 
     Precondition: ``state`` is at ``node``'s position.  Postcondition:
     ``state`` is restored to ``node``'s position (intermediate
     make/unmake cycles are balanced by ``try`` / ``finally`` blocks).
+
+    A child whose position already has a node (reached earlier through
+    another move order) is linked rather than created, and keeps
+    whatever that node has already learned.
 
     One scan context is built per expansion and shared across every
     detection call — node-level enumeration runs at the context's own
@@ -247,22 +272,17 @@ def _expand(node: _PNSNode, state: SearchState) -> None:
     just move, so the staleness contract on ``_ScanCtx`` holds.
     """
     node.expanded = True
-    attacker = node.stone
     defender = attacker.opponent()
     ctx = _scan_context(state)
+    created = 0
 
     if node.node_type is _NodeType.OR:
         # Attacker moves: four-threats and three-threats only.
 
-        # Immediate win — no need to materialise the child position.
-        win_move = _find_winning_move(state, attacker, ctx)
-        if win_move is not None:
-            child = _PNSNode(attacker, _NodeType.AND, move=win_move, parent=node)
-            child.proof = 0
-            child.disproof = INF
-            node.children.append(child)
-            _update_ancestors(node)
-            return
+        # Immediate win — the node is proved without materialising a child.
+        if _find_winning_move(state, attacker, ctx) is not None:
+            _mark(node, True)
+            return 0
 
         # If defender has an immediate win, attacker must block it.
         def_win = _find_winning_move(state, defender, ctx)
@@ -270,20 +290,24 @@ def _expand(node: _PNSNode, state: SearchState) -> None:
             if state.is_empty(def_win.row, def_win.col):
                 state.make(def_win.row, def_win.col, attacker)
                 try:
-                    child = _PNSNode(attacker, _NodeType.AND, move=def_win, parent=node)
-                    _evaluate_leaf(child, state, attacker, ctx)
-                    node.children.append(child)
+                    child, is_new = _child_at(state, _NodeType.AND, table)
+                    if is_new:
+                        created += 1
+                        _evaluate_leaf(child, state, attacker, ctx)
+                    _link(node, child, def_win)
                 finally:
                     state.unmake()
             else:
-                node.proof = INF
-                node.disproof = 0
+                _mark(node, False)
             _update_ancestors(node)
-            return
+            return created
 
-        # Four-threats
+        # Four-threats first (stronger), then live-three threats; a cell
+        # that is both is tried once.
+        attacks = [atk for atk, _defence in _find_four_threats(state, attacker, ctx)]
+        attacks.extend(atk for atk, _defs in _find_three_threats(state, attacker, ctx))
         seen_moves: set[tuple[int, int]] = set()
-        for attack, _defence in _find_four_threats(state, attacker, ctx):
+        for attack in attacks:
             key = (attack.row, attack.col)
             if key in seen_moves:
                 continue
@@ -292,52 +316,28 @@ def _expand(node: _PNSNode, state: SearchState) -> None:
             state.make(attack.row, attack.col, attacker)
             try:
                 if _state_is_win(state, attack.row, attack.col):
-                    child = _PNSNode(attacker, _NodeType.AND, move=attack, parent=node)
-                    child.proof = 0
-                    child.disproof = INF
-                    node.children.append(child)
+                    child, is_new = _child_at(state, _NodeType.AND, table)
+                    created += is_new
+                    _mark(child, True)
+                    _link(node, child, attack)
                     _update_ancestors(node)
-                    return
+                    return created
 
+                # The defender wins first — this attack is not playable.
                 if _find_winning_move(state, defender, ctx) is not None:
                     continue
 
-                child = _PNSNode(attacker, _NodeType.AND, move=attack, parent=node)
-                _evaluate_leaf(child, state, attacker, ctx)
-                node.children.append(child)
-            finally:
-                state.unmake()
-
-        # Three-threats
-        for attack, _defs in _find_three_threats(state, attacker, ctx):
-            key = (attack.row, attack.col)
-            if key in seen_moves:
-                continue
-            seen_moves.add(key)
-
-            state.make(attack.row, attack.col, attacker)
-            try:
-                if _state_is_win(state, attack.row, attack.col):
-                    child = _PNSNode(attacker, _NodeType.AND, move=attack, parent=node)
-                    child.proof = 0
-                    child.disproof = INF
-                    node.children.append(child)
-                    _update_ancestors(node)
-                    return
-
-                if _find_winning_move(state, defender, ctx) is not None:
-                    continue
-
-                child = _PNSNode(attacker, _NodeType.AND, move=attack, parent=node)
-                _evaluate_leaf(child, state, attacker, ctx)
-                node.children.append(child)
+                # The check above is all ``_evaluate_leaf`` would do for
+                # an AND child, so a new node keeps its 1/1 defaults.
+                child, is_new = _child_at(state, _NodeType.AND, table)
+                created += is_new
+                _link(node, child, attack)
             finally:
                 state.unmake()
 
         if not node.children:
             # No viable attack moves -> disproved
-            node.proof = INF
-            node.disproof = 0
+            _mark(node, False)
 
     else:
         # AND node: defender responds with blocks + counter-threats.
@@ -351,25 +351,20 @@ def _expand(node: _PNSNode, state: SearchState) -> None:
             try:
                 if _find_winning_move(state, attacker, ctx) is not None:
                     # Multiple winning cells — defender can't block all → proved
-                    node.proof = 0
-                    node.disproof = INF
-                    _update_ancestors(node)
-                    return
+                    _mark(node, True)
+                    return 0
+                child, is_new = _child_at(state, _NodeType.OR, table)
+                created += is_new
                 if _state_is_win(state, atk_win.row, atk_win.col):
                     # Defender's block itself completes five for defender
                     # (rare but possible: defender had own 4-in-a-row through
                     # the block cell).  Disprove this OR-child.
-                    child = _PNSNode(attacker, _NodeType.OR, move=atk_win, parent=node)
-                    child.proof = INF
-                    child.disproof = 0
-                    node.children.append(child)
-                    _update_ancestors(node)
-                    return
-                child = _PNSNode(attacker, _NodeType.OR, move=atk_win, parent=node)
-                _evaluate_leaf(child, state, attacker, ctx)
-                node.children.append(child)
+                    _mark(child, False)
+                elif is_new:
+                    _evaluate_leaf(child, state, attacker, ctx)
+                _link(node, child, atk_win)
                 _update_ancestors(node)
-                return
+                return created
             finally:
                 state.unmake()
 
@@ -377,29 +372,27 @@ def _expand(node: _PNSNode, state: SearchState) -> None:
 
         if not defences:
             # No blocks or counter-threats -> attacker's threat is unanswerable
-            node.proof = 0
-            node.disproof = INF
-            _update_ancestors(node)
-            return
+            _mark(node, True)
+            return 0
 
         for cand in defences:
             state.make(cand.row, cand.col, defender)
             try:
+                child, is_new = _child_at(state, _NodeType.OR, table)
+                created += is_new
                 if _state_is_win(state, cand.row, cand.col):
-                    child = _PNSNode(attacker, _NodeType.OR, move=cand, parent=node)
-                    child.proof = INF
-                    child.disproof = 0
-                    node.children.append(child)
+                    _mark(child, False)
+                    _link(node, child, cand)
                     _update_ancestors(node)
-                    return
-
-                child = _PNSNode(attacker, _NodeType.OR, move=cand, parent=node)
-                _evaluate_leaf(child, state, attacker, ctx)
-                node.children.append(child)
+                    return created
+                if is_new:
+                    _evaluate_leaf(child, state, attacker, ctx)
+                _link(node, child, cand)
             finally:
                 state.unmake()
 
     _update_ancestors(node)
+    return created
 
 
 # ---------------------------------------------------------------------------
@@ -410,38 +403,36 @@ def _expand(node: _PNSNode, state: SearchState) -> None:
 def _update_ancestors(node: _PNSNode) -> None:
     """Recompute proof/disproof from children (non-recursive; called bottom-up).
 
-    Also caches the most-proving / most-disproving child in
-    ``node.best_child`` so :func:`_select_mpn` can walk the tree in
+    Also caches the index of the most-proving / most-disproving child in
+    ``node.best_index`` so :func:`_select_mpn` can walk the graph in
     O(depth) rather than O(depth × branching).
     """
-    if not node.children:
+    children = node.children
+    if not children:
         return
 
-    children = node.children
+    best_index = 0
     if node.node_type is _NodeType.OR:
-        best = children[0]
-        best_proof = best.proof
-        dp_sum = best.disproof
-        for c in children[1:]:
+        best_proof = children[0].proof
+        dp_sum = 0
+        for i, c in enumerate(children):
             if c.proof < best_proof:
-                best = c
+                best_index = i
                 best_proof = c.proof
             dp_sum += c.disproof
         node.proof = best_proof
         node.disproof = min(dp_sum, INF)
-        node.best_child = best
     else:
-        best = children[0]
-        best_disproof = best.disproof
-        pn_sum = best.proof
-        for c in children[1:]:
+        best_disproof = children[0].disproof
+        pn_sum = 0
+        for i, c in enumerate(children):
             if c.disproof < best_disproof:
-                best = c
+                best_index = i
                 best_disproof = c.disproof
             pn_sum += c.proof
         node.proof = min(pn_sum, INF)
         node.disproof = best_disproof
-        node.best_child = best
+    node.best_index = best_index
 
 
 # ---------------------------------------------------------------------------
@@ -449,26 +440,25 @@ def _update_ancestors(node: _PNSNode) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _select_mpn(node: _PNSNode) -> tuple[_PNSNode, list[_PNSNode]]:
-    """Walk from root to the most-proving leaf, returning ``(leaf, path)``.
+def _select_mpn(node: _PNSNode) -> tuple[_PNSNode, list[_PNSNode], list[Move]]:
+    """Walk from root to the most-proving leaf.
 
-    Uses ``node.best_child`` cached during :func:`_update_ancestors` so the
-    walk is O(depth).  Falls back to a per-level ``min`` only if a node
-    was expanded without subsequent backprop (shouldn't happen in
-    well-formed trees but kept for safety).
+    Returns ``(leaf, path, moves)`` where ``moves[i]`` is the edge from
+    ``path[i]`` to ``path[i + 1]``.  Uses the ``best_index`` cached by
+    :func:`_update_ancestors`.  With shared nodes a cached index can be
+    stale (the child was updated through another parent); the walk then
+    ends on an already-solved node and the caller's backpropagation
+    refreshes the whole path, so the next walk is exact.
     """
     path = [node]
+    moves: list[Move] = []
     current = node
     while current.expanded and current.children:
-        nxt = current.best_child
-        if nxt is None:
-            if current.node_type is _NodeType.OR:
-                nxt = min(current.children, key=lambda c: c.proof)
-            else:
-                nxt = min(current.children, key=lambda c: c.disproof)
-        current = nxt
+        i = current.best_index
+        moves.append(current.moves[i])
+        current = current.children[i]
         path.append(current)
-    return current, path
+    return current, path, moves
 
 
 # ---------------------------------------------------------------------------
@@ -479,7 +469,7 @@ def _select_mpn(node: _PNSNode) -> tuple[_PNSNode, list[_PNSNode]]:
 def _backpropagate_path(path: list[_PNSNode]) -> None:
     """Update proof/disproof numbers along the selection path only (bottom-up).
 
-    O(path_length) per call instead of O(tree_size).
+    O(path_length) per call instead of O(graph_size).
     """
     for node in reversed(path):
         if node.expanded and node.children:
@@ -501,6 +491,7 @@ def pns_threat_search(
 
     Returns the first move of a forced winning sequence for *stone*,
     or ``None`` if no win is proved within the node/time budget.
+    ``max_nodes`` counts distinct positions.
 
     Accepts an existing :class:`SearchState` to skip the per-call
     Pydantic→bitboard round-trip; the search restores the state to
@@ -511,49 +502,52 @@ def pns_threat_search(
     defender = attacker.opponent()
 
     state = board if isinstance(board, SearchState) else SearchState.from_board(board, stone)
-    root = _PNSNode(stone, _NodeType.OR)
+    root = _PNSNode(_NodeType.OR)
+    table: _NodeTable = {state.zobrist: root}
     _evaluate_leaf(root, state, attacker)
 
-    if root.proved:
+    if root.proof == 0:
         return _find_winning_move(state, stone)
-    if root.disproved:
+    if root.disproof == 0:
         return None
 
     nodes_created = 1
     deadline = time.monotonic() + max_time_s
+    # Every iteration either creates a node or repairs a stale path, so
+    # this bound is never reached in practice; it guarantees termination.
+    iterations_left = max_nodes * 4
 
-    while root.proof != 0 and root.disproof != 0 and nodes_created < max_nodes:
+    while root.proof != 0 and root.disproof != 0 and nodes_created < max_nodes and iterations_left > 0:
+        iterations_left -= 1
         if time.monotonic() > deadline:
             break
 
         # 1) Select the most-proving node.
-        mpn, path = _select_mpn(root)
+        mpn, path, moves = _select_mpn(root)
 
-        # 2) Replay path moves into the shared state.  The move at path[i]
-        #    was played by the side that was to move at path[i-1].
-        for i in range(1, len(path)):
-            parent = path[i - 1]
-            nd = path[i]
+        # 2) Replay the edge moves into the shared state.  The move out of
+        #    path[i] is played by the side to move at path[i].
+        for parent, move in zip(path, moves, strict=False):
             who = attacker if parent.node_type is _NodeType.OR else defender
-            assert nd.move is not None  # only root has move=None
-            state.make(nd.move.row, nd.move.col, who)
+            state.make(move.row, move.col, who)
 
         try:
-            # 3) Expand the MPN leaf (state is already at its position).
-            children_before = len(mpn.children)
-            _expand(mpn, state)
-            nodes_created += len(mpn.children) - children_before
+            # 3) Expand the leaf (state is already at its position).  A
+            #    stale walk can end on an expanded, solved node; it then
+            #    only needs the backpropagation below.
+            if not mpn.expanded:
+                nodes_created += _expand(mpn, state, attacker, table)
 
-            # 4) Backpropagate along selection path only.
+            # 4) Backpropagate along the selection path only.
             _backpropagate_path(path)
         finally:
             # 5) Unwind state back to root for the next iteration.
-            for _ in range(len(path) - 1):
+            for _ in moves:
                 state.unmake()
 
-    if root.proved and root.children:
-        # Root is OR -> find the proved child.
-        for child in root.children:
-            if child.proved:
-                return child.move
+    if root.proof == 0:
+        # Root is OR -> return the move to a proved child.
+        for child, move in zip(root.children, root.moves, strict=True):
+            if child.proof == 0:
+                return move
     return None
