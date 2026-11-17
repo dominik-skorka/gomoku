@@ -22,7 +22,7 @@ FROM python:${PYTHON_VERSION}-slim-bookworm AS builder
 # round-trip and pins the build-tool version explicitly.  Bump the tag
 # in lockstep with the dev-env uv version (``uv --version``) to keep
 # host and container behaviour aligned.
-COPY --from=ghcr.io/astral-sh/uv:0.8 /uv /uvx /bin/
+COPY --from=ghcr.io/astral-sh/uv:0.11 /uv /uvx /bin/
 
 # UV_COMPILE_BYTECODE: pre-compile .py to .pyc inside the image so the
 #   first request doesn't pay startup compilation cost.
@@ -45,6 +45,12 @@ COPY pyproject.toml uv.lock ./
 COPY packages/ packages/
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev --package gomoku-fastapi
+
+# Ship the repository's configuration so the API serves the same brains
+# and aliases as the CLI.  Mount another file over /app/gomoku.toml (see
+# compose.yaml) to change it without rebuilding.
+COPY gomoku.toml ./
+
 
 
 # ---------------------------------------------------------------------------
@@ -69,6 +75,47 @@ ENV PATH="/app/.venv/bin:${PATH}" \
 
 USER app
 EXPOSE 8000
+
+# Compile the Numba kernels at build time instead of on the first
+# request (about 5 s otherwise, paid again by every new container).
+# Running each brain once under the shipped config exercises the kernels
+# the API uses, and Numba caches them next to the sources.
+#
+# Numba discards a cache whose recorded source timestamp differs from the
+# file's current one, and image layers keep timestamps only to whole
+# seconds, so the sources' sub-second timestamps are dropped *before*
+# compiling; otherwise the finished image would invalidate every entry.
+# On a CPU that differs from the build machine's, Numba recompiles on
+# first use, as it would without this step.
+RUN python - <<'PY'
+import os
+
+for root, _dirs, files in os.walk("/app/packages"):
+    for name in files:
+        if name.endswith(".py"):
+            path = os.path.join(root, name)
+            st = os.stat(path)
+            os.utime(path, (int(st.st_atime), int(st.st_mtime)))
+
+from gomoku.board import Board
+from gomoku.models import Move, Stone
+from gomoku.settings import GomokuSettings
+from gomoku_brain import BRAINS, resolve_brain
+from gomoku_brain.evaluate import evaluate_board
+
+settings = GomokuSettings()
+board = Board(size=15)
+stone = Stone.BLACK
+for r, c in [(7, 7), (7, 8), (8, 7), (6, 8), (9, 6), (8, 8), (6, 6), (5, 5), (9, 9), (6, 9)]:
+    board = board.place_stone(Move(row=r, col=c), stone)
+    stone = stone.opponent()
+evaluate_board(board, stone)
+for name in ("threat", "alphabeta", "mcts"):
+    brain_type, kwargs = resolve_brain(name, settings.brains)
+    if brain_type == "mcts":
+        kwargs["iterations"] = 200
+    BRAINS[brain_type].brain_cls(**kwargs).get_move(board, stone)
+PY
 
 # Liveness probe — a slim image has no curl, but Python is right there.
 # A 200 from /healthz means the FastAPI app booted and is serving.

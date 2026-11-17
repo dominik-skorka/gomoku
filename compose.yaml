@@ -7,8 +7,8 @@
 #   docker compose down               # stop + remove
 #
 # All ``[api]`` settings are configurable via ``GOMOKU_API__*`` env
-# vars below — no rebuild required.  For a richer config, drop a
-# ``gomoku.toml`` next to this file and uncomment the volume mount.
+# vars below — no rebuild required.  The image ships the repository's
+# ``gomoku.toml``; uncomment the volume mount to use an edited copy.
 
 services:
   api:
@@ -31,9 +31,13 @@ services:
       # Rate limits — empty string disables the tier (useful for load tests).
       GOMOKU_API__RATE_LIMIT_DEFAULT: "120/minute"
       GOMOKU_API__RATE_LIMIT_COMPUTE: "30/minute"
+      # Upper bound on the search time of a single request, in seconds
+      # (0 disables the cap).
+      GOMOKU_API__MAX_TIME_LIMIT_S: "10"
     # volumes:
-    #   # Optional: mount a host-side gomoku.toml read-only so an
-    #   # operator can tweak settings without rebuilding the image.
+    #   # Optional: the image ships the repository's gomoku.toml; mount a
+    #   # host-side copy read-only to change brain settings without
+    #   # rebuilding.
     #   - ./gomoku.toml:/app/gomoku.toml:ro
     restart: unless-stopped
     healthcheck:

@@ -38,6 +38,13 @@ script, which deliberately binds to localhost).  Built-in
 `HEALTHCHECK` polls `/healthz` every 30s — `docker ps` shows the
 state.
 
+The image ships the repository's `gomoku.toml`, so the API serves the
+same brains and aliases as the CLI; mount an edited copy over
+`/app/gomoku.toml` to change them without rebuilding.  Numba kernels are
+compiled while the image is built, so the first move request is as fast
+as later ones (on a CPU that differs from the build machine's, Numba
+recompiles once on first use).
+
 ### API examples
 
 ```bash
