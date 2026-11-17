@@ -178,3 +178,19 @@ class TestThreatFallbackTuning:
         brain = get_brain_from_settings("ab", bs)
         assert brain.early_game_max_candidates == 8
         assert brain.early_game_futility_margin == 600
+
+    def test_fallback_search_shape_settings_reach_the_brain(self):
+        bs = BrainSettings.model_validate(
+            {
+                "t": {
+                    "type": "threat",
+                    "fallback": {"depth": 5, "eval_ordering_depth": 11, "max_candidates": 12, "futility_margin": 900},
+                }
+            }
+        )
+        fb = get_brain_from_settings("t", bs)._fallback
+        assert (fb.depth, fb.eval_ordering_depth, fb.max_candidates, fb.futility_margin) == (5, 11, 12, 900)
+
+    def test_alphabeta_search_shape_defaults_are_unchanged(self):
+        brain = get_brain("alphabeta")
+        assert (brain.max_candidates, brain.futility_margin, brain.eval_ordering_depth) == (20, 1500, 3)
