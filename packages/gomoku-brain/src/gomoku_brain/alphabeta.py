@@ -26,6 +26,7 @@ from gomoku_brain.brain_base import brain_session
 from gomoku_brain.candidates import get_candidate_moves
 from gomoku_brain.evaluate import evaluate_board
 from gomoku_brain.opening import deduplicate_by_symmetry, lookup_opening_book
+from gomoku_brain.priors import compute_priors
 from gomoku_brain.search_state import SearchState
 from gomoku_brain.zobrist import (
     SIDE_KEY,
@@ -382,6 +383,31 @@ class AlphaBetaBrain:
 
     # -- Move ordering -------------------------------------------------------
 
+    def _prior_order(
+        self,
+        state: SearchState,
+        candidates: list[Move],
+        stone: Stone,
+        depth: int,
+        killers: dict[int, list[Move]],
+        tt_move: Move | None,
+    ) -> list[Move]:
+        """Rank candidates by pattern priors; TT move and killers first."""
+        coords = {(m.row, m.col) for m in candidates}
+        promoted: list[Move] = []
+        skip: set[tuple[int, int]] = set()
+        for m in ([tt_move] if tt_move is not None else []) + killers.get(depth, []):
+            key = (m.row, m.col)
+            if key in coords and key not in skip:
+                promoted.append(m)
+                skip.add(key)
+        rest = [m for m in candidates if (m.row, m.col) not in skip]
+        if not rest:
+            return promoted
+        prior = compute_priors(state, [(m.row, m.col) for m in rest], int(stone), int(stone.opponent()))
+        order = sorted(range(len(rest)), key=lambda i: -prior[i])
+        return promoted + [rest[i] for i in order]
+
     def _order_moves(
         self,
         state: SearchState,
@@ -621,6 +647,13 @@ class AlphaBetaBrain:
             candidates = [urgent, *(m for m in candidates if m != urgent)]
         elif depth >= 3:
             candidates = self._order_moves(state, candidates, stone, depth, killers, tt_move, history, eval_cache)
+        else:
+            # Shallow nodes are the bulk of the tree, so they get a cheap
+            # one-kernel ranking instead of an evaluation per candidate.
+            # They must be ranked before the cap below: the candidate list
+            # is in board order, and cutting it unranked kept whichever
+            # cells came first on the board.
+            candidates = self._prior_order(state, candidates, stone, depth, killers, tt_move)
 
         # Cap branching factor to avoid combinatorial explosion.
         cap = self.early_game_max_candidates if is_early else _MAX_CANDIDATES

@@ -62,3 +62,46 @@ def _eval_after(state: SearchState, move: Move, stone: Stone) -> float:
         return evaluate_board(state, stone)
     finally:
         state.unmake()
+
+
+class TestShallowCandidateRanking:
+    """Shallow nodes rank candidates before the branching cap.
+
+    Candidates arrive in board order and nodes keep at most 20.  Shallow
+    nodes used to cut the list unranked, so a strong move far down the
+    board (here, bottom right) was never searched.
+    """
+
+    @staticmethod
+    def _position() -> Board:
+        board = Board(size=15)
+        # Scattered stones in the top rows give 20+ candidates that come
+        # first in board order.
+        for r, c in [(1, 1), (1, 6), (2, 3), (3, 9), (1, 12)]:
+            board = board.place_stone(Move(row=r, col=c), Stone.BLACK)
+        for r, c in [(2, 1), (1, 8), (3, 5), (2, 11), (3, 13)]:
+            board = board.place_stone(Move(row=r, col=c), Stone.WHITE)
+        # Black's open three, far down the board.
+        for c in (8, 9, 10):
+            board = board.place_stone(Move(row=12, col=c), Stone.BLACK)
+        board = board.place_stone(Move(row=10, col=3), Stone.WHITE)
+        return board
+
+    def test_strong_move_late_in_board_order_is_searched(self):
+        board = self._position()
+        state = SearchState.from_board(board, Stone.BLACK)
+        candidates = get_candidate_moves(state, radius=2)
+        first_twenty = {(m.row, m.col) for m in candidates[:20]}
+        assert (12, 7) not in first_twenty and (12, 11) not in first_twenty
+
+        move = AlphaBetaBrain(depth=2).get_move(board, Stone.BLACK)
+        assert (move.row, move.col) in {(12, 7), (12, 11)}
+
+    def test_prior_order_promotes_tt_move_and_killers(self):
+        state = SearchState.from_board(self._position(), Stone.BLACK)
+        candidates = get_candidate_moves(state, radius=2)
+        tt, killer = candidates[-1], candidates[-2]
+        ranked = AlphaBetaBrain()._prior_order(state, candidates, Stone.BLACK, 2, {2: [killer]}, tt)
+        assert ranked[:2] == [tt, killer]
+        assert sorted((m.row, m.col) for m in ranked) == sorted((m.row, m.col) for m in candidates)
+        assert {(m.row, m.col) for m in ranked[2:4]} == {(12, 7), (12, 11)}
