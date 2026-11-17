@@ -80,6 +80,9 @@ class AlphaBetaBrain:
         early_game_max_candidates: int = 10,
         early_game_lmr_threshold: int = 2,
         early_game_futility_margin: int = 800,
+        max_candidates: int = _MAX_CANDIDATES,
+        futility_margin: int = _FUTILITY_MARGIN,
+        eval_ordering_depth: int = 3,
         time_limit_s: float = 0.0,
         opening_book: str = "",
     ) -> None:
@@ -98,6 +101,12 @@ class AlphaBetaBrain:
         self.early_game_max_candidates = early_game_max_candidates
         self.early_game_lmr_threshold = early_game_lmr_threshold
         self.early_game_futility_margin = early_game_futility_margin
+        # Branching cap and futility margin after the early game.
+        self.max_candidates = max_candidates
+        self.futility_margin = futility_margin
+        # Nodes at least this deep rank candidates by a full evaluation
+        # of each move; shallower nodes use the one-kernel pattern prior.
+        self.eval_ordering_depth = eval_ordering_depth
         self.time_limit_s = time_limit_s
         # Benchmark instrumentation — reset on each get_move, updated inside
         # _alphabeta / _quiesce.  Read by bench_alphabeta.py.  Zero overhead
@@ -627,7 +636,7 @@ class AlphaBetaBrain:
             candidates = deduplicate_by_symmetry(state, candidates)
 
         # Resolve early-game adaptive parameters once.
-        futility_margin = self.early_game_futility_margin if is_early else _FUTILITY_MARGIN
+        futility_margin = self.early_game_futility_margin if is_early else self.futility_margin
         lmr_threshold = self.early_game_lmr_threshold if is_early else self.lmr_threshold
         lmr_min_depth = 2 if is_early else self.lmr_min_depth
 
@@ -645,7 +654,7 @@ class AlphaBetaBrain:
                 return 100_000.0 + depth, urgent
             # It's a block — promote it to head but still search alternatives
             candidates = [urgent, *(m for m in candidates if m != urgent)]
-        elif depth >= 3:
+        elif depth >= self.eval_ordering_depth:
             candidates = self._order_moves(state, candidates, stone, depth, killers, tt_move, history, eval_cache)
         else:
             # Shallow nodes are the bulk of the tree, so they get a cheap
@@ -656,7 +665,7 @@ class AlphaBetaBrain:
             candidates = self._prior_order(state, candidates, stone, depth, killers, tt_move)
 
         # Cap branching factor to avoid combinatorial explosion.
-        cap = self.early_game_max_candidates if is_early else _MAX_CANDIDATES
+        cap = self.early_game_max_candidates if is_early else self.max_candidates
         candidates = candidates[:cap]
 
         best_score = float("-inf")

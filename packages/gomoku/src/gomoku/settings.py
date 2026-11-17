@@ -112,6 +112,14 @@ class AlphaBetaBrainSettings(BaseModel):
     early_game_max_candidates: int = Field(default=10, ge=5, le=20)
     early_game_lmr_threshold: int = Field(default=2, ge=1, le=10)
     early_game_futility_margin: int = Field(default=800, ge=200, le=1500)
+    max_candidates: int = Field(default=20, ge=5, le=60, description="Branching cap after the early game.")
+    futility_margin: int = Field(default=1500, ge=200, le=5000, description="Futility margin after the early game.")
+    eval_ordering_depth: int = Field(
+        default=3,
+        ge=1,
+        le=11,
+        description="Nodes at least this deep order moves by full evaluation; shallower ones by pattern priors.",
+    )
     time_limit_s: float = Field(default=0.0, ge=0.0, le=600.0)
     opening_book: str = Field(default="", description="Path to an opening book JSON file.")
 
