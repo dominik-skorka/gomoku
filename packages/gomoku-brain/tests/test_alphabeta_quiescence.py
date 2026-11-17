@@ -119,3 +119,36 @@ class TestAlphaBetaWrapperIntegration:
         brain = AlphaBetaBrain(depth=1)
         brain.get_move(b, Stone.BLACK)
         assert brain.qs_node_count > 0
+
+
+class TestQuiesceVcfProbe:
+    """The leaf VCF probe is gated on a four-threat and shares one proof cache."""
+
+    @staticmethod
+    def _state(black: list[tuple[int, int]], white: list[tuple[int, int]]) -> SearchState:
+        board = Board(size=15)
+        for r, c in black:
+            board = board.place_stone(Move(row=r, col=c), Stone.BLACK)
+        for r, c in white:
+            board = board.place_stone(Move(row=r, col=c), Stone.WHITE)
+        return SearchState.from_board(board, Stone.BLACK)
+
+    def test_no_four_threat_skips_the_probe(self):
+        state = self._state([(7, 7), (7, 8)], [(3, 3), (11, 11)])
+        ctx = QuiesceCtx(qs_vcf_depth=12, eval_cache={})
+        quiesce(state, float("-inf"), float("inf"), Stone.BLACK, ctx, 0)
+        assert ctx.vcf_cache == {}
+
+    def test_probe_result_is_cached_and_reused(self):
+        # Two open threes for Black: a forced win by continuous fours.
+        state = self._state(
+            [(4, 2), (4, 3), (4, 4), (6, 2), (6, 3), (6, 4)],
+            [(0, 0), (0, 14), (14, 0), (14, 14), (2, 0), (2, 14)],
+        )
+        ctx = QuiesceCtx(qs_vcf_depth=12, eval_cache={})
+        first = quiesce(state, float("-inf"), float("inf"), Stone.BLACK, ctx, 0)
+        assert first == 100_000.0
+        assert state.zobrist in ctx.vcf_cache
+        size = len(ctx.vcf_cache)
+        assert quiesce(state, float("-inf"), float("inf"), Stone.BLACK, ctx, 0) == first
+        assert len(ctx.vcf_cache) == size

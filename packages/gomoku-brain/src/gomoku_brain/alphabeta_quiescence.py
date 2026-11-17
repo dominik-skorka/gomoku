@@ -21,7 +21,7 @@ signatures clean and lets the search stay a pure free function.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from gomoku.models import Move, Stone
 
@@ -29,10 +29,14 @@ from gomoku_brain.alphabeta_ordering import _check_win, _split_threats
 from gomoku_brain.candidates import get_candidate_moves
 from gomoku_brain.evaluate import evaluate_board
 from gomoku_brain.search_state import SearchState
-from gomoku_brain.threat_detect import _find_winning_move, _scan_context
-from gomoku_brain.threat_search import _vcf
+from gomoku_brain.threat_detect import _find_winning_move, _has_any_four_threat, _scan_context
+from gomoku_brain.threat_search import _ThreatCache, _vcf_state
 
 EvalCache = dict[int, float]
+
+# Entry cap for the per-search VCF proof cache; cleared wholesale when hit
+# so a long time-limited search cannot grow it without bound.
+_VCF_CACHE_MAX = 500_000
 
 
 @dataclass
@@ -49,11 +53,16 @@ class QuiesceCtx:
       brain reads it back into ``self.qs_node_count`` after the search
       so the running total survives across the multiple entry points
       in :meth:`AlphaBetaBrain._alphabeta`.
+    * ``vcf_cache`` — VCF proof cache shared by every leaf probe of one
+      search.  Entries are keyed by zobrist hash (which encodes the side
+      to move, i.e. the attacker) and carry the depth they were proven
+      at, so a hit returns exactly what a fresh probe would.
     """
 
     qs_vcf_depth: int
     eval_cache: EvalCache
     nodes: int = 0
+    vcf_cache: _ThreatCache = field(default_factory=dict)
 
 
 def get_threat_moves(state: SearchState, stone: Stone) -> list[Move]:
@@ -109,11 +118,19 @@ def quiesce(
         # on the board), we must block — we cannot freely start our own
         # VCF.  Skipping this check caused the engine to return a false
         # +100 000 even when the opponent had an unstoppable live-4.
-        # _vcf accepts the SearchState directly and leaves it at the
-        # entry ply (make/unmake balanced).
-        opp = stone.opponent()
-        if _find_winning_move(state, opp) is None and _vcf(state, stone, ctx.qs_vcf_depth) is not None:
-            return 100_000.0
+        # _vcf_state leaves the state at the entry ply (make/unmake
+        # balanced).
+        #
+        # A VCF needs a four-threat to start, so the cheap boolean scan
+        # goes first: about half of all leaf positions have none, and
+        # for those the probe would only enumerate an empty threat list.
+        scan = _scan_context(state)
+        if _has_any_four_threat(state, stone, scan) and _find_winning_move(state, stone.opponent(), scan) is None:
+            vcf_cache = ctx.vcf_cache
+            if len(vcf_cache) > _VCF_CACHE_MAX:
+                vcf_cache.clear()
+            if _vcf_state(state, stone, ctx.qs_vcf_depth, cache=vcf_cache) is not None:
+                return 100_000.0
 
     # Standing pat — static evaluation as a lower bound.
     if zh in ctx.eval_cache:
