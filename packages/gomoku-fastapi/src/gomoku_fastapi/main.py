@@ -28,11 +28,12 @@ from typing import TYPE_CHECKING
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.openapi.utils import get_openapi
 
 from gomoku_fastapi import api_v1, limits, observability
 from gomoku_fastapi.deps import get_session_store, get_settings
 from gomoku_fastapi.routers import health, versions
-from gomoku_fastapi.versioning import EXPOSED_HEADERS, VersionHeadersMiddleware
+from gomoku_fastapi.versioning import EXPOSED_HEADERS, VERSIONS, ApiVersion, VersionHeadersMiddleware
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -68,6 +69,32 @@ def _package_version() -> str:
         return package_version("gomoku-fastapi")
     except PackageNotFoundError:  # running from a source tree that was never installed
         return "0+unknown"
+
+
+def _add_version_openapi(app: FastAPI, version: ApiVersion) -> None:
+    """Serve ``/<version>/openapi.json``: an OpenAPI document of that version only.
+
+    ``/openapi.json`` covers every version plus the infrastructure
+    endpoints; a client of one version gets exactly its contract here.
+    """
+    cache: dict[str, object] = {}
+
+    async def version_openapi() -> object:
+        if "doc" not in cache:
+            routes = [
+                r
+                for r in app.routes
+                if getattr(r, "path", "") == version.prefix or getattr(r, "path", "").startswith(f"{version.prefix}/")
+            ]
+            cache["doc"] = get_openapi(
+                title=f"{app.title} ({version.name})",
+                version=app.version,
+                description=app.description,
+                routes=routes,
+            )
+        return cache["doc"]
+
+    app.add_api_route(f"{version.prefix}/openapi.json", version_openapi, include_in_schema=False)
 
 
 def create_app() -> FastAPI:
@@ -121,6 +148,8 @@ def create_app() -> FastAPI:
     app.include_router(health.router)
     app.include_router(versions.router)
     app.include_router(api_v1.router)
+    for version in VERSIONS:
+        _add_version_openapi(app, version)
     return app
 
 

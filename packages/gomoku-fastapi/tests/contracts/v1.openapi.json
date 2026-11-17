@@ -1,5 +1,20 @@
 {
  "paths": {
+  "/v1": {
+   "get": {
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/VersionInfo"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
   "/v1/analyze": {
    "post": {
     "requestBody": {
@@ -1021,6 +1036,9 @@
       }
      ]
     },
+    "openapi": {
+     "type": "string"
+    },
     "path": {
      "type": "string"
     },
@@ -1063,26 +1081,9 @@
    "required": [
     "version",
     "path",
+    "openapi",
     "status",
     "released"
-   ],
-   "type": "object"
-  },
-  "VersionsResponse": {
-   "properties": {
-    "latest": {
-     "type": "string"
-    },
-    "versions": {
-     "items": {
-      "$ref": "#/components/schemas/VersionInfo"
-     },
-     "type": "array"
-    }
-   },
-   "required": [
-    "latest",
-    "versions"
    ],
    "type": "object"
   }

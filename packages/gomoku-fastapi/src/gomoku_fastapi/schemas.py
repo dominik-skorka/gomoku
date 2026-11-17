@@ -294,8 +294,14 @@ class VersionInfo(BaseModel):
 
     version: str = Field(description="Version name, which is also its URL prefix.", examples=["v1"])
     path: str = Field(description="URL prefix of every endpoint in this version.", examples=["/v1"])
+    openapi: str = Field(
+        description="OpenAPI document describing only this version.", examples=["/v1/openapi.json"]
+    )
     status: Literal["stable", "deprecated"] = Field(
-        description="``deprecated`` versions still work but will be removed after their sunset date."
+        description=(
+            "``deprecated`` versions still work but will be removed after their sunset date.  A "
+            "version whose deprecation date is still ahead stays ``stable`` until then."
+        )
     )
     released: date = Field(description="Date the version was first served.")
     deprecated: date | None = Field(default=None, description="Date the version was deprecated, if it is.")

@@ -1,13 +1,16 @@
 """Guard the ``v1`` contract against breaking changes.
 
-``contracts/v1.openapi.json`` is a snapshot of every ``/v1`` operation
-and every schema, with documentation text stripped.  Two tests compare
-the live OpenAPI document against it:
+``contracts/v1.openapi.json`` is a snapshot of the ``/v1/openapi.json``
+document (every v1 operation and schema), with documentation text
+stripped.  Two tests compare the live document against it:
 
-* **No breaking changes.**  Removing an endpoint, a parameter or a field,
-  making a parameter, body or field required, or changing a type fails
-  with a list of what broke.  Such a change belongs in a new version
-  (see :mod:`gomoku_fastapi.versioning`).
+* **No breaking changes** (the rules of Google AIP-180).  Removing an
+  endpoint, parameter, field, success response or enum value; making a
+  parameter, request body or request field required; or changing a
+  type, default or validation constraint fails with a list of what
+  broke.  Such a change belongs in a new version (see
+  :mod:`gomoku_fastapi.versioning`).  New response fields, even
+  required ones, and new enum values are compatible.
 * **Snapshot is current.**  Backwards-compatible changes (new endpoints,
   new optional fields) fail too until the snapshot is refreshed, so
   every change to the public surface is reviewed in a diff:
@@ -40,14 +43,38 @@ def _shape(node: Any) -> Any:
 
 
 def contract(openapi: dict[str, Any]) -> dict[str, Any]:
-    """The wire-relevant part of the v1 surface of an OpenAPI document."""
-    paths = {p: ops for p, ops in openapi["paths"].items() if p.startswith(PREFIX)}
-    return _shape({"paths": paths, "schemas": openapi.get("components", {}).get("schemas", {})})
+    """The wire-relevant part of a single-version OpenAPI document."""
+    return _shape({"paths": openapi["paths"], "schemas": openapi.get("components", {}).get("schemas", {})})
+
+
+def _refs(node: Any) -> set[str]:
+    if isinstance(node, dict):
+        found = {node["$ref"].rsplit("/", 1)[-1]} if isinstance(node.get("$ref"), str) else set()
+        return found.union(*(_refs(v) for v in node.values()))
+    if isinstance(node, list):
+        return set().union(*(_refs(v) for v in node))
+    return set()
+
+
+def request_schemas(spec: dict[str, Any]) -> set[str]:
+    """Names of the schemas a client sends: reachable from request bodies or parameters."""
+    pending = set()
+    for ops in spec["paths"].values():
+        for op in ops.values():
+            pending |= _refs(op.get("requestBody", {})) | _refs(op.get("parameters", []))
+    seen: set[str] = set()
+    while pending:
+        name = pending.pop()
+        if name not in seen:
+            seen.add(name)
+            pending |= _refs(spec["schemas"].get(name, {})) - seen
+    return seen
 
 
 def breaking_changes(old: dict[str, Any], new: dict[str, Any]) -> list[str]:
     """Every change from *old* to *new* that could break an existing client."""
     problems: list[str] = []
+    sent_by_clients = request_schemas(old)
 
     for path, old_ops in old["paths"].items():
         new_ops = new["paths"].get(path)
@@ -66,7 +93,7 @@ def breaking_changes(old: dict[str, Any], new: dict[str, Any]) -> list[str]:
         if new_schema is None:
             problems.append(f"schema removed: {name}")
             continue
-        problems += _schema_changes(name, old_schema, new_schema)
+        problems += _schema_changes(name, old_schema, new_schema, is_request=name in sent_by_clients)
     return problems
 
 
@@ -96,27 +123,49 @@ def _operation_changes(op: str, old: dict[str, Any], new: dict[str, Any]) -> lis
     return problems
 
 
-def _schema_changes(name: str, old: dict[str, Any], new: dict[str, Any]) -> list[str]:
+def _value_changes(where: str, old: dict[str, Any], new: dict[str, Any]) -> list[str]:
+    """Breaking differences between two value schemas (a field, or a whole enum)."""
+    problems = []
+    old, new = dict(old), dict(new)
+    old_enum, new_enum = old.pop("enum", None), new.pop("enum", None)
+    if old_enum is not None:
+        if new_enum is None:
+            problems.append(f"{where}: no longer an enum")
+        else:
+            # AIP-180: enum values may be added, never removed.
+            problems += [f"{where}: enum value removed: {v!r}" for v in old_enum if v not in new_enum]
+    elif new_enum is not None:
+        problems.append(f"{where}: now restricted to an enum")
+    if old.pop("default", None) != new.pop("default", None):
+        problems.append(f"{where}: default changed")
+    if old != new:
+        problems.append(f"{where}: type or constraints changed")
+    return problems
+
+
+def _schema_changes(name: str, old: dict[str, Any], new: dict[str, Any], *, is_request: bool) -> list[str]:
     problems = []
     old_props, new_props = old.get("properties", {}), new.get("properties", {})
     for field, field_schema in old_props.items():
         if field not in new_props:
             problems.append(f"{name}: field removed: {field}")
-        elif field_schema != new_props[field]:
-            problems.append(f"{name}: field type changed: {field}")
-    for field in sorted(set(new.get("required", [])) - set(old.get("required", []))):
-        problems.append(f"{name}: field now required: {field}")
+        else:
+            problems += _value_changes(f"{name}.{field}", field_schema, new_props[field])
+    if is_request:
+        # New required response fields are fine; new required request fields are not.
+        for field in sorted(set(new.get("required", [])) - set(old.get("required", []))):
+            problems.append(f"{name}: field now required: {field}")
     rest_old = {k: v for k, v in old.items() if k not in {"properties", "required"}}
     rest_new = {k: v for k, v in new.items() if k not in {"properties", "required"}}
-    if rest_old != rest_new:
-        problems.append(f"{name}: schema type changed")
+    problems += _value_changes(name, rest_old, rest_new)
     return problems
 
 
 def _live_contract() -> dict[str, Any]:
+    from fastapi.testclient import TestClient
     from gomoku_fastapi.main import create_app
 
-    return contract(create_app().openapi())
+    return contract(TestClient(create_app()).get("/v1/openapi.json").json())
 
 
 # ---------------------------------------------------------------------------
@@ -174,10 +223,36 @@ class TestBreakingChangeDetection:
         props["extra"] = {"type": "string"}
         new["schemas"]["MoveRequest"]["required"] = [*new["schemas"]["MoveRequest"]["required"], "extra"]
         assert sorted(breaking_changes(old, new)) == [
+            "MoveRequest.brain: type or constraints changed",
             "MoveRequest: field now required: extra",
             "MoveRequest: field removed: diagnostics",
-            "MoveRequest: field type changed: brain",
         ]
+
+    def test_new_required_field_is_breaking_only_in_requests(self):
+        old = self._base()
+        new = copy.deepcopy(old)
+        for name in ("MoveRequest", "MoveResponse"):
+            new["schemas"][name]["properties"]["added"] = {"type": "string"}
+            new["schemas"][name]["required"] = [*new["schemas"][name].get("required", []), "added"]
+        assert breaking_changes(old, new) == ["MoveRequest: field now required: added"]
+
+    def test_enum_values_may_be_added_but_not_removed(self):
+        old = {"paths": {}, "schemas": {"Colour": {"enum": [1, 2], "type": "integer"}}}
+        added = {"paths": {}, "schemas": {"Colour": {"enum": [1, 2, 3], "type": "integer"}}}
+        removed = {"paths": {}, "schemas": {"Colour": {"enum": [1], "type": "integer"}}}
+        assert breaking_changes(old, added) == []
+        assert breaking_changes(old, removed) == ["Colour: enum value removed: 2"]
+
+    def test_default_change_is_breaking(self):
+        old = self._base()
+        new = copy.deepcopy(old)
+        new["schemas"]["MoveRequest"]["properties"]["diagnostics"]["default"] = True
+        assert breaking_changes(old, new) == ["MoveRequest.diagnostics: default changed"]
+
+    def test_request_schemas_follow_references(self):
+        sent = request_schemas(self._base())
+        assert {"MoveRequest", "Board", "Stone"} <= sent
+        assert "MoveResponse" not in sent
 
     def test_removed_success_response(self):
         old = self._base()
