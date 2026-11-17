@@ -63,11 +63,17 @@ def occupied_coords(board: Board | _GridBoard) -> NDArray[np.int32]:
 
     Each row is ``[row, col]``.  Returns an empty ``(0, 2)`` array when the
     board is empty.
+
+    For :class:`SearchState` this is a zero-cost slice of the
+    incrementally-maintained occupied stack (row-major seed + move
+    order); callers must treat it as read-only and order-insensitive.
     """
     from gomoku_brain.bitboard import BitboardState
     from gomoku_brain.search_state import SearchState
 
-    if isinstance(board, BitboardState | SearchState):
+    if isinstance(board, SearchState):
+        return board._occ_arr[: board.occ_count]
+    if isinstance(board, BitboardState):
         from gomoku_brain.bitboard_jit import occupied_from_bb
 
         return occupied_from_bb(board.black, board.white, board.size)

@@ -34,6 +34,8 @@ select = [
     "SIM", # flake8-simplify
     "RUF", # ruff-specific
 ]
+# "×" is used deliberately in comments, docstrings and user-facing output.
+ignore = ["RUF001", "RUF002", "RUF003"]
 
 [tool.pytest.ini_options]
 testpaths = [

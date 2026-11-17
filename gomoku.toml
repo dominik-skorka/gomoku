@@ -226,6 +226,13 @@ pns_nodes = 10_000
 # Default: 5.0 | Valid range: 0.1–60.0
 pns_time_s = 5.0
 
+# Optional [brains.threat.fallback] table: alpha-beta tuning for the
+# fallback used when no forced win is found (same keys as
+# [brains.alphabeta]; its depth overrides the top-level depth).  Left
+# unset on purpose: in a 300-game match a fallback tuned like
+# [brains.alphabeta] scored 150-150 against the untuned one while
+# thinking about 43% longer per move.
+
 # -----------------------------------------------------------------------------
 # Brain: mcts — Monte Carlo Tree Search with PUCT formula, heuristic priors,
 # Dirichlet noise, and heuristic leaf evaluation (AlphaGo Zero-inspired,

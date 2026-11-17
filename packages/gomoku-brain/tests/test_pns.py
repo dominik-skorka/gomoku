@@ -99,8 +99,7 @@ class TestPnsCounterThreats:
 
         move = pns_threat_search(b, Stone.BLACK, max_nodes=50_000)
         assert move is not None, (
-            "PNS failed to solve the baseline double-three fork — the "
-            "counter-threat test below is moot."
+            "PNS failed to solve the baseline double-three fork — the counter-threat test below is moot."
         )
         # The fork cell (7, 7) should be the proven move.
         assert move == Move(row=7, col=7)
@@ -137,7 +136,6 @@ class TestPnsCounterThreats:
         one four-threat for the attacker.  A proof violating either
         invariant is unsound."""
         from gomoku.rules import check_winner
-
         from gomoku_brain.threat import _find_four_threats
 
         b = Board(size=15)
@@ -150,8 +148,7 @@ class TestPnsCounterThreats:
         won = check_winner(trial, move) is not None
         fours = _find_four_threats(trial, Stone.BLACK)
         assert won or len(fours) > 0, (
-            f"PNS returned {move} but it neither wins nor creates a "
-            "four-threat — unsound proof"
+            f"PNS returned {move} but it neither wins nor creates a four-threat — unsound proof"
         )
 
 
@@ -222,3 +219,97 @@ class TestThreatBrainPns:
         brain = ThreatBrain(threat_search="pns", pns_nodes=1_000)
         move = brain.get_move(b, Stone.BLACK)
         assert b.is_valid_move(move)
+
+
+# ---------------------------------------------------------------------------
+# Shared positions (search graph instead of a tree)
+# ---------------------------------------------------------------------------
+
+
+class TestPnsTranspositions:
+    @staticmethod
+    def _midgame() -> Board:
+        """A 19-stone position from a self-played game; Black to move."""
+        moves = [
+            (7, 7), (7, 8), (8, 7), (6, 8), (8, 8), (6, 7), (6, 9), (8, 9), (5, 6), (9, 9),
+            (9, 10), (5, 8), (4, 8), (10, 9), (7, 9), (4, 9), (7, 6), (2, 11), (3, 10),
+        ]  # fmt: skip
+        board = Board(size=15)
+        stone = Stone.BLACK
+        for r, c in moves:
+            board = board.place_stone(Move(row=r, col=c), stone)
+            stone = stone.opponent()
+        return board
+
+    def test_finds_win_the_tree_search_missed(self):
+        """With one node per position the 10k budget reaches this forced
+        win; the tree search spent the same budget re-searching move-order
+        permutations and returned None (it needed a far larger budget)."""
+        move = pns_threat_search(self._midgame(), Stone.BLACK, max_nodes=10_000, max_time_s=60.0)
+        assert move == Move(row=6, col=6)
+
+    def test_move_orders_share_one_node(self):
+        """Two attack orders reaching the same position link to one node."""
+        from gomoku_brain.pns import _child_at, _NodeType
+        from gomoku_brain.search_state import SearchState
+
+        board = _place(Board(size=15), [(7, 7)], Stone.BLACK)
+        board = _place(board, [(0, 0)], Stone.WHITE)
+        state = SearchState.from_board(board, Stone.BLACK)
+        table: dict = {}
+
+        def reach(first: tuple[int, int], second: tuple[int, int]):
+            state.make(*first, Stone.BLACK)
+            state.make(0, 14, Stone.WHITE)
+            state.make(*second, Stone.BLACK)
+            try:
+                return _child_at(state, _NodeType.AND, table)
+            finally:
+                for _ in range(3):
+                    state.unmake()
+
+        node_a, new_a = reach((7, 8), (7, 9))
+        node_b, new_b = reach((7, 9), (7, 8))
+        assert new_a and not new_b
+        assert node_a is node_b
+
+    def test_caller_state_is_restored(self):
+        from gomoku_brain.search_state import SearchState
+
+        state = SearchState.from_board(self._midgame(), Stone.BLACK)
+        ply, zobrist = state.ply, state.zobrist
+        pns_threat_search(state, Stone.BLACK, max_nodes=2_000)
+        assert (state.ply, state.zobrist) == (ply, zobrist)
+
+
+# ---------------------------------------------------------------------------
+# Search status: proved / disproved / budget exhausted
+# ---------------------------------------------------------------------------
+
+
+class TestPnsStatus:
+    def test_proved_carries_the_winning_move(self):
+        from gomoku_brain.pns import PNSStatus, pns_threat_status
+
+        b = _place(Board(size=15), [(4, 2), (4, 3), (4, 4), (4, 5)], Stone.BLACK)
+        b = _place(b, [(0, 0), (0, 1), (0, 2)], Stone.WHITE)
+        status, move = pns_threat_status(b, Stone.BLACK, max_nodes=1_000)
+        assert status is PNSStatus.PROVED
+        assert move in (Move(row=4, col=1), Move(row=4, col=6))
+
+    def test_no_threats_is_disproved(self):
+        from gomoku_brain.pns import PNSStatus, pns_threat_status
+
+        b = _place(Board(size=15), [(7, 7)], Stone.BLACK)
+        b = _place(b, [(3, 3)], Stone.WHITE)
+        assert pns_threat_status(b, Stone.BLACK, max_nodes=1_000) == (PNSStatus.DISPROVED, None)
+
+    def test_exhausted_budget_is_unknown_not_disproved(self):
+        """The same position: a tiny budget proves nothing, a full one proves the win."""
+        from gomoku_brain.pns import PNSStatus, pns_threat_status
+
+        board = TestPnsTranspositions._midgame()
+        assert pns_threat_status(board, Stone.BLACK, max_nodes=20) == (PNSStatus.UNKNOWN, None)
+        assert pns_threat_search(board, Stone.BLACK, max_nodes=20) is None
+        status, _ = pns_threat_status(board, Stone.BLACK, max_nodes=10_000, max_time_s=60.0)
+        assert status is PNSStatus.PROVED

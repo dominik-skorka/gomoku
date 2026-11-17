@@ -29,6 +29,12 @@ from numpy.typing import NDArray
 
 from gomoku_brain.zobrist import _TABLE, SIDE_KEY, hash_board
 
+# Precomputed per-column bit masks.  ``make``/``unmake`` run millions of
+# times per search; building ``np.uint32`` scalars and shifting on every
+# call dominated their cost.
+_BIT: list[np.uint32] = [np.uint32(1 << c) for c in range(32)]
+_BIT_INV: list[np.uint32] = [np.uint32(~(1 << c) & 0xFFFFFFFF) for c in range(32)]
+
 
 class SearchState:
     """Mutable bitboard with a preallocated undo stack.
@@ -41,7 +47,13 @@ class SearchState:
     """
 
     __slots__ = (
+        "_ctx_candidates",
+        "_ctx_moves",
+        "_ctx_zobrist",
+        "_eval_stack",
+        "_eval_valid",
         "_occ",
+        "_occ_arr",
         "_undo_col",
         "_undo_row",
         "_undo_stone",
@@ -86,6 +98,34 @@ class SearchState:
 
             grid = bitboard_to_grid(black, white, size)
         self.grid = grid
+        # Incremental occupied-coordinate stack: the first ``occ_count``
+        # rows are the occupied cells.  Seeded row-major; ``make`` appends,
+        # ``unmake`` pops (LIFO matches the undo stack).  Consumers via
+        # ``grid_utils.occupied_coords`` get a zero-cost slice instead of
+        # an O(size^2) bitboard scan; all kernels treat the order as
+        # irrelevant (sums and seen-grid dedups).
+        self._occ_arr = np.empty((cap, 2), dtype=np.int32)
+        rows, cols = np.nonzero(grid)
+        self._occ_arr[: rows.shape[0], 0] = rows
+        self._occ_arr[: rows.shape[0], 1] = cols
+        # Per-ply incremental evaluation stack (black-positive score).
+        # ``_eval_valid[k]`` says whether ``_eval_stack[k]`` holds the
+        # evaluation of the position after k plies; ``make`` invalidates
+        # the new ply only, so cached ancestor evaluations survive and
+        # ``gomoku_brain.evaluate`` can fill gaps with local deltas.
+        self._eval_stack = np.zeros(cap, dtype=np.float64)
+        self._eval_valid = np.zeros(cap, dtype=np.bool_)
+        # Per-ply memo of the radius-2 candidate scan, keyed by the
+        # zobrist hash of the position each slot was derived from (no
+        # explicit invalidation: a make at the same ply changes the
+        # hash, so a stale slot simply misses; ancestor slots survive
+        # the make/unmake churn of child subtrees).  ``_ctx_candidates``
+        # holds the int32 arrays consumed by JIT kernels;
+        # ``_ctx_moves`` the corresponding Move lists (returned as
+        # copies — callers slice and re-order their lists).
+        self._ctx_zobrist: list[int] = [0] * cap
+        self._ctx_candidates: list[NDArray[np.int32] | None] = [None] * cap
+        self._ctx_moves: list[list | None] = [None] * cap  # list[Move] slots
         # Lazy set cache — off the hot path, invalidated on make/unmake.
         self._occ: set[tuple[int, int]] | None = None
 
@@ -162,7 +202,7 @@ class SearchState:
         self.zobrist ^= _TABLE[row][col][stone_int - 1]
         self.zobrist ^= SIDE_KEY
         # Set the bit on the colour's bitboard.
-        bit = np.uint32(1) << np.uint32(col)
+        bit = _BIT[col]
         if stone_int == 1:
             self.black[row] |= bit
         else:
@@ -175,7 +215,12 @@ class SearchState:
         self._undo_col[p] = col
         self._undo_stone[p] = stone_int
         self.ply = p + 1
-        self.occ_count += 1
+        # Push onto the occupied stack and invalidate the new ply's eval.
+        oc = self.occ_count
+        self._occ_arr[oc, 0] = row
+        self._occ_arr[oc, 1] = col
+        self.occ_count = oc + 1
+        self._eval_valid[p + 1] = False
         self._occ = None
 
     def unmake(self) -> None:
@@ -188,7 +233,7 @@ class SearchState:
         col = int(self._undo_col[p])
         stone_int = int(self._undo_stone[p])
         # Clear the bit.
-        bit_mask = ~(np.uint32(1) << np.uint32(col))
+        bit_mask = _BIT_INV[col]
         if stone_int == 1:
             self.black[row] &= bit_mask
         else:
@@ -207,16 +252,12 @@ class SearchState:
     # ------------------------------------------------------------------
 
     def at(self, row: int, col: int) -> Stone:
-        bit = np.uint32(1) << np.uint32(col)
-        if self.black[row] & bit:
-            return Stone.BLACK
-        if self.white[row] & bit:
-            return Stone.WHITE
-        return Stone.EMPTY
+        # The int8 grid mirror is kept in lockstep by make/unmake — one
+        # indexed read beats two bitboard mask tests.
+        return Stone(int(self.grid[row, col]))
 
     def is_empty(self, row: int, col: int) -> bool:
-        bit = np.uint32(1) << np.uint32(col)
-        return not (self.black[row] & bit) and not (self.white[row] & bit)
+        return int(self.grid[row, col]) == 0
 
     @property
     def occupied(self) -> set[tuple[int, int]]:

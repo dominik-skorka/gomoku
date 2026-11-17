@@ -351,6 +351,208 @@ def evaluate_grid(
 
 
 # ---------------------------------------------------------------------------
+# Incremental evaluation — local delta for a single placed stone
+# ---------------------------------------------------------------------------
+
+
+@njit(cache=True)
+def _line_local_terms(
+    grid: NDArray,  # type: ignore[type-arg]
+    size: int,
+    row: int,
+    col: int,
+    dr: int,
+    dc: int,
+    table: NDArray,  # type: ignore[type-arg]
+    open_three_bonus: int,
+) -> float:
+    """Black-positive directional + open-three terms for one full line.
+
+    Decomposes the line through (row, col) along (dr, dc) into maximal
+    same-colour runs.  Every stone in a run of length L sees
+    ``count = L - 1`` consecutive neighbours and the run's two end
+    opennesses, so the per-stone ``_score_direction`` sum for the line
+    equals ``L * _pattern_score(L - 1, open_ends)`` per run; a run with
+    ``L == 3`` and both ends empty additionally scores one open-three
+    bonus — matching ``_open_three_score``'s canonical-start dedup,
+    which counts each maximal run once.
+    """
+    # Walk to the line's first in-bounds cell.
+    r = row
+    c = col
+    while 0 <= r - dr < size and 0 <= c - dc < size:
+        r -= dr
+        c -= dc
+
+    total = 0.0
+    prev = -1  # colour of the previous cell; -1 = board edge
+    run_color = 0
+    run_len = 0
+    left_open = False
+    while 0 <= r < size and 0 <= c < size:
+        cell = grid[r, c]
+        if cell == run_color and run_color != 0:
+            run_len += 1
+        else:
+            if run_color != 0:
+                right_open = cell == 0
+                open_ends = (1 if left_open else 0) + (1 if right_open else 0)
+                term = float(run_len * _pattern_score(run_len - 1, open_ends, table))
+                if run_len == 3 and left_open and right_open:
+                    term += open_three_bonus
+                total += term if run_color == 1 else -term
+            if cell != 0:
+                run_color = cell
+                run_len = 1
+                left_open = prev == 0
+            else:
+                run_color = 0
+                run_len = 0
+        prev = cell
+        r += dr
+        c += dc
+    if run_color != 0:
+        # Run ran off the board — the far end is closed.
+        open_ends = 1 if left_open else 0
+        term = float(run_len * _pattern_score(run_len - 1, open_ends, table))
+        total += term if run_color == 1 else -term
+    return total
+
+
+@njit(cache=True)
+def _near_any_stone(
+    grid: NDArray,  # type: ignore[type-arg]
+    size: int,
+    row: int,
+    col: int,
+) -> bool:
+    """True if any occupied cell lies within Chebyshev distance 2."""
+    for dr in range(-2, 3):
+        for dc in range(-2, 3):
+            r = row + dr
+            c = col + dc
+            if 0 <= r < size and 0 <= c < size and grid[r, c] != 0:
+                return True
+    return False
+
+
+@njit(cache=True)
+def _fork_cell_terms(
+    grid: NDArray,  # type: ignore[type-arg]
+    size: int,
+    row: int,
+    col: int,
+    dirs: NDArray,  # type: ignore[type-arg]
+    table: NDArray,  # type: ignore[type-arg]
+    fork_threshold: int,
+    fork_bonus: int,
+) -> float:
+    """Black-minus-white fork contribution of the empty cell (row, col).
+
+    Mirrors one cell of ``_fork_score`` for both colours; the caller is
+    responsible for the eligibility gate (empty + near a stone).
+    """
+    total = 0.0
+    lines_b = _threat_lines_at(grid, size, row, col, 1, dirs, table, fork_threshold)
+    if lines_b >= 2:
+        total += fork_bonus * (lines_b - 1)
+    lines_w = _threat_lines_at(grid, size, row, col, 2, dirs, table, fork_threshold)
+    if lines_w >= 2:
+        total -= fork_bonus * (lines_w - 1)
+    return total
+
+
+@njit(cache=True)
+def evaluate_delta_grid(
+    grid: NDArray,  # type: ignore[type-arg]
+    size: int,
+    row: int,
+    col: int,
+    dirs: NDArray,  # type: ignore[type-arg]
+    table: NDArray,  # type: ignore[type-arg]
+    fork_threshold: int,
+    fork_bonus: int,
+    open_three_bonus: int,
+) -> float:
+    """Black-positive evaluation delta caused by the stone at (row, col).
+
+    ``grid`` must already contain the placed stone.  Returns
+    ``E_after - E_before`` where ``E = evaluate_grid(..., stone=BLACK)``;
+    the stone is toggled off and back on internally, so the grid is
+    unchanged on return.
+
+    Locality argument (all terms are restricted to a bounded window):
+
+    * Directional + open-three terms are line-decomposable, and a stone
+      changes only the run structure of the 4 lines through its cell —
+      both states recompute those lines in full via
+      :func:`_line_local_terms`.
+    * The fork score of an empty cell *e* changes only if (a) its
+      eligibility flips — possible only within Chebyshev distance 2 of
+      the changed cell — or (b) one of its directional scans reads the
+      changed cell.  A scan reads at most 5 consecutive stones plus one
+      terminator per side (longer runs score 0 either way), so any
+      affected *e* lies on one of the 4 lines through (row, col) within
+      distance 6.
+    """
+    # Fork-dirty cell set — purely geometric, identical for both states.
+    dirty = np.empty((1 + 4 * 12 + 24, 2), dtype=np.int32)
+    seen = np.zeros((size, size), dtype=np.bool_)
+    nd = 0
+    seen[row, col] = True
+    dirty[nd, 0] = row
+    dirty[nd, 1] = col
+    nd += 1
+    for d in range(dirs.shape[0]):
+        dr = dirs[d, 0]
+        dc = dirs[d, 1]
+        for sign in (1, -1):
+            for k in range(1, 7):
+                r = row + dr * k * sign
+                c = col + dc * k * sign
+                if r < 0 or r >= size or c < 0 or c >= size:
+                    break
+                if not seen[r, c]:
+                    seen[r, c] = True
+                    dirty[nd, 0] = r
+                    dirty[nd, 1] = c
+                    nd += 1
+    for dr in range(-2, 3):
+        for dc in range(-2, 3):
+            r = row + dr
+            c = col + dc
+            if 0 <= r < size and 0 <= c < size and not seen[r, c]:
+                seen[r, c] = True
+                dirty[nd, 0] = r
+                dirty[nd, 1] = c
+                nd += 1
+
+    stone_int = grid[row, col]
+
+    after = 0.0
+    for d in range(dirs.shape[0]):
+        after += _line_local_terms(grid, size, row, col, dirs[d, 0], dirs[d, 1], table, open_three_bonus)
+    for i in range(nd):
+        r = dirty[i, 0]
+        c = dirty[i, 1]
+        if grid[r, c] == 0 and _near_any_stone(grid, size, r, c):
+            after += _fork_cell_terms(grid, size, r, c, dirs, table, fork_threshold, fork_bonus)
+
+    grid[row, col] = 0
+    before = 0.0
+    for d in range(dirs.shape[0]):
+        before += _line_local_terms(grid, size, row, col, dirs[d, 0], dirs[d, 1], table, open_three_bonus)
+    for i in range(nd):
+        r = dirty[i, 0]
+        c = dirty[i, 1]
+        if grid[r, c] == 0 and _near_any_stone(grid, size, r, c):
+            before += _fork_cell_terms(grid, size, r, c, dirs, table, fork_threshold, fork_bonus)
+    grid[row, col] = stone_int
+
+    return after - before
+
+
+# ---------------------------------------------------------------------------
 # Module-level constants exposed for callers
 # ---------------------------------------------------------------------------
 
@@ -446,12 +648,19 @@ def find_winning_move_grid(
     Scans the directional neighbours of each candidate cell in place.
     Mirrors the pure-Python ``_find_winning_move`` but uses the int8
     grid for speed.
+
+    Occupied candidate cells are skipped, so a candidate list computed
+    *before* additional stones were placed stays valid — any cell that
+    completes five for *stone* is adjacent to an existing *stone* stone
+    and therefore already in the stale list.
     """
     out = np.empty((1, 2), dtype=np.int32)
     n = candidates.shape[0]
     for i in range(n):
         r = candidates[i, 0]
         c = candidates[i, 1]
+        if grid[r, c] != 0:
+            continue
         for d in range(dirs.shape[0]):
             dr = dirs[d, 0]
             dc = dirs[d, 1]
@@ -532,6 +741,69 @@ def has_any_four_threat_grid(
         if grid[r, c] != 0:
             continue
         if is_four_threat(grid, size, r, c, stone, dirs):
+            return True
+    return False
+
+
+@njit(cache=True)
+def has_unblockable_four_grid(
+    grid: NDArray,  # type: ignore[type-arg]
+    size: int,
+    candidates: NDArray,  # type: ignore[type-arg]
+    stone: int,
+    dirs: NDArray,  # type: ignore[type-arg]
+) -> bool:
+    """Return True if *stone* has an unblockable four-threat cell.
+
+    Unblockable means a five-or-more completion, a live four (both ends
+    open), or a double-four (two dead-fours from the same cell) — the
+    same classification ``find_four_threats_grid`` encodes as
+    ``def_r == -1``, but aggregated per candidate and short-circuiting
+    on the first hit.  Used by the VCF defender-refutation check, which
+    only needs the boolean.
+
+    Occupied candidate cells are skipped, so stale candidate lists are
+    safe (see ``find_winning_move_grid``).
+    """
+    n = candidates.shape[0]
+    for i in range(n):
+        r = candidates[i, 0]
+        c = candidates[i, 1]
+        if grid[r, c] != 0:
+            continue
+        dead_fours = 0
+        for d in range(dirs.shape[0]):
+            dr = dirs[d, 0]
+            dc = dirs[d, 1]
+            count = 0
+            open_ends = 0
+
+            rr = r + dr
+            cc = c + dc
+            while 0 <= rr < size and 0 <= cc < size and grid[rr, cc] == stone:
+                count += 1
+                rr += dr
+                cc += dc
+            if 0 <= rr < size and 0 <= cc < size and grid[rr, cc] == 0:
+                open_ends += 1
+
+            rr = r - dr
+            cc = c - dc
+            while 0 <= rr < size and 0 <= cc < size and grid[rr, cc] == stone:
+                count += 1
+                rr -= dr
+                cc -= dc
+            if 0 <= rr < size and 0 <= cc < size and grid[rr, cc] == 0:
+                open_ends += 1
+
+            total = count + 1
+            if total >= 5:
+                return True
+            if total == 4 and open_ends == 2:
+                return True
+            if total == 4 and open_ends == 1:
+                dead_fours += 1
+        if dead_fours >= 2:
             return True
     return False
 
@@ -632,6 +904,9 @@ def find_four_threats_grid(
     Mirrors the per-direction scan + per-move aggregation logic in
     ``gomoku_brain.threat._find_four_threats``.  See that docstring for
     classification rules.
+
+    Occupied candidate cells are skipped, so stale candidate lists are
+    safe (see ``find_winning_move_grid``).
     """
     n = candidates.shape[0]
     # Per-cell aggregation.  A move can produce several (direction-specific)
@@ -646,6 +921,8 @@ def find_four_threats_grid(
     for i in range(n):
         r = candidates[i, 0]
         c = candidates[i, 1]
+        if grid[r, c] != 0:
+            continue
         for d in range(dirs.shape[0]):
             dr = dirs[d, 0]
             dc = dirs[d, 1]
@@ -685,9 +962,9 @@ def find_four_threats_grid(
 
             total = count + 1
 
-            if total == 5:
-                unblockable[r, c] = True
-            elif total == 4 and open_ends == 2:
+            # >= 5 (not == 5): freestyle counts overlines as wins, so a
+            # move completing six-or-more is just as unblockable.
+            if total >= 5 or (total == 4 and open_ends == 2):
                 unblockable[r, c] = True
             elif total == 4 and open_ends == 1:
                 if pos_end_r >= 0:
@@ -739,6 +1016,9 @@ def find_three_threats_grid(
     One entry per ``(candidate, direction)`` pair that forms a live three.
     The same candidate may appear multiple times for different directions,
     matching the pure-Python implementation.
+
+    Occupied candidate cells are skipped, so stale candidate lists are
+    safe (see ``find_winning_move_grid``).
     """
     n = candidates.shape[0]
     # Upper bound: n candidates × 4 directions.
@@ -748,6 +1028,8 @@ def find_three_threats_grid(
     for i in range(n):
         r = candidates[i, 0]
         c = candidates[i, 1]
+        if grid[r, c] != 0:
+            continue
         for d in range(dirs.shape[0]):
             dr = dirs[d, 0]
             dc = dirs[d, 1]

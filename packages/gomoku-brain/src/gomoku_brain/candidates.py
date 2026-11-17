@@ -31,9 +31,31 @@ def get_candidate_moves(board: Board, radius: int = _RADIUS) -> list[Move]:
     On an empty board, returns the center cell.
     Dispatches to bitboard JIT, numpy-grid JIT, or pure Python.
     """
-    if not board.occupied:
+    # ``occ_count`` is tracked incrementally on SearchState — checking it
+    # avoids materialising the lazy ``occupied`` set on every call.
+    occ_count = getattr(board, "occ_count", None)
+    if occ_count == 0 or (occ_count is None and not board.occupied):
         center = board.size // 2
         return [Move(row=center, col=center)]
+
+    from gomoku_brain.search_state import SearchState
+
+    if radius == 2 and isinstance(board, SearchState):
+        # SearchState at the default radius: reuse the zobrist-memoised
+        # scan context, and memoise the Move list alongside it — building
+        # a pydantic Move per candidate is the dominant cost of this
+        # function.  A copy is returned because callers slice / re-order.
+        from gomoku_brain.threat_detect import _scan_context
+
+        ctx = _scan_context(board)
+        if ctx is not None:
+            ply = board.ply
+            moves = board._ctx_moves[ply]
+            if moves is None:
+                _grid, _size, cand_arr, _dirs = ctx
+                moves = [Move(row=int(cand_arr[i, 0]), col=int(cand_arr[i, 1])) for i in range(cand_arr.shape[0])]
+                board._ctx_moves[ply] = moves
+            return list(moves)
 
     from gomoku_brain.bitboard import _should_use_bitboard
 

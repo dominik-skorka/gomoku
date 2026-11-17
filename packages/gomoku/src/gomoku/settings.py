@@ -107,6 +107,11 @@ class AlphaBetaBrainSettings(BaseModel):
     lmr: bool = Field(default=False)
     lmr_threshold: int = Field(default=3, ge=2, le=10)
     lmr_min_depth: int = Field(default=3, ge=2, le=10)
+    early_game_radius: int = Field(default=1, ge=1, le=2)
+    early_game_threshold: int = Field(default=6, ge=2, le=15)
+    early_game_max_candidates: int = Field(default=10, ge=5, le=20)
+    early_game_lmr_threshold: int = Field(default=2, ge=1, le=10)
+    early_game_futility_margin: int = Field(default=800, ge=200, le=1500)
     time_limit_s: float = Field(default=0.0, ge=0.0, le=600.0)
     opening_book: str = Field(default="", description="Path to an opening book JSON file.")
 
@@ -120,6 +125,15 @@ class ThreatBrainSettings(BaseModel):
     threat_search: str = Field(default="pns", pattern="^(pns|vct)$")
     pns_nodes: int = Field(default=10_000, ge=1_000, le=10_000_000)
     pns_time_s: float = Field(default=5.0, ge=0.1, le=60.0)
+    fallback: AlphaBetaBrainSettings | None = Field(
+        default=None,
+        description=(
+            "Tuning for the alpha-beta fallback used when no forced win is found "
+            "([brains.<alias>.fallback] table). None means a default-configured "
+            "fallback at the top-level depth; when set, its own depth field "
+            "(default 4) overrides the top-level depth."
+        ),
+    )
 
 
 class MCTSBrainSettings(BaseModel):
@@ -206,6 +220,18 @@ class ApiSettings(BaseModel):
             "Tighter limit for CPU-heavy endpoints (``/v1/move`` and "
             "``/v1/games/{id}/think``) — overrides the default for "
             "those routes only.  Set empty to fall back to the default."
+        ),
+    )
+    max_time_limit_s: float = Field(
+        default=10.0,
+        ge=0.0,
+        le=600.0,
+        description=(
+            "Upper bound, in seconds, on the wall-clock search budget of a single "
+            "API request.  Applied to ``time_limit_s`` of alpha-beta brains (an "
+            "unlimited ``0`` becomes this value), to the alpha-beta fallback of "
+            "the threat brain and to its ``pns_time_s``.  Brain overrides cannot "
+            "exceed it.  ``0`` disables the cap.  The CLI is unaffected."
         ),
     )
     logfire_send: bool = Field(

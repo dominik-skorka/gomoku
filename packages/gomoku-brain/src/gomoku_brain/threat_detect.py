@@ -18,6 +18,83 @@ from gomoku.models import Move, Stone
 
 from gomoku_brain.candidates import get_candidate_moves
 from gomoku_brain.directions import DIRECTIONS as _DIRECTIONS
+from gomoku_brain.search_state import SearchState
+
+# Shared JIT scan context: ``(grid, size, candidates, dirs)``.
+#
+# Building one costs an occupied-coords scan plus a candidate dilation —
+# the dominant fixed cost of every detection call.  Search loops that fire
+# several detection calls per node build the context once via
+# :func:`_scan_context` and pass it down.  ``grid`` is the live
+# ``SearchState`` mirror, so make/unmake mutations are visible to the
+# kernels without rebuilding the context.
+#
+# Staleness contract: the candidate snapshot stays valid for detecting
+# threats of a colour that has NOT placed a stone since the context was
+# built — any win / four / three cell for that colour is adjacent to one
+# of its (then-existing) stones and was therefore already a candidate,
+# and the kernels skip cells that have become occupied.  After a colour
+# moves, detection *for that colour* needs a fresh context (new threat
+# cells may neighbour only the new stone).
+_ScanCtx = tuple
+
+# Lazily-resolved (get_candidates_grid, dirs) pair: ``None`` = not yet
+# resolved, ``False`` = JIT disabled.  ``_scan_context`` runs ~20k times
+# per search; re-importing the kernels and re-checking the JIT setting on
+# every call used to cost more than the (memoised) kernel work itself.
+_SCAN_KIT: tuple | None | bool = None
+
+
+def _resolve_scan_kit() -> tuple | bool:
+    global _SCAN_KIT
+    from gomoku_brain.evaluate import _should_use_jit
+
+    if _should_use_jit():
+        from gomoku_brain.evaluate_jit import get_candidates_grid, get_dirs
+
+        _SCAN_KIT = (get_candidates_grid, get_dirs())
+    else:
+        _SCAN_KIT = False
+    return _SCAN_KIT
+
+
+def _scan_context(board: Board) -> _ScanCtx | None:
+    """Build the shared JIT scan context for *board*, or ``None`` when JIT is off.
+
+    For :class:`SearchState` the derived candidate array is memoised
+    per ply, keyed by the zobrist hash it was derived from — quiescence,
+    the VCF guard, and the VCF root each build a context for the same
+    position, so the dilation kernel runs once per (ply, position)
+    instead of once per call.  A make at the same ply changes the hash,
+    so a stale slot simply misses; ancestor slots survive the
+    make/unmake churn of child subtrees.
+    """
+    kit = _SCAN_KIT
+    if kit is None:
+        kit = _resolve_scan_kit()
+    if kit is False:
+        return None
+    get_candidates_grid, dirs = kit
+
+    if isinstance(board, SearchState):
+        ply = board.ply
+        cached = board._ctx_candidates[ply]
+        if cached is not None and board._ctx_zobrist[ply] == board.zobrist:
+            return board.grid, board.size, cached, dirs
+        candidates = get_candidates_grid(
+            board.grid, board.size, board._occ_arr[: board.occ_count], 2
+        )
+        board._ctx_zobrist[ply] = board.zobrist
+        board._ctx_candidates[ply] = candidates
+        board._ctx_moves[ply] = None
+        return board.grid, board.size, candidates, dirs
+
+    from gomoku_brain.grid_utils import board_to_grid, occupied_coords
+
+    occ = occupied_coords(board)
+    grid = board_to_grid(board)
+    candidates = get_candidates_grid(grid, board.size, occ, 2)
+    return grid, board.size, candidates, dirs
 
 
 def _line_cells(
@@ -67,9 +144,9 @@ def _find_four_threats_python(board: Board, stone: Stone) -> list[tuple[Move, Mo
             total = count + 1  # +1 for the placed stone itself
 
             defence: Move | None
-            if total == 5:
-                defence = None
-            elif total == 4 and open_ends == 2:
+            # >= 5 (not == 5): freestyle counts overlines as wins, so a
+            # move completing six-or-more is just as unblockable.
+            if total >= 5 or (total == 4 and open_ends == 2):
                 defence = None
             elif total == 4 and open_ends == 1 and end_cells:
                 dr2, dc2 = end_cells[0]
@@ -84,24 +161,24 @@ def _find_four_threats_python(board: Board, stone: Stone) -> list[tuple[Move, Mo
 
     threats: list[tuple[Move, Move | None]] = []
     for move, defences in by_move.values():
-        if any(d is None for d in defences):
-            threats.append((move, None))
-        elif len(defences) >= 2:
+        if any(d is None for d in defences) or len(defences) >= 2:
             threats.append((move, None))
         else:
             threats.append((move, defences[0]))
     return threats
 
 
-def _find_four_threats(board: Board, stone: Stone) -> list[tuple[Move, Move | None]]:
+def _find_four_threats(
+    board: Board, stone: Stone, ctx: _ScanCtx | None = None
+) -> list[tuple[Move, Move | None]]:
     """Find all moves that create a four-in-a-row for ``stone``.
 
     Returns a list of ``(attack_move, defence_move | None)`` sorted by
     *strength*: unblockable fours (``defence is None`` — live-fours,
-    double-fours, or completed fives) come first, blockable dead-fours
-    after.  Callers that iterate (VCF attacker loop, counter-threat
-    scan) therefore hit wins and refutations earliest, maximising
-    VCF / alpha-beta early termination.
+    double-fours, or completed fives-and-longer) come first, blockable
+    dead-fours after.  Callers that iterate (VCF attacker loop,
+    counter-threat scan) therefore hit wins and refutations earliest,
+    maximising VCF / alpha-beta early termination.
 
     Detects:
     - Straight fours: placing a stone extends three-in-a-row to four.
@@ -113,22 +190,18 @@ def _find_four_threats(board: Board, stone: Stone) -> list[tuple[Move, Move | No
     ``(r, c)`` and never reads the centre, so it is invariant to whether
     the stone has actually been placed there — we save the per-candidate
     board copy.
+
+    ``ctx`` is an optional precomputed :func:`_scan_context` — pass it
+    when several detection calls share one position to skip the repeated
+    occupied/candidate derivation.
     """
-    from gomoku_brain.evaluate import _should_use_jit
+    if ctx is None:
+        ctx = _scan_context(board)
+    if ctx is not None:
+        from gomoku_brain.evaluate_jit import find_four_threats_grid
 
-    if _should_use_jit():
-        from gomoku_brain.evaluate_jit import find_four_threats_grid, get_dirs
-        from gomoku_brain.grid_utils import board_to_grid, occupied_coords
-
-        occ = occupied_coords(board)
-        if occ.shape[0] == 0:
-            return []
-
-        from gomoku_brain.evaluate_jit import get_candidates_grid
-
-        grid = board_to_grid(board)
-        candidates = get_candidates_grid(grid, board.size, occ, 2)
-        result = find_four_threats_grid(grid, board.size, candidates, int(stone), get_dirs())
+        grid, size, candidates, dirs = ctx
+        result = find_four_threats_grid(grid, size, candidates, int(stone), dirs)
         threats: list[tuple[Move, Move | None]] = []
         for i in range(result.shape[0]):
             atk = Move(row=int(result[i, 0]), col=int(result[i, 1]))
@@ -161,7 +234,9 @@ def _find_three_threats_python(board: Board, stone: Stone) -> list[tuple[Move, l
     return threats
 
 
-def _find_three_threats(board: Board, stone: Stone) -> list[tuple[Move, list[Move]]]:
+def _find_three_threats(
+    board: Board, stone: Stone, ctx: _ScanCtx | None = None
+) -> list[tuple[Move, list[Move]]]:
     """Find moves that create a *live* three (open at both ends).
 
     Returns ``(attack_move, defence_moves)`` — ``defence_moves`` are the
@@ -174,20 +249,16 @@ def _find_three_threats(board: Board, stone: Stone) -> list[tuple[Move, list[Mov
     emit one entry per ``(candidate, direction)`` pair, so the number of
     entries per attack cell is the fork degree and provides a natural
     strength proxy for the VCT attacker loop.
+
+    ``ctx`` is an optional precomputed :func:`_scan_context`.
     """
-    from gomoku_brain.evaluate import _should_use_jit
+    if ctx is None:
+        ctx = _scan_context(board)
+    if ctx is not None:
+        from gomoku_brain.evaluate_jit import find_three_threats_grid
 
-    if _should_use_jit():
-        from gomoku_brain.evaluate_jit import find_three_threats_grid, get_candidates_grid, get_dirs
-        from gomoku_brain.grid_utils import board_to_grid, occupied_coords
-
-        occ = occupied_coords(board)
-        if occ.shape[0] == 0:
-            return []
-
-        grid = board_to_grid(board)
-        candidates = get_candidates_grid(grid, board.size, occ, 2)
-        result = find_three_threats_grid(grid, board.size, candidates, int(stone), get_dirs())
+        grid, size, candidates, dirs = ctx
+        result = find_three_threats_grid(grid, size, candidates, int(stone), dirs)
         threats: list[tuple[Move, list[Move]]] = []
         for i in range(result.shape[0]):
             atk = Move(row=int(result[i, 0]), col=int(result[i, 1]))
@@ -209,7 +280,7 @@ def _find_three_threats(board: Board, stone: Stone) -> list[tuple[Move, list[Mov
     return threats
 
 
-def _find_winning_move(board: Board, stone: Stone) -> Move | None:
+def _find_winning_move(board: Board, stone: Stone, ctx: _ScanCtx | None = None) -> Move | None:
     """Return a move that immediately completes five-in-a-row, or ``None``.
 
     Scans neighbours of each candidate cell in place: no board copies, no
@@ -217,19 +288,16 @@ def _find_winning_move(board: Board, stone: Stone) -> Move | None:
     (``count >= 5`` wins).  Dispatches to a Numba kernel when JIT is on
     — critical for SearchState-based callers where ``board.at`` is a
     bitboard lookup.
+
+    ``ctx`` is an optional precomputed :func:`_scan_context`.
     """
-    from gomoku_brain.evaluate import _should_use_jit
+    if ctx is None:
+        ctx = _scan_context(board)
+    if ctx is not None:
+        from gomoku_brain.evaluate_jit import find_winning_move_grid
 
-    if _should_use_jit():
-        from gomoku_brain.evaluate_jit import find_winning_move_grid, get_candidates_grid, get_dirs
-        from gomoku_brain.grid_utils import board_to_grid, occupied_coords
-
-        occ = occupied_coords(board)
-        if occ.shape[0] == 0:
-            return None
-        grid = board_to_grid(board)
-        candidates = get_candidates_grid(grid, board.size, occ, 2)
-        result = find_winning_move_grid(grid, board.size, candidates, int(stone), get_dirs())
+        grid, size, candidates, dirs = ctx
+        result = find_winning_move_grid(grid, size, candidates, int(stone), dirs)
         if result.shape[0] == 0:
             return None
         return Move(row=int(result[0, 0]), col=int(result[0, 1]))
@@ -254,57 +322,58 @@ def _find_winning_move(board: Board, stone: Stone) -> Move | None:
     return None
 
 
-def _has_any_four_threat(board: Board, stone: Stone) -> bool:
+def _has_any_four_threat(board: Board, stone: Stone, ctx: _ScanCtx | None = None) -> bool:
     """Return True if *stone* has any four-threat candidate.
 
     Short-circuits on the first hit — cheaper than enumerating every
     threat via :func:`_find_four_threats`.  Used by the threat brain's
     early-reject heuristic for opponent-VCT checks.
     """
-    from gomoku_brain.evaluate import _should_use_jit
+    if ctx is None:
+        ctx = _scan_context(board)
+    if ctx is not None:
+        from gomoku_brain.evaluate_jit import has_any_four_threat_grid
 
-    if _should_use_jit():
-        from gomoku_brain.evaluate_jit import (
-            get_candidates_grid,
-            get_dirs,
-            has_any_four_threat_grid,
-        )
-        from gomoku_brain.grid_utils import board_to_grid, occupied_coords
-
-        occ = occupied_coords(board)
-        if occ.shape[0] == 0:
-            return False
-        grid = board_to_grid(board)
-        candidates = get_candidates_grid(grid, board.size, occ, 2)
-        return bool(has_any_four_threat_grid(grid, board.size, candidates, int(stone), get_dirs()))
+        grid, size, candidates, dirs = ctx
+        return bool(has_any_four_threat_grid(grid, size, candidates, int(stone), dirs))
 
     return bool(_find_four_threats_python(board, stone))
 
 
-def _count_distinct_three_cells(board: Board, stone: Stone, cap: int) -> int:
+def _has_unblockable_four(board: Board, stone: Stone, ctx: _ScanCtx | None = None) -> bool:
+    """Return True if *stone* has an unblockable four-threat.
+
+    Unblockable = five-or-more completion, live four, or double-four —
+    the threats :func:`_find_four_threats` reports with ``defence is
+    None``, but detected with a short-circuiting kernel instead of a
+    full enumeration.  Used by the VCF defender-refutation check.
+    """
+    if ctx is None:
+        ctx = _scan_context(board)
+    if ctx is not None:
+        from gomoku_brain.evaluate_jit import has_unblockable_four_grid
+
+        grid, size, candidates, dirs = ctx
+        return bool(has_unblockable_four_grid(grid, size, candidates, int(stone), dirs))
+
+    return any(d is None for _, d in _find_four_threats_python(board, stone))
+
+
+def _count_distinct_three_cells(
+    board: Board, stone: Stone, cap: int, ctx: _ScanCtx | None = None
+) -> int:
     """Count distinct cells that create a live-three for *stone*, up to *cap*.
 
     Stops counting once the running total reaches ``cap`` — callers
     typically just need the answer to ``>= cap?``.
     """
-    from gomoku_brain.evaluate import _should_use_jit
+    if ctx is None:
+        ctx = _scan_context(board)
+    if ctx is not None:
+        from gomoku_brain.evaluate_jit import count_distinct_three_cells_grid
 
-    if _should_use_jit():
-        from gomoku_brain.evaluate_jit import (
-            count_distinct_three_cells_grid,
-            get_candidates_grid,
-            get_dirs,
-        )
-        from gomoku_brain.grid_utils import board_to_grid, occupied_coords
-
-        occ = occupied_coords(board)
-        if occ.shape[0] == 0:
-            return 0
-        grid = board_to_grid(board)
-        candidates = get_candidates_grid(grid, board.size, occ, 2)
-        return int(
-            count_distinct_three_cells_grid(grid, board.size, candidates, int(stone), get_dirs(), cap)
-        )
+        grid, size, candidates, dirs = ctx
+        return int(count_distinct_three_cells_grid(grid, size, candidates, int(stone), dirs, cap))
 
     distinct: set[tuple[int, int]] = set()
     for atk, _ in _find_three_threats_python(board, stone):

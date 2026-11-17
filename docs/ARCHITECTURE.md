@@ -242,40 +242,31 @@ See [THREAT_BRAIN.md](../packages/gomoku-brain/docs/THREAT_BRAIN.md),
 [MCTS_BRAIN.md](../packages/gomoku-brain/docs/MCTS_BRAIN.md) for
 in-depth documentation of the three heaviest brains.
 
-### Module split & import cycles
+### Module split & import graph
 
 `alphabeta.py` and `threat.py` were each split along behavioural seams
-(detection helpers, search core, root pre-check, quiescence — see the
-respective brain docs).  Two of the splits introduce a *load-order
-cycle*: `threat.py` defines the detection helpers that
-`threat_search.py` imports, but `threat.py` also re-exports the search
-functions back out for backward compatibility.  Same shape for
-`alphabeta.py` ⇄ `alphabeta_quiescence.py`.
+(detection helpers, search core, root pre-check, quiescence, move
+ordering).  Module-scope imports inside `gomoku_brain` form a **DAG**;
+there are no load-order tricks:
 
-The cycle is broken by **module-load order**:
+```
+threat_detect ◄── threat_search ◄── alphabeta_root ◄── alphabeta ◄── threat
+alphabeta_ordering ◄── alphabeta_quiescence ◄──────────┘              (ThreatBrain)
+alphabeta_ordering ◄── alphabeta_root
+```
 
-1. `threat.py` defines `_find_four_threats`, `_find_three_threats`,
-   `_find_winning_move` near the top of the file.
-2. *After* those definitions, `threat.py` does `from
-   gomoku_brain.threat_search import _vcf, _vct, ...`.
-3. When Python now starts loading `threat_search.py`, its top-level
-   `from gomoku_brain.threat import _find_four_threats, ...` resolves
-   against the *partially-loaded* `threat` module — the helper names
-   are already present, so the import succeeds.
-4. `threat_search.py` finishes loading; control returns to `threat.py`,
-   which can then declare `ThreatBrain`.
+- `threat_detect` and `alphabeta_ordering` are leaves (detection
+  primitives, move classification, `_scored_moves`).
+- `threat.py` is the top of the graph: it re-exports the detection and
+  search helpers for backward compatibility (`test_module_split.py` and
+  `test_threat_search_split.py` lock in the `is`-identity of those
+  re-exports).
+- Imports inside function bodies are reserved for optional / heavy
+  dependencies (numba kernels, `grid_utils`), never to defuse a cycle.
 
-The same pattern wires `alphabeta.py` ⇄ `alphabeta_quiescence.py`,
-where `quiesce()` lazy-imports `_check_win` and `_split_threats` from
-`alphabeta` *inside the function body* (not at module scope) for the
-same reason.
-
-If you split another module along similar lines, keep this invariant:
-**the back-edge of the cycle must come after the symbols it reaches
-back at**.  The re-export tests (`test_module_split.py`,
-`test_threat_search_split.py`) lock in the `is`-identity of the
-re-exports; they will fail loudly if a future refactor accidentally
-shadows a symbol with a copy.
+`tests/test_import_graph.py` fails if a module-scope import introduces a
+cycle.  When splitting another module, move shared helpers *down* into a
+leaf module rather than importing back up.
 
 ---
 

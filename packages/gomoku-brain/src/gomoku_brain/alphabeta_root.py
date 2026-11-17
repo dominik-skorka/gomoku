@@ -23,8 +23,11 @@ import logfire
 from gomoku.board import Board
 from gomoku.models import Move, Stone
 
+from gomoku_brain.alphabeta_ordering import _scored_moves
 from gomoku_brain.candidates import get_candidate_moves
-from gomoku_brain.evaluate import evaluate_board
+from gomoku_brain.search_state import SearchState
+from gomoku_brain.threat_detect import _find_winning_move
+from gomoku_brain.threat_search import _vcf, classify_vcf_breakers
 
 
 def root_vcf(board: Board, stone: Stone, vcf_depth: int) -> Move | None:
@@ -47,8 +50,6 @@ def root_vcf(board: Board, stone: Stone, vcf_depth: int) -> Move | None:
     """
     from gomoku.diagnostics import current_move_diagnostics
 
-    from gomoku_brain.threat import _find_winning_move, _vcf, classify_vcf_breakers
-
     diag = current_move_diagnostics()
 
     # 0) Instant win — check before the expensive VCF search.
@@ -60,7 +61,7 @@ def root_vcf(board: Board, stone: Stone, vcf_depth: int) -> Move | None:
         return instant
 
     # 1) Do we have a forced win?
-    our_vcf = _vcf(board, stone, vcf_depth, is_attacker=True)
+    our_vcf = _vcf(board, stone, vcf_depth)
     if our_vcf is not None:
         logfire.info("AlphaBeta VCF win: {move}", move=str(our_vcf))
         if diag is not None:
@@ -70,7 +71,7 @@ def root_vcf(board: Board, stone: Stone, vcf_depth: int) -> Move | None:
 
     # 2) Does the opponent have a forced win we must disrupt?
     opp = stone.opponent()
-    opp_vcf = _vcf(board, opp, vcf_depth, is_attacker=True)
+    opp_vcf = _vcf(board, opp, vcf_depth)
     if opp_vcf is None:
         if diag is not None:
             diag.notes.append("No VCF for either side")
@@ -116,13 +117,7 @@ def root_vcf(board: Board, stone: Stone, vcf_depth: int) -> Move | None:
         logfire.info("Single VCF breaker: {move}", move=str(effective[0]))
         return effective[0]
 
-    # Multiple breakers — pick via evaluation.
-    best_score = float("-inf")
-    best_move = effective[0]
-    for move in effective:
-        trial = board.place_stone(move, stone)
-        score = evaluate_board(trial, stone)
-        if score > best_score:
-            best_score = score
-            best_move = move
-    return best_move
+    # Multiple breakers — pick via evaluation (make/unmake on one state
+    # instead of a Pydantic board copy per breaker).
+    state = SearchState.from_board(board, stone)
+    return _scored_moves(state, effective, stone)[0][1]

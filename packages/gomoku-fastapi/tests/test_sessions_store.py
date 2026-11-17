@@ -94,3 +94,57 @@ class TestDelete:
     def test_returns_false_on_missing(self):
         store = SessionStore()
         assert store.delete("never-existed") is False
+
+
+class TestTempDirCleanup:
+    """Per-session recording / diagnostics dirs must not outlive the session."""
+
+    def _session_with_dirs(self, store, tmp_path):
+        rec = tmp_path / "rec"
+        diag = tmp_path / "diag"
+        rec.mkdir()
+        diag.mkdir()
+        (rec / "game.json").write_text("{}")
+        session = store.create(
+            _runner(), black_brain=None, white_brain=None, record_dir=str(rec), diag_dir=str(diag)
+        )
+        return session, rec, diag
+
+    def test_delete_removes_dirs(self, tmp_path):
+        store = SessionStore()
+        session, rec, diag = self._session_with_dirs(store, tmp_path)
+        assert store.delete(session.id) is True
+        assert not rec.exists()
+        assert not diag.exists()
+
+    def test_expired_get_removes_dirs(self, tmp_path):
+        store = SessionStore(ttl_seconds=1)
+        session, rec, diag = self._session_with_dirs(store, tmp_path)
+        session.last_accessed_at = time.monotonic() - 10
+        with pytest.raises(SessionNotFoundError):
+            store.get(session.id)
+        assert not rec.exists()
+        assert not diag.exists()
+
+    def test_create_sweep_removes_dirs_of_stale_sessions(self, tmp_path):
+        store = SessionStore(ttl_seconds=1)
+        session, rec, diag = self._session_with_dirs(store, tmp_path)
+        session.last_accessed_at = time.monotonic() - 10
+        store.create(_runner(), black_brain=None, white_brain=None)
+        assert not rec.exists()
+        assert not diag.exists()
+
+    def test_clear_removes_dirs(self, tmp_path):
+        store = SessionStore()
+        _, rec, diag = self._session_with_dirs(store, tmp_path)
+        store.clear()
+        assert len(store) == 0
+        assert not rec.exists()
+        assert not diag.exists()
+
+    def test_missing_dir_is_ignored(self, tmp_path):
+        store = SessionStore()
+        session = store.create(
+            _runner(), black_brain=None, white_brain=None, record_dir=str(tmp_path / "gone")
+        )
+        assert store.delete(session.id) is True

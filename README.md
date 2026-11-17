@@ -133,6 +133,27 @@ Runs a configurable brain on the early-game search tree and saves an
 opening book JSON file.  See
 [docs/OPENING_BOOK.md](docs/OPENING_BOOK.md#generating-a-book).
 
+### `match` — Measure which engine is stronger
+
+```bash
+# A git revision against the working tree
+uv run gomoku match --a brain=threat,rev=master --b brain=threat --games 40 --jobs 3
+
+# Two settings of the same brain
+uv run gomoku match --a brain=threat --b brain=threat,config=other.toml --games 40
+```
+
+Plays engine A against engine B over generated openings, each opening
+twice with colours swapped, and reports wins, score with a 95% interval
+(computed per opening pair, which cancels colour bias), the implied Elo
+difference and think time per move.  An engine is
+`brain=NAME[,rev=GIT_REV][,config=PATH]`: without `rev` it runs the
+working tree, with `rev` that commit is exported to a per-commit cache
+under the system temp directory (the first start of a revision compiles
+its kernels).  Openings where either colour already has a forced win are
+skipped unless `--any-openings` is given.  `--out games.json` saves every
+game.  Think times are only comparable at `--jobs 1`.
+
 ---
 
 ## Configuration
