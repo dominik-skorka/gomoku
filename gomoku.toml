@@ -198,8 +198,10 @@ time_limit_s = 120.0
 type = "threat"
 
 # Alpha-beta fallback depth (used when threat search finds no forced win).
+# Only used when there is no [brains.threat.fallback] table below; the
+# table sets its own depth.
 # Default: 4 | Valid range: 1–10
-depth = 4
+depth = 5
 
 # VCF (Victory by Continuous Fours) search depth.
 # Only attacker plays four-threats; defender forced to block single gap.
@@ -226,12 +228,27 @@ pns_nodes = 10_000
 # Default: 5.0 | Valid range: 0.1–60.0
 pns_time_s = 5.0
 
-# Optional [brains.threat.fallback] table: alpha-beta tuning for the
-# fallback used when no forced win is found (same keys as
-# [brains.alphabeta]; its depth overrides the top-level depth).  Left
-# unset on purpose: in a 300-game match a fallback tuned like
-# [brains.alphabeta] scored 150-150 against the untuned one while
-# thinking about 43% longer per move.
+# Alpha-beta tuning for the fallback used when no forced win is found
+# (same keys as [brains.alphabeta]; keys left out take their defaults,
+# and depth here overrides the top-level depth).
+#
+# Measured with `gomoku match` (300 games each, both colours per opening):
+# - A depth-5 search that ranks moves by cheap pattern priors at every
+#   node and keeps 12 candidates per node costs the same time as the
+#   default depth-4 search, and beat it 183-117 (+78 Elo, 95% interval
+#   +43 to +114).
+# - A fallback tuned like [brains.alphabeta] (VCF probes, LMR, null-move)
+#   scored 150-150 against the default while thinking ~43% longer.
+[brains.threat.fallback]
+# Search depth in plies.
+depth = 5
+# Nodes at least this deep order moves by evaluating each one; shallower
+# nodes use pattern priors.  11 means priors everywhere at this depth.
+# Default: 3 | Valid range: 1–11
+eval_ordering_depth = 11
+# Candidate moves kept per node after the early game.
+# Default: 20 | Valid range: 5–60
+max_candidates = 12
 
 # -----------------------------------------------------------------------------
 # Brain: mcts — Monte Carlo Tree Search with PUCT formula, heuristic priors,
