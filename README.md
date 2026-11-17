@@ -144,8 +144,9 @@ uv run gomoku match --a brain=threat --b brain=threat,config=other.toml --games 
 ```
 
 Plays engine A against engine B over generated openings, each opening
-twice with colours swapped, and reports wins, score with a 95% interval,
-the implied Elo difference and think time per move.  An engine is
+twice with colours swapped, and reports wins, score with a 95% interval
+(computed per opening pair, which cancels colour bias), the implied Elo
+difference and think time per move.  An engine is
 `brain=NAME[,rev=GIT_REV][,config=PATH]`: without `rev` it runs the
 working tree, with `rev` that commit is exported to a per-commit cache
 under the system temp directory (the first start of a revision compiles

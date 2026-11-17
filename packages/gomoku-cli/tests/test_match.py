@@ -64,10 +64,18 @@ class TestOpenings:
             generate_openings(1, seed=1, stones=10, spread=1)
 
 
-def _game(winner: str | None, a_is_black: bool = True) -> GameRecord:
+def _game(winner: str | None, a_is_black: bool = True, opening: int = 0) -> GameRecord:
     return GameRecord(
-        opening=0, a_is_black=a_is_black, winner=winner, reason="test", moves=[], a_ms=[10.0], b_ms=[30.0]
+        opening=opening, a_is_black=a_is_black, winner=winner, reason="test", moves=[], a_ms=[10.0], b_ms=[30.0]
     )
+
+
+def _pairs(*outcomes: tuple[str | None, str | None]) -> list[GameRecord]:
+    """One opening per outcome tuple: (result with A as black, result with A as white)."""
+    records = []
+    for i, (as_black, as_white) in enumerate(outcomes):
+        records += [_game(as_black, True, i), _game(as_white, False, i)]
+    return records
 
 
 class TestSummary:
@@ -87,6 +95,23 @@ class TestSummary:
         assert s.score == 0.5
         assert s.elo == pytest.approx(0.0)
         assert s.los == pytest.approx(0.5)
+
+    def test_interval_is_per_opening_pair(self):
+        """Split pairs are pure colour noise; only swept pairs move the needle."""
+        s = summarize(_pairs(*[("a", "b")] * 40, *[("a", "a")] * 10))
+        assert s.pairs == 50
+        assert s.score == pytest.approx(0.6)
+        # As 100 independent games the half-width would be about 0.096;
+        # with 40 of 50 pairs tied the paired interval is much tighter.
+        assert s.score_high - s.score_low < 0.15
+        assert s.score_low > 0.5
+        assert s.los is not None and s.los > 0.99
+
+    def test_uniform_small_sample_is_not_overconfident(self):
+        """Two split pairs alone have zero variance; the interval must stay wide."""
+        s = summarize(_pairs(("a", "b"), ("b", "a")))
+        assert s.score == 0.5
+        assert s.score_low < 0.2 and s.score_high > 0.8
 
     def test_whitewash_has_no_finite_elo(self):
         s = summarize([_game("a")] * 6)
