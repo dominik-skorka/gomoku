@@ -25,7 +25,7 @@ from gomoku_brain.alphabeta_ordering import _scored_moves
 from gomoku_brain.brain_base import brain_session
 from gomoku_brain.candidates import get_candidate_moves
 from gomoku_brain.evaluate import find_fork_cells
-from gomoku_brain.pns import pns_threat_search
+from gomoku_brain.pns import PNSStatus, pns_threat_search, pns_threat_status
 from gomoku_brain.search_state import SearchState
 from gomoku_brain.threat_detect import (
     _count_distinct_three_cells,
@@ -326,10 +326,16 @@ class ThreatBrain:
         """Pick the best move when the opponent has a VCT/PNS forced win.
 
         Order candidates by static evaluation (descending), then probe in
-        order until we find the first move that breaks the opponent's
-        threat sequence.  Because the candidate list is eval-sorted, the
-        first breaker is also the positionally strongest, so a single
-        pass replaces the old "collect-all-then-score" loop.
+        order until we find the first move after which the opponent
+        provably has no forced win.  Because the candidate list is
+        eval-sorted, that breaker is also the positionally strongest.
+
+        A probe that runs out of budget proves nothing, so such a
+        candidate is only remembered: the search keeps looking for a
+        proven breaker and falls back to the best unproven candidate
+        when the time budget ends without one.  (Treating "budget ran
+        out" as "safe" used to pick an unproven move in over half of the
+        positions that reach this search.)
 
         A global wall-clock cap (``self.pns_time_s``) prevents the
         worst-case blow-up that used to be possible when every one of
@@ -350,6 +356,7 @@ class ThreatBrain:
 
         deadline = time.monotonic() + self.pns_time_s
         probed = 0
+        unproven: tuple[float, Move] | None = None
         for score, move in scored:
             if time.monotonic() > deadline:
                 logfire.info(
@@ -367,13 +374,17 @@ class ThreatBrain:
                 # Expensive threat probe — bounded by remaining global budget.
                 if self.threat_search == "pns":
                     remaining = max(_MIN_PROBE_TIME_S, deadline - time.monotonic())
-                    opp_result = pns_threat_search(
+                    status, _ = pns_threat_status(
                         state,
                         opp,
                         max_nodes=int(self.pns_nodes * _OPP_PNS_NODE_FRACTION),
                         max_time_s=min(self.pns_time_s * _OPP_PNS_TIME_FRACTION, remaining),
                     )
-                    if opp_result is not None:
+                    if status is PNSStatus.PROVED:
+                        continue
+                    if status is PNSStatus.UNKNOWN:
+                        if unproven is None:
+                            unproven = (score, move)
                         continue
                 else:
                     if (
@@ -396,6 +407,15 @@ class ThreatBrain:
                 return move
             finally:
                 state.unmake()
+
+        if unproven is not None:
+            score, move = unproven
+            logfire.info(
+                "VCT-aware search: no proven breaker, best unproven {move} (eval={score:.0f})",
+                move=str(move),
+                score=score,
+            )
+            return move
 
         logfire.info(
             "No VCT breaker found, blocking opponent threat at: {move}",

@@ -280,3 +280,36 @@ class TestPnsTranspositions:
         ply, zobrist = state.ply, state.zobrist
         pns_threat_search(state, Stone.BLACK, max_nodes=2_000)
         assert (state.ply, state.zobrist) == (ply, zobrist)
+
+
+# ---------------------------------------------------------------------------
+# Search status: proved / disproved / budget exhausted
+# ---------------------------------------------------------------------------
+
+
+class TestPnsStatus:
+    def test_proved_carries_the_winning_move(self):
+        from gomoku_brain.pns import PNSStatus, pns_threat_status
+
+        b = _place(Board(size=15), [(4, 2), (4, 3), (4, 4), (4, 5)], Stone.BLACK)
+        b = _place(b, [(0, 0), (0, 1), (0, 2)], Stone.WHITE)
+        status, move = pns_threat_status(b, Stone.BLACK, max_nodes=1_000)
+        assert status is PNSStatus.PROVED
+        assert move in (Move(row=4, col=1), Move(row=4, col=6))
+
+    def test_no_threats_is_disproved(self):
+        from gomoku_brain.pns import PNSStatus, pns_threat_status
+
+        b = _place(Board(size=15), [(7, 7)], Stone.BLACK)
+        b = _place(b, [(3, 3)], Stone.WHITE)
+        assert pns_threat_status(b, Stone.BLACK, max_nodes=1_000) == (PNSStatus.DISPROVED, None)
+
+    def test_exhausted_budget_is_unknown_not_disproved(self):
+        """The same position: a tiny budget proves nothing, a full one proves the win."""
+        from gomoku_brain.pns import PNSStatus, pns_threat_status
+
+        board = TestPnsTranspositions._midgame()
+        assert pns_threat_status(board, Stone.BLACK, max_nodes=20) == (PNSStatus.UNKNOWN, None)
+        assert pns_threat_search(board, Stone.BLACK, max_nodes=20) is None
+        status, _ = pns_threat_status(board, Stone.BLACK, max_nodes=10_000, max_time_s=60.0)
+        assert status is PNSStatus.PROVED
