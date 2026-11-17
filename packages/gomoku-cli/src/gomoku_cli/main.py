@@ -447,8 +447,8 @@ def generate_book(
 @click.option("--jobs", type=click.IntRange(1, 64), default=1, show_default=True, help="Games played in parallel.")
 @click.option("--board-size", type=click.IntRange(5, 25), default=15, show_default=True)
 @click.option("--max-moves", type=click.IntRange(10, 625), default=150, show_default=True, help="Draw after this many.")
-@click.option("--opening-stones", type=click.IntRange(0, 12), default=6, show_default=True)
-@click.option("--opening-spread", type=click.IntRange(1, 6), default=2, show_default=True, help="Radius around centre.")
+@click.option("--opening-stones", type=click.IntRange(0, 12), default=7, show_default=True)
+@click.option("--opening-spread", type=click.IntRange(1, 6), default=3, show_default=True, help="Radius around centre.")
 @click.option(
     "--quiet-openings/--any-openings",
     default=True,

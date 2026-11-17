@@ -90,7 +90,7 @@ class EngineSpec:
 
 
 def generate_openings(
-    count: int, seed: int, size: int = 15, stones: int = 6, spread: int = 2, quiet: bool = True
+    count: int, seed: int, size: int = 15, stones: int = 7, spread: int = 3, quiet: bool = True
 ) -> list[list[tuple[int, int]]]:
     """Return *count* distinct openings of *stones* alternating moves.
 
@@ -99,6 +99,11 @@ def generate_openings(
     but an opening that is tactically decided teaches nothing: both
     engines win it as the favoured colour.  With *quiet* set, openings
     in which either colour has a forced win by threats are rejected.
+
+    The defaults (7 stones, so White moves first after the opening, drawn
+    from a 7x7 area) were picked by same-engine self-play: over 40 games
+    the threat brain won 19 as Black and 21 as White, against 26 and 14
+    with 6 stones from a 5x5 area.
     """
     rng = random.Random(seed)
     centre = size // 2
@@ -340,8 +345,8 @@ def run_match(
     max_moves: int = 150,
     jobs: int = 1,
     move_timeout_s: float = 600.0,
-    opening_stones: int = 6,
-    opening_spread: int = 2,
+    opening_stones: int = 7,
+    opening_spread: int = 3,
     quiet_openings: bool = True,
     on_game: Callable[[GameRecord], None] | None = None,
 ) -> list[GameRecord]:

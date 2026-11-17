@@ -107,8 +107,8 @@ class TestMatchEndToEnd:
         assert [r.opening for r in records] == [0, 0, 1, 1]
         for r in records:
             assert r.winner in {"a", "b", None}
-            assert len(r.moves) == len(set(r.moves)) >= 6
-            assert len(r.a_ms) + len(r.b_ms) == len(r.moves) - 6
+            assert len(r.moves) == len(set(r.moves)) >= 7
+            assert len(r.a_ms) + len(r.b_ms) == len(r.moves) - 7
 
     def test_cli_writes_report_and_json(self, tmp_path: Path):
         out = tmp_path / "games.json"
