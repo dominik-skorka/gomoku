@@ -10,7 +10,8 @@ of metadata DTOs (``BrainInfo``).
 
 from __future__ import annotations
 
-from typing import Any
+from datetime import date
+from typing import Any, Literal
 
 from gomoku.board import Board
 from gomoku.diagnostics import MoveDiagnostics
@@ -287,3 +288,23 @@ __all__ = [
     "ThinkResponse",
 ]
 
+
+class VersionInfo(BaseModel):
+    """One API version and its lifecycle status — an entry of ``GET /versions``."""
+
+    version: str = Field(description="Version name, which is also its URL prefix.", examples=["v1"])
+    path: str = Field(description="URL prefix of every endpoint in this version.", examples=["/v1"])
+    status: Literal["stable", "deprecated"] = Field(
+        description="``deprecated`` versions still work but will be removed after their sunset date."
+    )
+    released: date = Field(description="Date the version was first served.")
+    deprecated: date | None = Field(default=None, description="Date the version was deprecated, if it is.")
+    sunset: date | None = Field(default=None, description="Date after which the version may be removed.")
+    successor: str | None = Field(default=None, description="Version that replaces this one, if any.")
+
+
+class VersionsResponse(BaseModel):
+    """Response payload for ``GET /versions``."""
+
+    latest: str = Field(description="Newest version; new clients should use it.", examples=["v1"])
+    versions: list[VersionInfo] = Field(description="Every served version, oldest first.")

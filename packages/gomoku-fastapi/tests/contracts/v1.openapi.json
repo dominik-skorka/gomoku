@@ -1,0 +1,1090 @@
+{
+ "paths": {
+  "/v1/analyze": {
+   "post": {
+    "requestBody": {
+     "content": {
+      "multipart/form-data": {
+       "schema": {
+        "$ref": "#/components/schemas/Body_post_analyze_v1_analyze_post"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": true,
+         "type": "object"
+        }
+       }
+      }
+     },
+     "400": {},
+     "413": {},
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/v1/brains": {
+   "get": {
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/BrainsResponse"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/v1/evaluate": {
+   "post": {
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/EvaluateRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/EvaluateResponse"
+        }
+       }
+      }
+     },
+     "422": {}
+    }
+   }
+  },
+  "/v1/games": {
+   "post": {
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/CreateGameRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "201": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/GameStateResponse"
+        }
+       }
+      }
+     },
+     "404": {},
+     "422": {}
+    }
+   }
+  },
+  "/v1/games/{game_id}": {
+   "delete": {
+    "parameters": [
+     {
+      "in": "path",
+      "name": "game_id",
+      "required": true,
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "204": {},
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   },
+   "get": {
+    "parameters": [
+     {
+      "in": "path",
+      "name": "game_id",
+      "required": true,
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/GameStateResponse"
+        }
+       }
+      }
+     },
+     "404": {},
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/v1/games/{game_id}/moves": {
+   "post": {
+    "parameters": [
+     {
+      "in": "path",
+      "name": "game_id",
+      "required": true,
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/SubmitMoveRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/GameStateResponse"
+        }
+       }
+      }
+     },
+     "404": {},
+     "422": {}
+    }
+   }
+  },
+  "/v1/games/{game_id}/think": {
+   "post": {
+    "parameters": [
+     {
+      "in": "path",
+      "name": "game_id",
+      "required": true,
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/ThinkRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ThinkResponse"
+        }
+       }
+      }
+     },
+     "404": {},
+     "422": {},
+     "429": {}
+    }
+   }
+  },
+  "/v1/move": {
+   "post": {
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/MoveRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/MoveResponse"
+        }
+       }
+      }
+     },
+     "404": {},
+     "422": {},
+     "429": {}
+    }
+   }
+  }
+ },
+ "schemas": {
+  "Board": {
+   "properties": {
+    "grid": {
+     "items": {
+      "items": {
+       "$ref": "#/components/schemas/Stone"
+      },
+      "type": "array"
+     },
+     "type": "array"
+    },
+    "occupied": {
+     "items": {
+      "maxItems": 2,
+      "minItems": 2,
+      "prefixItems": [
+       {
+        "type": "integer"
+       },
+       {
+        "type": "integer"
+       }
+      ],
+      "type": "array"
+     },
+     "type": "array",
+     "uniqueItems": true
+    },
+    "size": {
+     "default": 15,
+     "maximum": 25.0,
+     "minimum": 5.0,
+     "type": "integer"
+    }
+   },
+   "type": "object"
+  },
+  "Body_post_analyze_v1_analyze_post": {
+   "properties": {
+    "file": {
+     "contentMediaType": "application/octet-stream",
+     "type": "string"
+    }
+   },
+   "required": [
+    "file"
+   ],
+   "type": "object"
+  },
+  "BrainInfo": {
+   "properties": {
+    "name": {
+     "type": "string"
+    },
+    "settings_schema": {
+     "additionalProperties": true,
+     "type": "object"
+    }
+   },
+   "required": [
+    "name",
+    "settings_schema"
+   ],
+   "type": "object"
+  },
+  "BrainsResponse": {
+   "properties": {
+    "brains": {
+     "items": {
+      "$ref": "#/components/schemas/BrainInfo"
+     },
+     "type": "array"
+    }
+   },
+   "required": [
+    "brains"
+   ],
+   "type": "object"
+  },
+  "CandidateInfo": {
+   "properties": {
+    "move": {
+     "$ref": "#/components/schemas/Move-Output"
+    },
+    "score": {
+     "type": "number"
+    },
+    "score_type": {
+     "default": "eval",
+     "type": "string"
+    }
+   },
+   "required": [
+    "move",
+    "score"
+   ],
+   "type": "object"
+  },
+  "CreateGameRequest": {
+   "additionalProperties": false,
+   "properties": {
+    "black": {
+     "$ref": "#/components/schemas/PlayerConfig"
+    },
+    "board_size": {
+     "default": 15,
+     "maximum": 25.0,
+     "minimum": 5.0,
+     "type": "integer"
+    },
+    "diagnostics": {
+     "default": false,
+     "type": "boolean"
+    },
+    "record": {
+     "default": false,
+     "type": "boolean"
+    },
+    "white": {
+     "$ref": "#/components/schemas/PlayerConfig"
+    },
+    "win_length": {
+     "default": 5,
+     "minimum": 3.0,
+     "type": "integer"
+    }
+   },
+   "type": "object"
+  },
+  "EvaluateRequest": {
+   "additionalProperties": false,
+   "properties": {
+    "board": {
+     "$ref": "#/components/schemas/Board"
+    },
+    "side_to_move": {
+     "$ref": "#/components/schemas/Stone"
+    }
+   },
+   "required": [
+    "board",
+    "side_to_move"
+   ],
+   "type": "object"
+  },
+  "EvaluateResponse": {
+   "properties": {
+    "score": {
+     "type": "number"
+    }
+   },
+   "required": [
+    "score"
+   ],
+   "type": "object"
+  },
+  "GameResult": {
+   "properties": {
+    "winner": {
+     "anyOf": [
+      {
+       "$ref": "#/components/schemas/Stone"
+      },
+      {
+       "type": "null"
+      }
+     ]
+    },
+    "winning_moves": {
+     "anyOf": [
+      {
+       "items": {
+        "$ref": "#/components/schemas/Move-Output"
+       },
+       "type": "array"
+      },
+      {
+       "type": "null"
+      }
+     ]
+    }
+   },
+   "type": "object"
+  },
+  "GameStateResponse": {
+   "properties": {
+    "black_brain": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ]
+    },
+    "board": {
+     "$ref": "#/components/schemas/Board"
+    },
+    "diag_dir": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ]
+    },
+    "game_id": {
+     "type": "string"
+    },
+    "history": {
+     "items": {
+      "$ref": "#/components/schemas/HistoryEntry"
+     },
+     "type": "array"
+    },
+    "move_number": {
+     "type": "integer"
+    },
+    "record_dir": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ]
+    },
+    "result": {
+     "anyOf": [
+      {
+       "$ref": "#/components/schemas/GameResult"
+      },
+      {
+       "type": "null"
+      }
+     ]
+    },
+    "side_to_move": {
+     "$ref": "#/components/schemas/Stone"
+    },
+    "white_brain": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ]
+    }
+   },
+   "required": [
+    "game_id",
+    "board",
+    "side_to_move",
+    "move_number",
+    "history",
+    "black_brain",
+    "white_brain",
+    "result"
+   ],
+   "type": "object"
+  },
+  "HTTPValidationError": {
+   "properties": {
+    "detail": {
+     "items": {
+      "$ref": "#/components/schemas/ValidationError"
+     },
+     "type": "array"
+    }
+   },
+   "type": "object"
+  },
+  "HistoryEntry": {
+   "properties": {
+    "move": {
+     "$ref": "#/components/schemas/Move-Output"
+    },
+    "stone": {
+     "$ref": "#/components/schemas/Stone"
+    }
+   },
+   "required": [
+    "stone",
+    "move"
+   ],
+   "type": "object"
+  },
+  "Move-Input": {
+   "properties": {
+    "col": {
+     "minimum": 0.0,
+     "type": "integer"
+    },
+    "row": {
+     "minimum": 0.0,
+     "type": "integer"
+    }
+   },
+   "required": [
+    "row",
+    "col"
+   ],
+   "type": "object"
+  },
+  "Move-Output": {
+   "properties": {
+    "col": {
+     "minimum": 0.0,
+     "type": "integer"
+    },
+    "position": {
+     "readOnly": true,
+     "type": "string"
+    },
+    "row": {
+     "minimum": 0.0,
+     "type": "integer"
+    }
+   },
+   "required": [
+    "row",
+    "col",
+    "position"
+   ],
+   "type": "object"
+  },
+  "MoveDiagnostics": {
+   "properties": {
+    "alternative_best": {
+     "anyOf": [
+      {
+       "$ref": "#/components/schemas/CandidateInfo"
+      },
+      {
+       "type": "null"
+      }
+     ]
+    },
+    "board_stones": {
+     "items": {
+      "type": "string"
+     },
+     "type": "array"
+    },
+    "chosen_move": {
+     "anyOf": [
+      {
+       "$ref": "#/components/schemas/Move-Output"
+      },
+      {
+       "type": "null"
+      }
+     ]
+    },
+    "decision_path": {
+     "default": "",
+     "type": "string"
+    },
+    "eval_after": {
+     "anyOf": [
+      {
+       "type": "number"
+      },
+      {
+       "type": "null"
+      }
+     ]
+    },
+    "eval_before": {
+     "anyOf": [
+      {
+       "type": "number"
+      },
+      {
+       "type": "null"
+      }
+     ]
+    },
+    "move_number": {
+     "minimum": 1.0,
+     "type": "integer"
+    },
+    "notes": {
+     "items": {
+      "type": "string"
+     },
+     "type": "array"
+    },
+    "opp_threats": {
+     "$ref": "#/components/schemas/ThreatInfo",
+     "default": {
+      "four_threats": 0,
+      "three_threats": 0
+     }
+    },
+    "our_threats": {
+     "$ref": "#/components/schemas/ThreatInfo",
+     "default": {
+      "four_threats": 0,
+      "three_threats": 0
+     }
+    },
+    "search_stats": {
+     "$ref": "#/components/schemas/SearchStats",
+     "default": {}
+    },
+    "stone": {
+     "$ref": "#/components/schemas/Stone"
+    },
+    "think_time_ms": {
+     "default": 0,
+     "type": "integer"
+    },
+    "top_candidates": {
+     "items": {
+      "$ref": "#/components/schemas/CandidateInfo"
+     },
+     "type": "array"
+    }
+   },
+   "required": [
+    "move_number",
+    "stone"
+   ],
+   "type": "object"
+  },
+  "MoveRequest": {
+   "additionalProperties": false,
+   "properties": {
+    "board": {
+     "$ref": "#/components/schemas/Board"
+    },
+    "brain": {
+     "type": "string"
+    },
+    "brain_overrides": {
+     "anyOf": [
+      {
+       "additionalProperties": true,
+       "type": "object"
+      },
+      {
+       "type": "null"
+      }
+     ]
+    },
+    "diagnostics": {
+     "default": false,
+     "type": "boolean"
+    },
+    "side_to_move": {
+     "$ref": "#/components/schemas/Stone"
+    }
+   },
+   "required": [
+    "board",
+    "side_to_move",
+    "brain"
+   ],
+   "type": "object"
+  },
+  "MoveResponse": {
+   "properties": {
+    "brain": {
+     "type": "string"
+    },
+    "diagnostics": {
+     "anyOf": [
+      {
+       "$ref": "#/components/schemas/MoveDiagnostics"
+      },
+      {
+       "type": "null"
+      }
+     ]
+    },
+    "move": {
+     "$ref": "#/components/schemas/Move-Output"
+    }
+   },
+   "required": [
+    "move",
+    "brain"
+   ],
+   "type": "object"
+  },
+  "PlayerConfig": {
+   "additionalProperties": false,
+   "properties": {
+    "brain": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ]
+    },
+    "brain_overrides": {
+     "anyOf": [
+      {
+       "additionalProperties": true,
+       "type": "object"
+      },
+      {
+       "type": "null"
+      }
+     ]
+    }
+   },
+   "type": "object"
+  },
+  "SearchStats": {
+   "properties": {
+    "aspiration_resets": {
+     "anyOf": [
+      {
+       "type": "integer"
+      },
+      {
+       "type": "null"
+      }
+     ]
+    },
+    "depth_reached": {
+     "anyOf": [
+      {
+       "type": "integer"
+      },
+      {
+       "type": "null"
+      }
+     ]
+    },
+    "iterations": {
+     "anyOf": [
+      {
+       "type": "integer"
+      },
+      {
+       "type": "null"
+      }
+     ]
+    },
+    "nodes_searched": {
+     "anyOf": [
+      {
+       "type": "integer"
+      },
+      {
+       "type": "null"
+      }
+     ]
+    },
+    "qs_nodes_searched": {
+     "anyOf": [
+      {
+       "type": "integer"
+      },
+      {
+       "type": "null"
+      }
+     ]
+    },
+    "time_ms": {
+     "anyOf": [
+      {
+       "type": "integer"
+      },
+      {
+       "type": "null"
+      }
+     ]
+    },
+    "tt_hits": {
+     "anyOf": [
+      {
+       "type": "integer"
+      },
+      {
+       "type": "null"
+      }
+     ]
+    },
+    "tt_probes": {
+     "anyOf": [
+      {
+       "type": "integer"
+      },
+      {
+       "type": "null"
+      }
+     ]
+    },
+    "tt_size": {
+     "anyOf": [
+      {
+       "type": "integer"
+      },
+      {
+       "type": "null"
+      }
+     ]
+    }
+   },
+   "type": "object"
+  },
+  "Stone": {
+   "enum": [
+    0,
+    1,
+    2
+   ],
+   "type": "integer"
+  },
+  "SubmitMoveRequest": {
+   "additionalProperties": false,
+   "properties": {
+    "move": {
+     "$ref": "#/components/schemas/Move-Input"
+    },
+    "stone": {
+     "$ref": "#/components/schemas/Stone"
+    }
+   },
+   "required": [
+    "stone",
+    "move"
+   ],
+   "type": "object"
+  },
+  "ThinkRequest": {
+   "additionalProperties": false,
+   "properties": {
+    "diagnostics": {
+     "default": false,
+     "type": "boolean"
+    }
+   },
+   "type": "object"
+  },
+  "ThinkResponse": {
+   "properties": {
+    "diagnostics": {
+     "anyOf": [
+      {
+       "$ref": "#/components/schemas/MoveDiagnostics"
+      },
+      {
+       "type": "null"
+      }
+     ]
+    },
+    "move": {
+     "$ref": "#/components/schemas/Move-Output"
+    },
+    "state": {
+     "$ref": "#/components/schemas/GameStateResponse"
+    }
+   },
+   "required": [
+    "move",
+    "state"
+   ],
+   "type": "object"
+  },
+  "ThreatInfo": {
+   "properties": {
+    "four_threats": {
+     "default": 0,
+     "type": "integer"
+    },
+    "three_threats": {
+     "default": 0,
+     "type": "integer"
+    },
+    "vcf_result": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ]
+    },
+    "vct_result": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ]
+    }
+   },
+   "type": "object"
+  },
+  "ValidationError": {
+   "properties": {
+    "ctx": {
+     "type": "object"
+    },
+    "input": {},
+    "loc": {
+     "items": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "integer"
+       }
+      ]
+     },
+     "type": "array"
+    },
+    "msg": {
+     "type": "string"
+    },
+    "type": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "loc",
+    "msg",
+    "type"
+   ],
+   "type": "object"
+  },
+  "VersionInfo": {
+   "properties": {
+    "deprecated": {
+     "anyOf": [
+      {
+       "format": "date",
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ]
+    },
+    "path": {
+     "type": "string"
+    },
+    "released": {
+     "format": "date",
+     "type": "string"
+    },
+    "status": {
+     "enum": [
+      "stable",
+      "deprecated"
+     ],
+     "type": "string"
+    },
+    "successor": {
+     "anyOf": [
+      {
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ]
+    },
+    "sunset": {
+     "anyOf": [
+      {
+       "format": "date",
+       "type": "string"
+      },
+      {
+       "type": "null"
+      }
+     ]
+    },
+    "version": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "version",
+    "path",
+    "status",
+    "released"
+   ],
+   "type": "object"
+  },
+  "VersionsResponse": {
+   "properties": {
+    "latest": {
+     "type": "string"
+    },
+    "versions": {
+     "items": {
+      "$ref": "#/components/schemas/VersionInfo"
+     },
+     "type": "array"
+    }
+   },
+   "required": [
+    "latest",
+    "versions"
+   ],
+   "type": "object"
+  }
+ }
+}

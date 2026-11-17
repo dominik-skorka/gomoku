@@ -66,6 +66,7 @@ Interactive OpenAPI docs are live at `http://127.0.0.1:8000/docs`.
 | Path | Verb | Purpose |
 |---|---|---|
 | `/healthz` | GET | Liveness probe |
+| `/versions` | GET | Served API versions and their status (see [Versioning](#versioning)) |
 | `/v1/brains` | GET | Brain registry + per-brain settings JSON Schema |
 | `/v1/move` | POST | Stateless: ask a brain for its move on a given board (optional `diagnostics: true`) |
 | `/v1/evaluate` | POST | Static heuristic eval — no brain |
@@ -78,6 +79,60 @@ Interactive OpenAPI docs are live at `http://127.0.0.1:8000/docs`.
 
 Sessions are in-process and TTL-evicted (default: 1 hour of
 inactivity).  No persistence — restarting the server drops everything.
+
+## Versioning
+
+The API is versioned by URL prefix.  Every endpoint except `/healthz`
+and `/versions` lives under a version, currently only `/v1`.
+
+**What clients can rely on.**  A version only changes in
+backwards-compatible ways: new endpoints, new optional request fields
+and new response fields.  Clients should ignore response fields they
+don't know.  These are breaking, and only ever appear in a new version:
+
+- removing or renaming an endpoint, parameter or field;
+- making a parameter, request body or field required;
+- changing a field's type or meaning.
+
+**Finding out what's served.**  `GET /versions` lists every version,
+its status and dates:
+
+```json
+{
+  "latest": "v1",
+  "versions": [
+    {"version": "v1", "path": "/v1", "status": "stable", "released": "2026-05-01",
+     "deprecated": null, "sunset": null, "successor": null}
+  ]
+}
+```
+
+**Response headers.**  Every response under a version prefix, errors
+and `429`s included, carries `API-Version: v1`.  Once a version is
+deprecated its responses also carry `Deprecation` (RFC 9745) and
+`Sunset` (RFC 8594) headers and a `Link: </v2>; rel="successor-version"`.
+A deprecated version keeps working until its sunset date.  When CORS is
+enabled these headers, and `X-Request-ID`, are exposed to browser
+scripts.
+
+**Making a breaking change.**  Register the new version in
+`gomoku_fastapi/versioning.py` and add an `api_v2.py` beside `api_v1.py`
+that includes the changed routers plus every unchanged one, so both
+versions are served side by side.  To retire the old version, set its
+`deprecated`, `sunset` and `successor` there.
+
+**The contract guard.**  `tests/contracts/v1.openapi.json` is a snapshot
+of the `v1` surface.  `tests/test_api_contract.py` fails on any breaking
+change to `v1`, and on compatible changes until the snapshot is
+refreshed, so every change to the public surface shows up in review:
+
+```bash
+uv run python packages/gomoku-fastapi/tests/test_api_contract.py --update
+```
+
+The OpenAPI document's `info.version` is the `gomoku-fastapi` package
+version from its `pyproject.toml`; it tracks releases of the server,
+not the URL version.
 
 ## Operations
 
