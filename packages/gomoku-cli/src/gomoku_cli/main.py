@@ -439,5 +439,92 @@ def generate_book(
     console.print(f"\n[bold green]Book saved:[/bold green] {output_path} ({len(book.positions)} positions)")
 
 
+@cli.command()
+@click.option("--a", "spec_a", required=True, help="Engine A: brain=NAME[,rev=GIT_REV][,config=PATH].")
+@click.option("--b", "spec_b", required=True, help="Engine B, same format. Without rev= the working tree is used.")
+@click.option("--games", type=click.IntRange(2, 10_000), default=20, show_default=True, help="Games to play (even).")
+@click.option("--seed", type=int, default=1, show_default=True, help="Seed for the generated openings.")
+@click.option("--jobs", type=click.IntRange(1, 64), default=1, show_default=True, help="Games played in parallel.")
+@click.option("--board-size", type=click.IntRange(5, 25), default=15, show_default=True)
+@click.option("--max-moves", type=click.IntRange(10, 625), default=150, show_default=True, help="Draw after this many.")
+@click.option("--opening-stones", type=click.IntRange(0, 12), default=6, show_default=True)
+@click.option("--opening-spread", type=click.IntRange(1, 6), default=2, show_default=True, help="Radius around centre.")
+@click.option(
+    "--quiet-openings/--any-openings",
+    default=True,
+    show_default=True,
+    help="Reject openings where either colour already has a forced win.",
+)
+@click.option(
+    "--move-timeout", type=float, default=600.0, show_default=True, help="Seconds before an engine is failed."
+)
+@click.option("--out", "out_path", type=click.Path(path_type=Path), default=None, help="Write all games as JSON.")
+def match(
+    spec_a: str,
+    spec_b: str,
+    games: int,
+    seed: int,
+    jobs: int,
+    board_size: int,
+    max_moves: int,
+    opening_stones: int,
+    opening_spread: int,
+    quiet_openings: bool,
+    move_timeout: float,
+    out_path: Path | None,
+) -> None:
+    """Play engine A against engine B and report who is stronger.
+
+    Every opening is played twice with colours swapped.  Use rev= to pit
+    a git revision against the working tree, or config= to compare
+    settings:
+
+      gomoku match --a brain=threat,rev=master --b brain=threat --games 40
+    """
+    from gomoku_cli.match import (
+        EngineError,
+        EngineSpec,
+        format_summary,
+        progress_printer,
+        run_match,
+        save_records,
+        summarize,
+    )
+
+    try:
+        engine_a = EngineSpec.parse(spec_a)
+        engine_b = EngineSpec.parse(spec_b)
+    except ValueError as exc:
+        raise click.BadParameter(str(exc)) from exc
+
+    total = 2 * ((games + 1) // 2)
+    click.echo(f"A: {engine_a.label}\nB: {engine_b.label}\nStarting engines (first start of a revision compiles)...")
+    try:
+        with progress_printer(click.echo, total) as on_game:
+            records = run_match(
+                engine_a,
+                engine_b,
+                games=games,
+                seed=seed,
+                size=board_size,
+                max_moves=max_moves,
+                jobs=jobs,
+                move_timeout_s=move_timeout,
+                opening_stones=opening_stones,
+                opening_spread=opening_spread,
+                quiet_openings=quiet_openings,
+                on_game=on_game,
+            )
+    except (EngineError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    summary = summarize(records)
+    click.echo()
+    click.echo(format_summary(engine_a, engine_b, summary))
+    if out_path is not None:
+        save_records(out_path, engine_a, engine_b, records, summary)
+        click.echo(f"Games written to {out_path}")
+
+
 if __name__ == "__main__":
     cli()
