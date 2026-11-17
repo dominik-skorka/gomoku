@@ -46,7 +46,9 @@ class QuiesceCtx:
     * ``qs_vcf_depth`` — read-only configuration; if non-zero, leaf
       positions trigger a VCF probe to detect multi-move forced wins
       that the one-ply threat loop would miss.
-    * ``eval_cache`` — shared Zobrist-hash → static-eval cache.  The
+    * ``eval_cache`` — shared Zobrist-hash → static-eval cache.  Values
+      are always from the perspective of the side to move in the cached
+      position (the hash encodes it), for every reader and writer.  The
       function reads and writes this cache so successive calls don't
       re-evaluate identical positions.
     * ``nodes`` — incremented once per :func:`quiesce` invocation; the
