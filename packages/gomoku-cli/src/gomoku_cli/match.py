@@ -411,6 +411,7 @@ class MatchSummary:
     elo_low: float | None
     elo_high: float | None
     los: float | None
+    pairs: int
     a_ms_per_move: float
     b_ms_per_move: float
 
@@ -422,26 +423,44 @@ def _elo(score: float) -> float | None:
     return -400.0 * math.log10(1.0 / score - 1.0)
 
 
+def _game_score(record: GameRecord) -> float:
+    """A's score in one game: 1 win, 0.5 draw, 0 loss."""
+    return {"a": 1.0, "b": 0.0, None: 0.5}[record.winner]
+
+
 def summarize(records: list[GameRecord]) -> MatchSummary:
     """Summarise *records*: score with a 95% interval, Elo, and LOS.
 
-    The interval treats games as independent (normal approximation on
-    the per-game score).  ``los`` is the likelihood of superiority — the
-    probability that A is the stronger engine given the decisive games.
+    The interval is computed over opening pairs, not single games.  The
+    two games of an opening share its colour bias, so their results are
+    correlated; a pair's average score (0, 0.5 or 1 without draws) is the
+    independent unit, and it removes the colour noise that dominates
+    per-game results.
+
+    To keep small or uniform samples from producing a falsely narrow
+    interval (two split pairs alone would give zero variance), the
+    variance estimate includes one virtual pair lost and one won by A.
+    Their effect fades as real pairs accumulate.  ``los`` is the
+    likelihood of superiority, the probability that A is the stronger
+    engine, from the same paired estimate.
     """
     n = len(records)
     wins_a = sum(r.winner == "a" for r in records)
     wins_b = sum(r.winner == "b" for r in records)
     draws = n - wins_a - wins_b
     score = (wins_a + 0.5 * draws) / n if n else 0.5
-    if n > 1:
-        variance = (wins_a * (1 - score) ** 2 + wins_b * score**2 + draws * (0.5 - score) ** 2) / (n - 1)
-        margin = 1.96 * math.sqrt(variance / n)
-    else:
-        margin = 0.5
+
+    by_opening: dict[int, list[float]] = {}
+    for record in records:
+        by_opening.setdefault(record.opening, []).append(_game_score(record))
+    pair_scores = [sum(v) / len(v) for v in by_opening.values()]
+    samples = [*pair_scores, 0.0, 1.0]
+    mean = sum(samples) / len(samples)
+    variance = sum((x - mean) ** 2 for x in samples) / (len(samples) - 1)
+    se = math.sqrt(variance / max(1, len(pair_scores)))
+    margin = 1.96 * se
     low, high = max(0.0, score - margin), min(1.0, score + margin)
-    decisive = wins_a + wins_b
-    los = 0.5 * (1.0 + math.erf((wins_a - wins_b) / math.sqrt(2.0 * decisive))) if decisive else None
+    los = 0.5 * (1.0 + math.erf((score - 0.5) / (se * math.sqrt(2.0)))) if n else None
 
     a_ms = [ms for r in records for ms in r.a_ms]
     b_ms = [ms for r in records for ms in r.b_ms]
@@ -461,6 +480,7 @@ def summarize(records: list[GameRecord]) -> MatchSummary:
         elo_low=_elo(low),
         elo_high=_elo(high),
         los=los,
+        pairs=len(pair_scores),
         a_ms_per_move=sum(a_ms) / len(a_ms) if a_ms else 0.0,
         b_ms_per_move=sum(b_ms) / len(b_ms) if b_ms else 0.0,
     )
@@ -482,11 +502,12 @@ def format_summary(spec_a: EngineSpec, spec_b: EngineSpec, summary: MatchSummary
         "",
         f"Games: {s.games}   A wins {s.wins_a}   B wins {s.wins_b}   draws {s.draws}",
         f"A wins as black/white: {colours_a}   B wins as black/white: {colours_b}",
-        f"A score: {s.score:.1%}  (95% interval {s.score_low:.1%} to {s.score_high:.1%})",
+        f"A score: {s.score:.1%}  (95% interval {s.score_low:.1%} to {s.score_high:.1%}, from {s.pairs} opening pairs)",
         f"Elo difference (A - B): {elo(s.elo, 'n/a')}  (95% interval {elo_range})",
     ]
     if s.los is not None:
-        lines.append(f"Likelihood A is stronger: {s.los:.1%}")
+        los = "<0.1%" if s.los < 0.001 else ">99.9%" if s.los > 0.999 else f"{s.los:.1%}"
+        lines.append(f"Likelihood A is stronger: {los}")
     lines.append(f"Think time per move: A {s.a_ms_per_move:.0f} ms   B {s.b_ms_per_move:.0f} ms")
     return "\n".join(lines)
 
