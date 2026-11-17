@@ -481,22 +481,33 @@ def _backpropagate_path(path: list[_PNSNode]) -> None:
 # ---------------------------------------------------------------------------
 
 
-def pns_threat_search(
+class PNSStatus(Enum):
+    """Outcome of a threat-space proof-number search."""
+
+    PROVED = auto()  # the attacker has a forced win
+    DISPROVED = auto()  # no forced win exists in threat-space
+    UNKNOWN = auto()  # the node or time budget ran out first
+
+
+def pns_threat_status(
     board: Board | SearchState,
     stone: Stone,
     max_nodes: int = 10_000,
     max_time_s: float = 5.0,
-) -> Move | None:
-    """Run Proof-Number Search in threat-space.
+) -> tuple[PNSStatus, Move | None]:
+    """Run Proof-Number Search in threat-space and report how it ended.
 
-    Returns the first move of a forced winning sequence for *stone*,
-    or ``None`` if no win is proved within the node/time budget.
-    ``max_nodes`` counts distinct positions.
+    Returns ``(PROVED, first winning move)``, ``(DISPROVED, None)`` when
+    the search established that *stone* has no forced win by threats,
+    or ``(UNKNOWN, None)`` when the budget ran out first.  Telling the
+    last two apart matters to callers that use "no forced win" as a
+    safety guarantee.
 
-    Accepts an existing :class:`SearchState` to skip the per-call
-    Pydantic→bitboard round-trip; the search restores the state to
-    its starting ply on every iteration boundary, so the caller's
-    state is unchanged on return.
+    ``max_nodes`` counts distinct positions.  Accepts an existing
+    :class:`SearchState` to skip the per-call Pydantic→bitboard
+    round-trip; the search restores the state to its starting ply on
+    every iteration boundary, so the caller's state is unchanged on
+    return.
     """
     attacker = stone
     defender = attacker.opponent()
@@ -507,10 +518,9 @@ def pns_threat_search(
     _evaluate_leaf(root, state, attacker)
 
     if root.proof == 0:
-        return _find_winning_move(state, stone)
+        return PNSStatus.PROVED, _find_winning_move(state, stone)
     if root.disproof == 0:
-        return None
-
+        return PNSStatus.DISPROVED, None
     nodes_created = 1
     deadline = time.monotonic() + max_time_s
     # Every iteration either creates a node or repairs a stale path, so
@@ -549,5 +559,22 @@ def pns_threat_search(
         # Root is OR -> return the move to a proved child.
         for child, move in zip(root.children, root.moves, strict=True):
             if child.proof == 0:
-                return move
-    return None
+                return PNSStatus.PROVED, move
+    if root.disproof == 0:
+        return PNSStatus.DISPROVED, None
+    return PNSStatus.UNKNOWN, None
+
+
+def pns_threat_search(
+    board: Board | SearchState,
+    stone: Stone,
+    max_nodes: int = 10_000,
+    max_time_s: float = 5.0,
+) -> Move | None:
+    """Return the first move of a forced win for *stone*, or ``None``.
+
+    ``None`` covers both "no forced win" and "budget ran out"; use
+    :func:`pns_threat_status` when the difference matters.
+    """
+    status, move = pns_threat_status(board, stone, max_nodes, max_time_s)
+    return move if status is PNSStatus.PROVED else None
