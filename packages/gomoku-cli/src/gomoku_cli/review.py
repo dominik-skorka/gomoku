@@ -62,8 +62,10 @@ from gomoku_cli.match import (
     resolve_source,
 )
 
-# Decision paths that claim a forced win found by a proof search.
-CLAIMED_WIN_PATHS = frozenset({"vcf_win", "pns_win", "vct_win", "vcf_precheck"})
+# Decision paths that claim a forced win found by a proof search.  Not
+# "vcf_precheck": revisions before it was split into vcf_win / vcf_breaker /
+# vcf_block_no_breaker / instant_win used it for defences too.
+CLAIMED_WIN_PATHS = frozenset({"vcf_win", "pns_win", "vct_win"})
 # Decision paths that play a win (claimed or immediate).
 WIN_PATHS = CLAIMED_WIN_PATHS | {"immediate_win", "instant_win"}
 

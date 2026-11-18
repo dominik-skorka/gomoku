@@ -161,7 +161,9 @@ class AlphaBetaBrain:
                 vcf_move = root_vcf(board, stone, self.vcf_depth)
                 if vcf_move is not None:
                     if diag is not None:
-                        diag.decision_path = "vcf_precheck"
+                        # root_vcf names the case (instant_win, vcf_win,
+                        # vcf_breaker, vcf_block_no_breaker); keep it.
+                        diag.decision_path = diag.decision_path or "vcf_precheck"
                         diag.chosen_move = vcf_move
                         diag.notes.append(f"VCF found at depth {self.vcf_depth}")
                     return vcf_move
