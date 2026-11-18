@@ -27,11 +27,13 @@ from enum import Enum, auto
 from gomoku.board import Board
 from gomoku.models import Move, Stone
 
+from gomoku_brain.candidates import get_candidate_moves
 from gomoku_brain.search_state import SearchState
 from gomoku_brain.threat_detect import (
     _find_four_threats,
     _find_three_threats,
     _find_winning_move,
+    _has_unblockable_four,
     _scan_context,
     _ScanCtx,
 )
@@ -166,6 +168,8 @@ def _pns_defence_moves(
     2. End cells of attacker live-three threats.
     3. Defender's own four-threat moves (counter-fours).
     4. Defender's own three-threat moves (counter-threes).
+    5. Every cell that defuses an attacker's unblockable-four threat
+       (see :func:`_unblockable_four_defences`).
 
     On the JIT path the four detection routines share one scan context —
     ``ctx`` (the expanding node's context, built at the node's own
@@ -231,7 +235,44 @@ def _pns_defence_moves(
         for attack, _defs in _find_three_threats(state, defender):
             cells.add((attack.row, attack.col))
 
+    # 5) Attacker threats of an unblockable four (a live four, or a
+    #    double four, next move).  Occupying the attack cell is only one
+    #    defence: taking either end of the would-be four, for one, leaves
+    #    the attacker a four that can be blocked.  Missing those let the
+    #    search "prove" wins the defender can refute.
+    cells |= _unblockable_four_defences(state, attacker, ctx)
+
     return [Move(row=r, col=c) for r, c in sorted(cells) if state.is_empty(r, c)]
+
+
+def _unblockable_four_defences(state: SearchState, attacker: Stone, ctx: _ScanCtx | None) -> set[tuple[int, int]]:
+    """Cells after which the attacker no longer has an unblockable four.
+
+    Empty when the attacker has no such threat.  Tried over the node's
+    candidate cells: any cell that can affect a four lies within the
+    candidate radius of the attacker's stones.  The detection reuses
+    *ctx*, which stays valid because only the defender moves (see the
+    staleness contract on ``_ScanCtx``).
+    """
+    if not _has_unblockable_four(state, attacker, ctx):
+        return set()
+    if ctx is not None:
+        _grid, _size, candidates, _dirs = ctx
+        cells = [(int(candidates[i, 0]), int(candidates[i, 1])) for i in range(candidates.shape[0])]
+    else:
+        cells = [(m.row, m.col) for m in get_candidate_moves(state)]
+    defender = attacker.opponent()
+    defences: set[tuple[int, int]] = set()
+    for r, c in cells:
+        if not state.is_empty(r, c):
+            continue
+        state.make(r, c, defender)
+        try:
+            if not _has_unblockable_four(state, attacker, ctx):
+                defences.add((r, c))
+        finally:
+            state.unmake()
+    return defences
 
 
 # ---------------------------------------------------------------------------
