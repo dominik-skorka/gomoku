@@ -234,6 +234,12 @@ pns_nodes = 30_000
 # Default: false
 split_threes = false
 
+# Count split threes and fours (XX_X, XXX_X) when looking for the
+# opponent's fork cells to block.  It lost 140-160 (-23 Elo, 95% interval
+# -40 to -7): the brain blocked more and attacked less.
+# Default: false
+split_forks = false
+
 # Max wall-clock seconds for PNS search.
 # Default: 5.0 | Valid range: 0.1–60.0
 pns_time_s = 5.0
