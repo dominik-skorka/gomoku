@@ -41,7 +41,6 @@ _OPEN_THREE_BONUS = 1_500
 _EVAL_CLAMP = 99_000
 
 
-
 def _score_direction(board: Board, row: int, col: int, dr: int, dc: int, stone: Stone) -> int:
     """Score a single direction from (row, col) for the given stone."""
     size = board.size
@@ -380,9 +379,7 @@ def _eval_state_black(state) -> float:  # type: ignore[no-untyped-def]
                 r = int(state._undo_row[k])
                 c = int(state._undo_col[k])
                 grid[r, c] = state._undo_stone[k]
-                e += evaluate_delta_grid(
-                    grid, size, r, c, dirs, table, fork_threshold, fork_bonus, open_three_bonus
-                )
+                e += evaluate_delta_grid(grid, size, r, c, dirs, table, fork_threshold, fork_bonus, open_three_bonus)
                 stack[k + 1] = e
                 valid[k + 1] = True
         finally:
@@ -392,11 +389,7 @@ def _eval_state_black(state) -> float:  # type: ignore[no-untyped-def]
         from gomoku_brain.grid_utils import occupied_coords
 
         occ = occupied_coords(state)
-        e = float(
-            evaluate_grid(
-                grid, size, occ, 1, dirs, table, fork_threshold, fork_bonus, open_three_bonus
-            )
-        )
+        e = float(evaluate_grid(grid, size, occ, 1, dirs, table, fork_threshold, fork_bonus, open_three_bonus))
         stack[p] = e
         valid[p] = True
         if p > 0:

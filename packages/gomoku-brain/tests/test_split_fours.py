@@ -8,10 +8,11 @@ split counter-four refutes.
 
 from __future__ import annotations
 
+import numpy as np
 import pytest
 from gomoku.board import Board
 from gomoku.models import Move, Stone
-from gomoku_brain.evaluate_jit import get_dirs, is_four_threat
+from gomoku_brain.evaluate_jit import get_dirs, has_any_four_threat_grid, is_four_threat, makes_four_threat
 from gomoku_brain.pns import PNSStatus, pns_threat_status
 from gomoku_brain.search_state import SearchState
 from gomoku_brain.threat_detect import (
@@ -67,11 +68,25 @@ def test_split_and_straight_four_on_one_line_is_unblockable():
     assert _has_unblockable_four(SearchState.from_board(board, Stone.BLACK), Stone.BLACK)
 
 
-def test_split_four_counts_for_move_ordering():
+def test_threat_search_sees_split_fours_but_alpha_beta_heuristics_do_not():
+    """Quiescence and move ordering stay on unbroken runs (cost); the
+    threat searches' four test and its any-four gate see split fours."""
     board = _board([(7, 4), (7, 5), (7, 8)], FAR_WHITE)
+    state = SearchState.from_board(board, Stone.BLACK)
+    grid, dirs = state.grid, get_dirs()
+    assert makes_four_threat(grid, 15, 7, 6, int(Stone.BLACK), dirs)
+    assert not makes_four_threat(grid, 15, 6, 6, int(Stone.BLACK), dirs)
+    assert not is_four_threat(grid, 15, 7, 6, int(Stone.BLACK), dirs)
+    candidates = np.array([[7, 6]], dtype=np.int32)
+    assert has_any_four_threat_grid(grid, 15, candidates, int(Stone.BLACK), dirs)
+
+
+def test_blocked_straight_four_is_not_a_threat():
+    # OXXXX_ with the far end blocked too: four in a row, but no five possible.
+    board = _board([(7, 1), (7, 2), (7, 3)], [(7, 0), (7, 5), (14, 0)])
     grid = SearchState.from_board(board, Stone.BLACK).grid
-    assert is_four_threat(grid, 15, 7, 6, int(Stone.BLACK), get_dirs())
-    assert not is_four_threat(grid, 15, 6, 6, int(Stone.BLACK), get_dirs())
+    assert not makes_four_threat(grid, 15, 7, 4, int(Stone.BLACK), get_dirs())
+    assert is_four_threat(grid, 15, 7, 4, int(Stone.BLACK), get_dirs())  # the heuristic counts the run
 
 
 def test_split_counter_four_refutes_a_false_proof():

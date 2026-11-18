@@ -112,8 +112,7 @@ def _canon_four_python(
 
 def _canon_four_grid(result: np.ndarray) -> set[tuple[int, int, int, int]]:
     return {
-        (int(result[i, 0]), int(result[i, 1]), int(result[i, 2]), int(result[i, 3]))
-        for i in range(result.shape[0])
+        (int(result[i, 0]), int(result[i, 1]), int(result[i, 2]), int(result[i, 3])) for i in range(result.shape[0])
     }
 
 

@@ -173,5 +173,5 @@ class TestDiagnosticsContext:
         rec.end_move(diag)
         rec.write_summary({"total_moves": 1})
         content = rec.path.read_text(encoding="utf-8")
-        assert "\"think_time_ms\":123" in content
-        assert "\"type\": \"summary\"" in content or "\"type\":\"summary\"" in content
+        assert '"think_time_ms":123' in content
+        assert '"type": "summary"' in content or '"type":"summary"' in content

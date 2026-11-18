@@ -684,7 +684,7 @@ def find_winning_move_grid(
     return np.empty((0, 2), dtype=np.int32)
 
 
-@njit(cache=True)
+@njit(cache=True, inline="always")
 def _five_cells_through(
     grid: NDArray,  # type: ignore[type-arg]
     size: int,
@@ -705,54 +705,58 @@ def _five_cells_through(
     beyond it add up to five.  This catches the split fours
     (``XXX_X``, ``XX_XX``) a run count alone misses.
     """
-    run = 1
+    # Unbroken run on each side of the cell; (pr, pc) / (nr, nc) is the
+    # first cell past it.
+    pos = 0
+    pr = row + dr
+    pc = col + dc
+    while 0 <= pr < size and 0 <= pc < size and grid[pr, pc] == stone:
+        pos += 1
+        pr += dr
+        pc += dc
+    neg = 0
+    nr = row - dr
+    nc = col - dc
+    while 0 <= nr < size and 0 <= nc < size and grid[nr, nc] == stone:
+        neg += 1
+        nr -= dr
+        nc -= dc
+    run = 1 + pos + neg
     n = 0
     r1 = -1
     c1 = -1
     r2 = -1
     c2 = -1
-    pr = -1
-    pc = -1
-    nr = -1
-    nc = -1
-    for sign in (1, -1):
-        rr = row + sign * dr
-        cc = col + sign * dc
-        while 0 <= rr < size and 0 <= cc < size and grid[rr, cc] == stone:
-            run += 1
-            rr += sign * dr
-            cc += sign * dc
-        if sign == 1:
-            pr = rr
-            pc = cc
-        else:
-            nr = rr
-            nc = cc
     if run >= 5:
-        return run, 0, r1, c1, r2, c2
-    for sign in (1, -1):
-        if sign == 1:
-            er = pr
-            ec = pc
-        else:
-            er = nr
-            ec = nc
-        if not (0 <= er < size and 0 <= ec < size) or grid[er, ec] != 0:
-            continue
+        return run, n, r1, c1, r2, c2
+    need = 4 - run  # stones needed past the end cell to complete five
+    if 0 <= pr < size and 0 <= pc < size and grid[pr, pc] == 0:
         beyond = 0
-        rr = er + sign * dr
-        cc = ec + sign * dc
-        while 0 <= rr < size and 0 <= cc < size and grid[rr, cc] == stone:
+        rr = pr + dr
+        cc = pc + dc
+        while beyond < need and 0 <= rr < size and 0 <= cc < size and grid[rr, cc] == stone:
             beyond += 1
-            rr += sign * dr
-            cc += sign * dc
-        if run + 1 + beyond >= 5:
+            rr += dr
+            cc += dc
+        if beyond >= need:
+            r1 = pr
+            c1 = pc
+            n = 1
+    if 0 <= nr < size and 0 <= nc < size and grid[nr, nc] == 0:
+        beyond = 0
+        rr = nr - dr
+        cc = nc - dc
+        while beyond < need and 0 <= rr < size and 0 <= cc < size and grid[rr, cc] == stone:
+            beyond += 1
+            rr -= dr
+            cc -= dc
+        if beyond >= need:
             if n == 0:
-                r1 = er
-                c1 = ec
+                r1 = nr
+                c1 = nc
             else:
-                r2 = er
-                c2 = ec
+                r2 = nr
+                c2 = nc
             n += 1
     return run, n, r1, c1, r2, c2
 
@@ -766,15 +770,54 @@ def is_four_threat(
     stone: int,
     dirs: NDArray,  # type: ignore[type-arg]
 ) -> bool:
-    """Return True if placing *stone* at (row, col) creates >= 4 in a row,
-    or a split four (``XXX_X``, ``XX_XX``) that threatens five.
+    """Return True if placing *stone* at (row, col) creates >= 4 in a row.
 
-    Checks all four directions.  Used for threat ordering, threat extensions,
-    and quiescence threat detection.
+    Checks all four directions.  An alpha-beta heuristic, used for threat
+    ordering, threat extensions and quiescence move generation: it counts
+    unbroken runs only, blocked or not.  Split fours (``XXX_X``,
+    ``XX_XX``) are left out on purpose — quiescence also plays every cell
+    where the opponent would make such a four, and counting split fours
+    there nearly tripled its node count without a measurable gain.  The
+    threat searches (VCF, PNS) use :func:`makes_four_threat` instead.
+    """
+    for d in range(dirs.shape[0]):
+        dr = dirs[d, 0]
+        dc = dirs[d, 1]
+        count = 1  # the placed stone itself
+        r = row + dr
+        c = col + dc
+        while 0 <= r < size and 0 <= c < size and grid[r, c] == stone:
+            count += 1
+            r += dr
+            c += dc
+        r = row - dr
+        c = col - dc
+        while 0 <= r < size and 0 <= c < size and grid[r, c] == stone:
+            count += 1
+            r -= dr
+            c -= dc
+        if count >= 4:
+            return True
+    return False
+
+
+@njit(cache=True)
+def makes_four_threat(
+    grid: NDArray,  # type: ignore[type-arg]
+    size: int,
+    row: int,
+    col: int,
+    stone: int,
+    dirs: NDArray,  # type: ignore[type-arg]
+) -> bool:
+    """Return True if placing *stone* at (row, col) threatens five next move.
+
+    That is a five already, or a four — straight or split (``XXX_X``,
+    ``XX_XX``) — with an empty completion cell.
     """
     for d in range(dirs.shape[0]):
         run, n_five, _r1, _c1, _r2, _c2 = _five_cells_through(grid, size, row, col, stone, dirs[d, 0], dirs[d, 1])
-        if run >= 4 or n_five > 0:
+        if run >= 5 or n_five > 0:
             return True
     return False
 
@@ -798,7 +841,7 @@ def has_any_four_threat_grid(
         c = candidates[i, 1]
         if grid[r, c] != 0:
             continue
-        if is_four_threat(grid, size, r, c, stone, dirs):
+        if makes_four_threat(grid, size, r, c, stone, dirs):
             return True
     return False
 
