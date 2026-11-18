@@ -1,0 +1,51 @@
+# Compose file for local ``gomoku-fastapi`` development.
+#
+# Quick start:
+#   docker compose up --build         # build image + run, foreground
+#   docker compose up -d              # detached
+#   docker compose logs -f api        # tail logs
+#   docker compose down               # stop + remove
+#
+# All ``[api]`` settings are configurable via ``GOMOKU_API__*`` env
+# vars below — no rebuild required.  The image ships the repository's
+# ``gomoku.toml``; uncomment the volume mount to use an edited copy.
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: packages/gomoku-fastapi/Dockerfile
+    image: gomoku-api:dev
+    container_name: gomoku-api
+    ports:
+      - "8000:8000"
+    environment:
+      # Logfire: stdout-only by default.  Set LOGFIRE_TOKEN in a .env
+      # file (gitignored) to ship to logfire.dev as well.
+      GOMOKU_API__LOGFIRE_CONSOLE: "true"
+      GOMOKU_API__LOGFIRE_SEND: "false"
+      LOGFIRE_TOKEN: "${LOGFIRE_TOKEN:-}"
+      # CORS: open to local-dev frontends by default.  Tighten or set
+      # to ``[]`` for server-to-server-only deployments.
+      GOMOKU_API__CORS_ORIGINS: '["http://localhost:5173","http://localhost:3000"]'
+      # Rate limits — empty string disables the tier (useful for load tests).
+      GOMOKU_API__RATE_LIMIT_DEFAULT: "120/minute"
+      GOMOKU_API__RATE_LIMIT_COMPUTE: "30/minute"
+      # Upper bound on the search time of a single request, in seconds
+      # (0 disables the cap).
+      GOMOKU_API__MAX_TIME_LIMIT_S: "10"
+    # volumes:
+    #   # Optional: the image ships the repository's gomoku.toml; mount a
+    #   # host-side copy read-only to change brain settings without
+    #   # rebuilding.
+    #   - ./gomoku.toml:/app/gomoku.toml:ro
+    restart: unless-stopped
+    healthcheck:
+      # Compose-level healthcheck mirrors the Dockerfile's so that
+      # ``docker compose ps`` shows a meaningful state.
+      test: ["CMD", "python", "-c",
+             "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=2).status==200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3

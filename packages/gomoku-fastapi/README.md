@@ -13,7 +13,41 @@ uv run gomoku-api          # binds 127.0.0.1:8000
 # Liveness
 curl http://127.0.0.1:8000/healthz
 # {"status":"ok"}
+```
 
+### Docker
+
+```bash
+# From the repo root.  Multi-stage build, slim runtime, non-root user.
+docker compose up --build
+
+# Or without Compose:
+docker build -t gomoku-api -f packages/gomoku-fastapi/Dockerfile .
+docker run --rm -p 8000:8000 gomoku-api
+
+# All [api] settings are configurable via env vars (see compose.yaml).
+docker run --rm -p 8000:8000 \
+  -e GOMOKU_API__RATE_LIMIT_COMPUTE="60/minute" \
+  -e GOMOKU_API__CORS_ORIGINS='["http://localhost:5173"]' \
+  -e LOGFIRE_TOKEN="$LOGFIRE_TOKEN" \
+  gomoku-api
+```
+
+The image runs `uvicorn` directly (bypassing the `gomoku-api` console
+script, which deliberately binds to localhost).  Built-in
+`HEALTHCHECK` polls `/healthz` every 30s — `docker ps` shows the
+state.
+
+The image ships the repository's `gomoku.toml`, so the API serves the
+same brains and aliases as the CLI; mount an edited copy over
+`/app/gomoku.toml` to change them without rebuilding.  Numba kernels are
+compiled while the image is built, so the first move request is as fast
+as later ones (on a CPU that differs from the build machine's, Numba
+recompiles once on first use).
+
+### API examples
+
+```bash
 # List brains
 curl http://127.0.0.1:8000/v1/brains | jq '.brains[].name'
 
