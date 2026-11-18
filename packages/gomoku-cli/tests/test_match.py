@@ -24,10 +24,17 @@ class TestEngineSpec:
     def test_bare_name_is_a_brain(self):
         assert EngineSpec.parse("threat") == EngineSpec(brain="threat")
 
-    def test_full_spec(self):
+    def test_full_spec(self, tmp_path: Path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        Path("alt.toml").touch()
         spec = EngineSpec.parse("brain=threat, rev=master, config=alt.toml")
         assert spec == EngineSpec(brain="threat", rev="master", config=Path("alt.toml"))
         assert spec.label == "threat@master[alt.toml]"
+
+    def test_missing_config_is_rejected(self, tmp_path: Path):
+        """The settings loader would silently fall back to another config file."""
+        with pytest.raises(ValueError, match="does not exist"):
+            EngineSpec.parse(f"brain=threat,config={tmp_path / 'missing.toml'}")
 
     @pytest.mark.parametrize("text", ["rev=master", "brain=", "brain=x,depth=3", ""])
     def test_invalid_specs_are_rejected(self, text: str):

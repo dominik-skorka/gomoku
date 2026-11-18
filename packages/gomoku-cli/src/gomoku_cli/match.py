@@ -81,6 +81,10 @@ class EngineSpec:
             msg = f"Invalid engine spec {text!r}: no brain given"
             raise ValueError(msg)
         config = Path(fields["config"]) if "config" in fields else None
+        if config is not None and not config.is_file():
+            # The settings loader would quietly fall back to another config.
+            msg = f"Invalid engine spec {text!r}: config file {str(config)!r} does not exist"
+            raise ValueError(msg)
         return cls(brain=fields["brain"], rev=fields.get("rev"), config=config)
 
 
