@@ -272,7 +272,7 @@ class TestVerdict:
         ]
         text = format_report(EngineSpec("x"), EngineSpec("y"), [GameReview(0, record, [], blunders)])
         assert text.index("move 10: B") < text.index("move 9: A")
-        assert "B (y): 1 blunder in 4 moves (missed block 1); 0 fixable by tuning the brain's settings, " in text
+        assert "B (y): 1 blunder(s) in 4 moves (missed block 1); 0 fixable by tuning the brain's settings, " in text
         assert "1 need a fix in the brain's code" in text
         assert "Verdict: WARN" in text
 

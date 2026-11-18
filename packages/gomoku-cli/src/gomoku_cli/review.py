@@ -617,9 +617,8 @@ def format_report(spec_a: EngineSpec, spec_b: EngineSpec, reviews: list[GameRevi
     for key in ("a", "b"):
         t = totals[key]
         kinds = ", ".join(f"{_KIND_TEXT[k]} {n}" for k, n in t.by_kind.items() if n) or "none"
-        noun = "blunder" if t.blunders == 1 else "blunders"
         lines.append(
-            f"{key.upper()} ({labels[key]}): {t.blunders} {noun} in {t.moves} moves ({kinds}); "
+            f"{key.upper()} ({labels[key]}): {t.blunders} blunder(s) in {t.moves} moves ({kinds}); "
             f"{t.tuning} fixable by tuning the brain's settings, {t.bugs} need a fix in the brain's code"
         )
     if blunders:
