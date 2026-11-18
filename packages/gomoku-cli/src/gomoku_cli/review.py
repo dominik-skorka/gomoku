@@ -583,9 +583,10 @@ def verdict(totals: dict[str, EngineTally]) -> tuple[str, str]:
     """``(PASS|WARN|FAIL, reason)`` for candidate B against baseline A."""
     a, b = totals["a"], totals["b"]
     if b.bugs > a.bugs:
-        return "FAIL", f"B has {b.bugs} blunder(s) needing a code fix, A has {a.bugs}; fix them before a long match"
+        reason = f"B has {b.bugs} blunder(s) needing a fix in the brain's code, A has {a.bugs}"
+        return "FAIL", f"{reason}; fix them before a long match"
     if b.blunders:
-        return "WARN", f"B has {b.blunders} blunder(s), A has {a.blunders}; none is new logic-bug territory"
+        return "WARN", f"B has {b.blunders} blunder(s), A has {a.blunders}; no more of them need a code fix than A's"
     return "PASS", "no blunders by B"
 
 
@@ -616,9 +617,10 @@ def format_report(spec_a: EngineSpec, spec_b: EngineSpec, reviews: list[GameRevi
     for key in ("a", "b"):
         t = totals[key]
         kinds = ", ".join(f"{_KIND_TEXT[k]} {n}" for k, n in t.by_kind.items() if n) or "none"
+        noun = "blunder" if t.blunders == 1 else "blunders"
         lines.append(
-            f"{key.upper()} ({labels[key]}): {t.blunders} blunders in {t.moves} moves "
-            f"({kinds}); {t.tuning} fixable by settings, {t.bugs} need a code fix"
+            f"{key.upper()} ({labels[key]}): {t.blunders} {noun} in {t.moves} moves ({kinds}); "
+            f"{t.tuning} fixable by tuning the brain's settings, {t.bugs} need a fix in the brain's code"
         )
     if blunders:
         lines.append("")

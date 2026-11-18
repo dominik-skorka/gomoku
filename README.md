@@ -188,7 +188,7 @@ game 1, move 16: B (threat, white) played G9 — missed win: forced win starting
     retried: repeat no G9 (0.6 s) | more_pns ok I8 (0.4 s)
     => TUNING: more_pns: pns_nodes=100000, pns_time_s=20.0 (0.6x think time)
 
-Verdict: WARN — B has 2 blunder(s), A has 2; none is new logic-bug territory
+Verdict: WARN — B has 2 blunder(s), A has 2; no more of them need a code fix than A's
 ```
 
 The verdict is `FAIL` (exit status 1) when B has more BUG blunders than
