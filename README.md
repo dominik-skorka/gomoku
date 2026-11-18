@@ -165,7 +165,9 @@ baseline (A) and the candidate (B), then checks every engine move with
 an *oracle*, a threat-space proof-number search with a much larger
 budget (`--oracle-nodes`, `--oracle-time`) running from a separate
 source tree (`--oracle-rev`, by default A's revision), so a bug in the
-candidate's search can't vouch for its own moves.  It flags:
+candidate's search can't vouch for its own moves.  When B changes what
+counts as a threat, judge with `--oracle-rev worktree` as well: an older
+oracle cannot see B's new threats and reports B's sound wins as unsound.  It flags:
 
 | Blunder | Meaning |
 |---|---|

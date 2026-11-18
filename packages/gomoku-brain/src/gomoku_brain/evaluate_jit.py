@@ -685,6 +685,79 @@ def find_winning_move_grid(
 
 
 @njit(cache=True)
+def _five_cells_through(
+    grid: NDArray,  # type: ignore[type-arg]
+    size: int,
+    row: int,
+    col: int,
+    stone: int,
+    dr: int,
+    dc: int,
+) -> tuple[int, int, int, int, int, int]:
+    """Scan the line through an empty (row, col) as if *stone* were placed there.
+
+    Returns ``(run, n, r1, c1, r2, c2)``: ``run`` is the length of the
+    unbroken *stone* run through the cell, and the ``n`` (0-2) cells
+    ``(r1, c1)``, ``(r2, c2)`` are the empty cells that would then complete
+    five or more along this line.  Only the first empty cell past each end
+    of the run can (a five through the placed stone may not contain a
+    second gap), and it does when the run, that cell and the *stone* run
+    beyond it add up to five.  This catches the split fours
+    (``XXX_X``, ``XX_XX``) a run count alone misses.
+    """
+    run = 1
+    n = 0
+    r1 = -1
+    c1 = -1
+    r2 = -1
+    c2 = -1
+    pr = -1
+    pc = -1
+    nr = -1
+    nc = -1
+    for sign in (1, -1):
+        rr = row + sign * dr
+        cc = col + sign * dc
+        while 0 <= rr < size and 0 <= cc < size and grid[rr, cc] == stone:
+            run += 1
+            rr += sign * dr
+            cc += sign * dc
+        if sign == 1:
+            pr = rr
+            pc = cc
+        else:
+            nr = rr
+            nc = cc
+    if run >= 5:
+        return run, 0, r1, c1, r2, c2
+    for sign in (1, -1):
+        if sign == 1:
+            er = pr
+            ec = pc
+        else:
+            er = nr
+            ec = nc
+        if not (0 <= er < size and 0 <= ec < size) or grid[er, ec] != 0:
+            continue
+        beyond = 0
+        rr = er + sign * dr
+        cc = ec + sign * dc
+        while 0 <= rr < size and 0 <= cc < size and grid[rr, cc] == stone:
+            beyond += 1
+            rr += sign * dr
+            cc += sign * dc
+        if run + 1 + beyond >= 5:
+            if n == 0:
+                r1 = er
+                c1 = ec
+            else:
+                r2 = er
+                c2 = ec
+            n += 1
+    return run, n, r1, c1, r2, c2
+
+
+@njit(cache=True)
 def is_four_threat(
     grid: NDArray,  # type: ignore[type-arg]
     size: int,
@@ -693,30 +766,15 @@ def is_four_threat(
     stone: int,
     dirs: NDArray,  # type: ignore[type-arg]
 ) -> bool:
-    """Return True if placing *stone* at (row, col) creates >= 4 in a row.
+    """Return True if placing *stone* at (row, col) creates >= 4 in a row,
+    or a split four (``XXX_X``, ``XX_XX``) that threatens five.
 
     Checks all four directions.  Used for threat ordering, threat extensions,
     and quiescence threat detection.
     """
     for d in range(dirs.shape[0]):
-        dr = dirs[d, 0]
-        dc = dirs[d, 1]
-        count = 1  # the placed stone itself
-        # Positive direction
-        r = row + dr
-        c = col + dc
-        while 0 <= r < size and 0 <= c < size and grid[r, c] == stone:
-            count += 1
-            r += dr
-            c += dc
-        # Negative direction
-        r = row - dr
-        c = col - dc
-        while 0 <= r < size and 0 <= c < size and grid[r, c] == stone:
-            count += 1
-            r -= dr
-            c -= dc
-        if count >= 4:
+        run, n_five, _r1, _c1, _r2, _c2 = _five_cells_through(grid, size, row, col, stone, dirs[d, 0], dirs[d, 1])
+        if run >= 4 or n_five > 0:
             return True
     return False
 
@@ -771,40 +829,19 @@ def has_unblockable_four_grid(
         c = candidates[i, 1]
         if grid[r, c] != 0:
             continue
-        dead_fours = 0
+        # Distinct cells that would complete five: two or more (a live
+        # four, or fours on two lines) cannot all be blocked.
+        first_r = -1
+        first_c = -1
         for d in range(dirs.shape[0]):
-            dr = dirs[d, 0]
-            dc = dirs[d, 1]
-            count = 0
-            open_ends = 0
-
-            rr = r + dr
-            cc = c + dc
-            while 0 <= rr < size and 0 <= cc < size and grid[rr, cc] == stone:
-                count += 1
-                rr += dr
-                cc += dc
-            if 0 <= rr < size and 0 <= cc < size and grid[rr, cc] == 0:
-                open_ends += 1
-
-            rr = r - dr
-            cc = c - dc
-            while 0 <= rr < size and 0 <= cc < size and grid[rr, cc] == stone:
-                count += 1
-                rr -= dr
-                cc -= dc
-            if 0 <= rr < size and 0 <= cc < size and grid[rr, cc] == 0:
-                open_ends += 1
-
-            total = count + 1
-            if total >= 5:
+            run, n_five, r1, c1, _r2, _c2 = _five_cells_through(grid, size, r, c, stone, dirs[d, 0], dirs[d, 1])
+            if run >= 5 or n_five == 2:
                 return True
-            if total == 4 and open_ends == 2:
-                return True
-            if total == 4 and open_ends == 1:
-                dead_fours += 1
-        if dead_fours >= 2:
-            return True
+            if n_five == 1:
+                if first_r >= 0 and (first_r != r1 or first_c != c1):
+                    return True
+                first_r = r1
+                first_c = c1
     return False
 
 
@@ -924,58 +961,16 @@ def find_four_threats_grid(
         if grid[r, c] != 0:
             continue
         for d in range(dirs.shape[0]):
-            dr = dirs[d, 0]
-            dc = dirs[d, 1]
-            count = 0
-            pos_end_r = -1
-            pos_end_c = -1
-            neg_end_r = -1
-            neg_end_c = -1
-
-            # Positive direction
-            rr = r + dr
-            cc = c + dc
-            while 0 <= rr < size and 0 <= cc < size and grid[rr, cc] == stone:
-                count += 1
-                rr += dr
-                cc += dc
-            if 0 <= rr < size and 0 <= cc < size and grid[rr, cc] == 0:
-                pos_end_r = rr
-                pos_end_c = cc
-
-            # Negative direction
-            rr = r - dr
-            cc = c - dc
-            while 0 <= rr < size and 0 <= cc < size and grid[rr, cc] == stone:
-                count += 1
-                rr -= dr
-                cc -= dc
-            if 0 <= rr < size and 0 <= cc < size and grid[rr, cc] == 0:
-                neg_end_r = rr
-                neg_end_c = cc
-
-            open_ends = 0
-            if pos_end_r >= 0:
-                open_ends += 1
-            if neg_end_r >= 0:
-                open_ends += 1
-
-            total = count + 1
-
+            run, n_five, r1, c1, _r2, _c2 = _five_cells_through(grid, size, r, c, stone, dirs[d, 0], dirs[d, 1])
             # >= 5 (not == 5): freestyle counts overlines as wins, so a
-            # move completing six-or-more is just as unblockable.
-            if total >= 5 or (total == 4 and open_ends == 2):
+            # move completing six-or-more is just as unblockable.  Two
+            # completion cells on one line is a live four.
+            if run >= 5 or n_five == 2:
                 unblockable[r, c] = True
-            elif total == 4 and open_ends == 1:
-                if pos_end_r >= 0:
-                    dr_end = pos_end_r
-                    dc_end = pos_end_c
-                else:
-                    dr_end = neg_end_r
-                    dc_end = neg_end_c
+            elif n_five == 1:
                 def_count[r, c] += 1
-                def_r[r, c] = dr_end
-                def_c[r, c] = dc_end
+                def_r[r, c] = r1
+                def_c[r, c] = c1
 
     # Emit one row per candidate that produced any threat.  Iterate the
     # candidate list in order to preserve the caller's expected ordering.

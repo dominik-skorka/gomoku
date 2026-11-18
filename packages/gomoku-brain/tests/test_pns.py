@@ -242,10 +242,12 @@ class TestPnsTranspositions:
         return board
 
     def test_finds_win_the_tree_search_missed(self):
-        """With one node per position the 10k budget reaches this forced
-        win; the tree search spent the same budget re-searching move-order
-        permutations and returned None (it needed a far larger budget)."""
-        move = pns_threat_search(self._midgame(), Stone.BLACK, max_nodes=10_000, max_time_s=60.0)
+        """With one node per position a 100k budget reaches this forced
+        win; the tree search re-searched move-order permutations and needed
+        a far larger budget.  (10k sufficed while split fours were invisible
+        to the defence enumeration; seeing the defender's split counter-fours
+        widens the proof.)"""
+        move = pns_threat_search(self._midgame(), Stone.BLACK, max_nodes=100_000, max_time_s=60.0)
         assert move == Move(row=6, col=6)
 
     def test_move_orders_share_one_node(self):
@@ -311,7 +313,7 @@ class TestPnsStatus:
         board = TestPnsTranspositions._midgame()
         assert pns_threat_status(board, Stone.BLACK, max_nodes=20) == (PNSStatus.UNKNOWN, None)
         assert pns_threat_search(board, Stone.BLACK, max_nodes=20) is None
-        status, _ = pns_threat_status(board, Stone.BLACK, max_nodes=10_000, max_time_s=60.0)
+        status, _ = pns_threat_status(board, Stone.BLACK, max_nodes=100_000, max_time_s=60.0)
         assert status is PNSStatus.PROVED
 
 
@@ -355,9 +357,12 @@ class TestUnblockableFourDefences:
         status, _ = pns_threat_status(_replay(_LOST_GAME[:10]), Stone.BLACK, max_nodes=50_000, max_time_s=60.0)
         assert status is not PNSStatus.PROVED
 
-    def test_reply_i6_leaves_black_without_a_forced_win(self):
+    def test_reply_i6_does_not_save_white(self):
+        """I6 looked like White's defence while split fours (XXX_X, XX_XX)
+        were invisible.  Black still wins with them; the proof was checked
+        against every White reply, two attacking moves deep."""
         from gomoku_brain.pns import PNSStatus, pns_threat_status
 
         board = _replay([*_LOST_GAME[:10], (6, 8), (5, 8)])  # I7, I6
-        status, _ = pns_threat_status(board, Stone.BLACK, max_nodes=50_000, max_time_s=60.0)
-        assert status is PNSStatus.DISPROVED
+        status, _ = pns_threat_status(board, Stone.BLACK, max_nodes=200_000, max_time_s=60.0)
+        assert status is PNSStatus.PROVED

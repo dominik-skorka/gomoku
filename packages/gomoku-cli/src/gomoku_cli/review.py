@@ -67,6 +67,9 @@ CLAIMED_WIN_PATHS = frozenset({"vcf_win", "pns_win", "vct_win", "vcf_precheck"})
 # Decision paths that play a win (claimed or immediate).
 WIN_PATHS = CLAIMED_WIN_PATHS | {"immediate_win", "instant_win"}
 
+# --oracle-rev value that runs the oracle from the working tree.
+WORKTREE = "worktree"
+
 KINDS = ("missed_win", "missed_block", "losing_move", "unsound_proof")
 _KIND_TEXT = {
     "missed_win": "missed win",
@@ -500,7 +503,10 @@ def run_review(
     repo = find_repo()
     source_a = resolve_source(spec_a, repo)
     source_b = resolve_source(spec_b, repo)
-    oracle_spec = EngineSpec("random", rev=oracle_rev if oracle_rev is not None else spec_a.rev)
+    if oracle_rev == WORKTREE:
+        oracle_spec = EngineSpec("random")
+    else:
+        oracle_spec = EngineSpec("random", rev=oracle_rev if oracle_rev is not None else spec_a.rev)
     source_oracle = resolve_source(oracle_spec, repo)
 
     schedule = [(i, a_black) for i in range(pairs) for a_black in (True, False)]

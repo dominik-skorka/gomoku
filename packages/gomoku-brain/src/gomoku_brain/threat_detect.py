@@ -81,9 +81,7 @@ def _scan_context(board: Board) -> _ScanCtx | None:
         cached = board._ctx_candidates[ply]
         if cached is not None and board._ctx_zobrist[ply] == board.zobrist:
             return board.grid, board.size, cached, dirs
-        candidates = get_candidates_grid(
-            board.grid, board.size, board._occ_arr[: board.occ_count], 2
-        )
+        candidates = get_candidates_grid(board.grid, board.size, board._occ_arr[: board.occ_count], 2)
         board._ctx_zobrist[ply] = board.zobrist
         board._ctx_candidates[ply] = candidates
         board._ctx_moves[ply] = None
@@ -137,20 +135,33 @@ def _find_four_threats_python(board: Board, stone: Stone) -> list[tuple[Move, Mo
     by_move: dict[tuple[int, int], tuple[Move, list[Move | None]]] = {}
     candidates = get_candidate_moves(board, radius=2)
 
+    size = board.size
     for move in candidates:
         r, c = move.row, move.col
         for dr, dc in _DIRECTIONS:
-            count, open_ends, end_cells = _line_cells(board, r, c, dr, dc, stone)
+            count, _open_ends, end_cells = _line_cells(board, r, c, dr, dc, stone)
             total = count + 1  # +1 for the placed stone itself
+            # An end cell completes five when the run, the cell and the
+            # stones beyond it reach five — which also catches the split
+            # fours (XXX_X, XX_XX) a run count alone misses.
+            completions = []
+            for er, ec in end_cells:
+                sr, sc = (1, 1) if (er - r) * dr + (ec - c) * dc > 0 else (-1, -1)
+                beyond = 0
+                br, bc = er + sr * dr, ec + sc * dc
+                while 0 <= br < size and 0 <= bc < size and board.at(br, bc) is stone:
+                    beyond += 1
+                    br, bc = br + sr * dr, bc + sc * dc
+                if total + 1 + beyond >= 5:
+                    completions.append(Move(row=er, col=ec))
 
             defence: Move | None
             # >= 5 (not == 5): freestyle counts overlines as wins, so a
             # move completing six-or-more is just as unblockable.
-            if total >= 5 or (total == 4 and open_ends == 2):
+            if total >= 5 or len(completions) == 2:
                 defence = None
-            elif total == 4 and open_ends == 1 and end_cells:
-                dr2, dc2 = end_cells[0]
-                defence = Move(row=dr2, col=dc2)
+            elif len(completions) == 1:
+                defence = completions[0]
             else:
                 continue
 
@@ -168,9 +179,7 @@ def _find_four_threats_python(board: Board, stone: Stone) -> list[tuple[Move, Mo
     return threats
 
 
-def _find_four_threats(
-    board: Board, stone: Stone, ctx: _ScanCtx | None = None
-) -> list[tuple[Move, Move | None]]:
+def _find_four_threats(board: Board, stone: Stone, ctx: _ScanCtx | None = None) -> list[tuple[Move, Move | None]]:
     """Find all moves that create a four-in-a-row for ``stone``.
 
     Returns a list of ``(attack_move, defence_move | None)`` sorted by
@@ -180,10 +189,14 @@ def _find_four_threats(
     counter-threat scan) therefore hit wins and refutations earliest,
     maximising VCF / alpha-beta early termination.
 
-    Detects:
+    A four-threat is a move after which one empty cell (its defence)
+    would complete five or more through it; two such cells (a live four,
+    or fours on two lines) make it unblockable.  Detects:
     - Straight fours: placing a stone extends three-in-a-row to four.
-    - Gap fours: placing a stone fills a gap inside a would-be five
-      (e.g. XX_XX pattern).
+    - Split fours: the move leaves ``XXX_X`` or ``XX_XX``, whose gap
+      completes five (from ``XX__X``, ``X_X_X`` and the like).
+    - Fives: placing a stone fills a gap inside a would-be five
+      (e.g. ``XX_XX``) or extends a four.
 
     Dispatches to a Numba JIT kernel when available; pure-Python fallback
     is kept for the JIT-disabled path.  ``_line_cells`` scans outward from
@@ -234,9 +247,7 @@ def _find_three_threats_python(board: Board, stone: Stone) -> list[tuple[Move, l
     return threats
 
 
-def _find_three_threats(
-    board: Board, stone: Stone, ctx: _ScanCtx | None = None
-) -> list[tuple[Move, list[Move]]]:
+def _find_three_threats(board: Board, stone: Stone, ctx: _ScanCtx | None = None) -> list[tuple[Move, list[Move]]]:
     """Find moves that create a *live* three (open at both ends).
 
     Returns ``(attack_move, defence_moves)`` — ``defence_moves`` are the
@@ -359,9 +370,7 @@ def _has_unblockable_four(board: Board, stone: Stone, ctx: _ScanCtx | None = Non
     return any(d is None for _, d in _find_four_threats_python(board, stone))
 
 
-def _count_distinct_three_cells(
-    board: Board, stone: Stone, cap: int, ctx: _ScanCtx | None = None
-) -> int:
+def _count_distinct_three_cells(board: Board, stone: Stone, cap: int, ctx: _ScanCtx | None = None) -> int:
     """Count distinct cells that create a live-three for *stone*, up to *cap*.
 
     Stops counting once the running total reaches ``cap`` — callers

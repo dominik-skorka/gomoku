@@ -562,7 +562,10 @@ def match(
 @click.option(
     "--oracle-rev",
     default=None,
-    help="Git revision whose proof search judges the moves (default: A's revision, or the working tree).",
+    help=(
+        "Git revision whose proof search judges the moves, or 'worktree' (default: A's revision). "
+        "Use worktree when B changes threat detection: an older oracle cannot see B's new threats."
+    ),
 )
 @click.option("--oracle-nodes", type=click.IntRange(1_000, 10_000_000), default=200_000, show_default=True)
 @click.option("--oracle-time", type=click.FloatRange(0.1, 600.0), default=30.0, show_default=True, help="Seconds.")

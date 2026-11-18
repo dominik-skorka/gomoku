@@ -412,3 +412,29 @@ class TestCliVerdict:
         assert payload["verdict"]["status"] == "FAIL"
         assert payload["totals"]["b"]["bugs"] == 1
         assert payload["games"][0]["blunders"][0]["kind"] == "missed_block"
+
+
+class TestOracleSource:
+    def test_worktree_oracle_runs_from_the_working_tree(self, monkeypatch):
+        import gomoku_cli.review as review_module
+
+        class Resolved(Exception):
+            pass
+
+        seen: list[EngineSpec] = []
+
+        def fake_resolve(spec, repo):
+            seen.append(spec)
+            if len(seen) == 3:  # A, B, then the oracle: stop before starting engines
+                raise Resolved
+            return None
+
+        monkeypatch.setattr(review_module, "resolve_source", fake_resolve)
+        monkeypatch.setattr(review_module, "generate_openings", lambda *a, **k: [])
+        for oracle_rev, expected in (("worktree", None), (None, "base"), ("other", "other")):
+            seen.clear()
+            with pytest.raises(Resolved):
+                review_module.run_review(
+                    EngineSpec("random", rev="base"), EngineSpec("random"), games=2, oracle_rev=oracle_rev
+                )
+            assert seen[2].rev == expected
