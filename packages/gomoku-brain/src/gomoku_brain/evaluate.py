@@ -172,8 +172,12 @@ def _fork_score(board: Board, stone: Stone) -> float:
     return bonus
 
 
-def find_fork_cells(board: Board, stone: Stone) -> list[Move]:
+def find_fork_cells(board: Board, stone: Stone, split: bool = False) -> list[Move]:
     """Return empty cells where >= 2 distinct threat lines for *stone* converge.
+
+    With *split*, a line also counts when the move makes a three or a four
+    on it, split ones included (``XX_X``, ``XXX_X``), which the run-based
+    threat lines miss.
 
     Used by threat brain to detect imminent fork points that need blocking.
     Dispatches to a Numba JIT kernel when available; the pure-Python
@@ -200,6 +204,7 @@ def find_fork_cells(board: Board, stone: Stone) -> list[Move]:
             get_dirs(),
             get_pattern_table(),
             get_fork_threshold(),
+            split,
         )
         return [Move(row=int(result[i, 0]), col=int(result[i, 1])) for i in range(result.shape[0])]
 
@@ -218,7 +223,7 @@ def find_fork_cells(board: Board, stone: Stone) -> list[Move]:
                     continue
                 if board.at(nr, nc) is not Stone.EMPTY:
                     continue
-                lines = _fork_lines_at(board, nr, nc, stone)
+                lines = _fork_lines_at(board, nr, nc, stone) if split else _threat_lines_at(board, nr, nc, stone)
                 if lines >= 2:
                     forks.append(Move(row=nr, col=nc))
     return forks

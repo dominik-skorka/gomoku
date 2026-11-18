@@ -160,6 +160,7 @@ def _pns_defence_moves(
     state: SearchState,
     attacker: Stone,
     ctx: _ScanCtx | None = None,
+    split_threes: bool = False,
 ) -> list[Move]:
     """Compute defender moves for an AND node: blocks + counter-threats.
 
@@ -201,7 +202,7 @@ def _pns_defence_moves(
 
         # 2) Attacker threes — the cells that stop them (both ends of a
         #    straight three; the gap and both ends of a split three).
-        atk_threes = find_three_threats_grid(grid, size, candidates, atk_int, dirs)
+        atk_threes = find_three_threats_grid(grid, size, candidates, atk_int, dirs, split_threes)
         for i in range(atk_threes.shape[0]):
             for j in (2, 4, 6):
                 if atk_threes[i, j] >= 0:
@@ -213,7 +214,7 @@ def _pns_defence_moves(
             cells.add((int(def_fours[i, 0]), int(def_fours[i, 1])))
 
         # 4) Defender's own three-threats (counter-threes).
-        def_threes = find_three_threats_grid(grid, size, candidates, def_int, dirs)
+        def_threes = find_three_threats_grid(grid, size, candidates, def_int, dirs, split_threes)
         for i in range(def_threes.shape[0]):
             cells.add((int(def_threes[i, 0]), int(def_threes[i, 1])))
     else:
@@ -225,7 +226,7 @@ def _pns_defence_moves(
                 cells.add((attack.row, attack.col))
 
         # 2) Cells that stop the attacker's threes
-        for _attack, defs in _find_three_threats(state, attacker):
+        for _attack, defs in _find_three_threats(state, attacker, split=split_threes):
             for d in defs:
                 cells.add((d.row, d.col))
 
@@ -234,7 +235,7 @@ def _pns_defence_moves(
             cells.add((attack.row, attack.col))
 
         # 4) Defender's own three-threats (counter-threes)
-        for attack, _defs in _find_three_threats(state, defender):
+        for attack, _defs in _find_three_threats(state, defender, split=split_threes):
             cells.add((attack.row, attack.col))
 
     # 5) Attacker threats of an unblockable four (a live four, or a
@@ -298,7 +299,7 @@ def _link(node: _PNSNode, child: _PNSNode, move: Move) -> None:
     node.moves.append(move)
 
 
-def _expand(node: _PNSNode, state: SearchState, attacker: Stone, table: _NodeTable) -> int:
+def _expand(node: _PNSNode, state: SearchState, attacker: Stone, table: _NodeTable, split_threes: bool = False) -> int:
     """Generate children for ``node``; return how many new nodes were created.
 
     Precondition: ``state`` is at ``node``'s position.  Postcondition:
@@ -348,7 +349,7 @@ def _expand(node: _PNSNode, state: SearchState, attacker: Stone, table: _NodeTab
         # Four-threats first (stronger), then live-three threats; a cell
         # that is both is tried once.
         attacks = [atk for atk, _defence in _find_four_threats(state, attacker, ctx)]
-        attacks.extend(atk for atk, _defs in _find_three_threats(state, attacker, ctx))
+        attacks.extend(atk for atk, _defs in _find_three_threats(state, attacker, ctx, split_threes))
         seen_moves: set[tuple[int, int]] = set()
         for attack in attacks:
             key = (attack.row, attack.col)
@@ -411,7 +412,7 @@ def _expand(node: _PNSNode, state: SearchState, attacker: Stone, table: _NodeTab
             finally:
                 state.unmake()
 
-        defences = _pns_defence_moves(state, attacker, ctx)
+        defences = _pns_defence_moves(state, attacker, ctx, split_threes)
 
         if not defences:
             # No blocks or counter-threats -> attacker's threat is unanswerable
@@ -537,6 +538,7 @@ def pns_threat_status(
     stone: Stone,
     max_nodes: int = 10_000,
     max_time_s: float = 5.0,
+    split_threes: bool = False,
 ) -> tuple[PNSStatus, Move | None]:
     """Run Proof-Number Search in threat-space and report how it ended.
 
@@ -545,6 +547,11 @@ def pns_threat_status(
     or ``(UNKNOWN, None)`` when the budget ran out first.  Telling the
     last two apart matters to callers that use "no forced win" as a
     safety guarantee.
+
+    ``split_threes`` lets both sides use split threes (``_XX_X_``) as
+    threats.  Proofs stay sound without them — a split three only threatens
+    a live four, which the defence enumeration already answers — so it
+    widens the search for completeness only.
 
     ``max_nodes`` counts distinct positions.  Accepts an existing
     :class:`SearchState` to skip the per-call Pydantic→bitboard
@@ -589,7 +596,7 @@ def pns_threat_status(
             #    stale walk can end on an expanded, solved node; it then
             #    only needs the backpropagation below.
             if not mpn.expanded:
-                nodes_created += _expand(mpn, state, attacker, table)
+                nodes_created += _expand(mpn, state, attacker, table, split_threes)
 
             # 4) Backpropagate along the selection path only.
             _backpropagate_path(path)
@@ -613,11 +620,12 @@ def pns_threat_search(
     stone: Stone,
     max_nodes: int = 10_000,
     max_time_s: float = 5.0,
+    split_threes: bool = False,
 ) -> Move | None:
     """Return the first move of a forced win for *stone*, or ``None``.
 
     ``None`` covers both "no forced win" and "budget ran out"; use
     :func:`pns_threat_status` when the difference matters.
     """
-    status, move = pns_threat_status(board, stone, max_nodes, max_time_s)
+    status, move = pns_threat_status(board, stone, max_nodes, max_time_s, split_threes)
     return move if status is PNSStatus.PROVED else None

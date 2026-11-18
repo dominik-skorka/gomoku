@@ -242,12 +242,12 @@ class TestPnsTranspositions:
         return board
 
     def test_finds_win_the_tree_search_missed(self):
-        """With one node per position a 300k budget reaches this forced
+        """With one node per position a 100k budget reaches this forced
         win; the tree search re-searched move-order permutations and needed
-        a far larger budget.  (10k sufficed while split fours and threes
-        were invisible to the defence enumeration; seeing the defender's
-        split counter-threats widens the proof.)"""
-        move = pns_threat_search(self._midgame(), Stone.BLACK, max_nodes=300_000, max_time_s=60.0)
+        a far larger budget.  (10k sufficed while split fours were invisible
+        to the defence enumeration; seeing the defender's split counter-fours
+        widens the proof.  With split_threes it takes 300k.)"""
+        move = pns_threat_search(self._midgame(), Stone.BLACK, max_nodes=100_000, max_time_s=60.0)
         assert move == Move(row=6, col=6)
 
     def test_move_orders_share_one_node(self):
@@ -313,7 +313,7 @@ class TestPnsStatus:
         board = TestPnsTranspositions._midgame()
         assert pns_threat_status(board, Stone.BLACK, max_nodes=20) == (PNSStatus.UNKNOWN, None)
         assert pns_threat_search(board, Stone.BLACK, max_nodes=20) is None
-        status, _ = pns_threat_status(board, Stone.BLACK, max_nodes=300_000, max_time_s=60.0)
+        status, _ = pns_threat_status(board, Stone.BLACK, max_nodes=100_000, max_time_s=60.0)
         assert status is PNSStatus.PROVED
 
 

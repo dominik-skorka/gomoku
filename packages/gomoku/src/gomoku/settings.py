@@ -133,6 +133,18 @@ class ThreatBrainSettings(BaseModel):
     threat_search: str = Field(default="pns", pattern="^(pns|vct)$")
     pns_nodes: int = Field(default=10_000, ge=1_000, le=10_000_000)
     pns_time_s: float = Field(default=5.0, ge=0.1, le=60.0)
+    split_threes: bool = Field(
+        default=False,
+        description=(
+            "Let PNS / VCT use split threes (_XX_X_) as threats for both sides.  "
+            "Proofs are sound without them; on lets the search find wins that use "
+            "them, at a much wider search (needs a larger pns_nodes)."
+        ),
+    )
+    split_forks: bool = Field(
+        default=False,
+        description="Count split threes and fours (XX_X, XXX_X) when looking for the opponent's fork cells.",
+    )
     fallback: AlphaBetaBrainSettings | None = Field(
         default=None,
         description=(

@@ -232,8 +232,12 @@ def find_fork_cells_grid(
     dirs: NDArray,  # type: ignore[type-arg]
     table: NDArray,  # type: ignore[type-arg]
     fork_threshold: int,
+    split: bool = False,
 ) -> NDArray:  # type: ignore[type-arg]
     """Return empty cells where >= 2 threat-level lines for *stone* converge.
+
+    With *split*, lines are counted by :func:`_fork_lines_at` (split threes
+    and fours count), otherwise by :func:`_threat_lines_at`.
 
     Mirrors ``_fork_score`` but emits coordinates instead of a bonus.
     Returns an int32[K, 2] array of (row, col) pairs in scan order.
@@ -258,7 +262,10 @@ def find_fork_cells_grid(
                 seen[nr, nc] = True
                 if grid[nr, nc] != 0:
                     continue
-                lines = _fork_lines_at(grid, size, nr, nc, stone, dirs, table, fork_threshold)
+                if split:
+                    lines = _fork_lines_at(grid, size, nr, nc, stone, dirs, table, fork_threshold)
+                else:
+                    lines = _threat_lines_at(grid, size, nr, nc, stone, dirs, table, fork_threshold)
                 if lines >= 2:
                     out[out_count, 0] = nr
                     out[out_count, 1] = nc
@@ -896,6 +903,47 @@ def _three_defences(
 
 
 @njit(cache=True)
+def _straight_three_defences(
+    grid: NDArray,  # type: ignore[type-arg]
+    size: int,
+    row: int,
+    col: int,
+    stone: int,
+    dr: int,
+    dc: int,
+) -> tuple[int, int, int, int, int, int, int]:
+    """The classic three test: an unbroken run of three with both ends empty.
+
+    Same return shape as :func:`_three_defences`; the defences are the two
+    ends.  Used when split threes are off (``split=False``).
+    """
+    run = 1
+    pr = row + dr
+    pc = col + dc
+    while 0 <= pr < size and 0 <= pc < size and grid[pr, pc] == stone:
+        run += 1
+        pr += dr
+        pc += dc
+    nr = row - dr
+    nc = col - dc
+    while 0 <= nr < size and 0 <= nc < size and grid[nr, nc] == stone:
+        run += 1
+        nr -= dr
+        nc -= dc
+    if (
+        run == 3
+        and 0 <= pr < size
+        and 0 <= pc < size
+        and grid[pr, pc] == 0
+        and 0 <= nr < size
+        and 0 <= nc < size
+        and grid[nr, nc] == 0
+    ):
+        return 2, pr, pc, nr, nc, -1, -1
+    return 0, -1, -1, -1, -1, -1, -1
+
+
+@njit(cache=True)
 def is_four_threat(
     grid: NDArray,  # type: ignore[type-arg]
     size: int,
@@ -1030,8 +1078,9 @@ def count_distinct_three_cells_grid(
     stone: int,
     dirs: NDArray,  # type: ignore[type-arg]
     cap: int,
+    split: bool = False,
 ) -> int:
-    """Count distinct candidate cells that form a three (straight or split) for *stone*.
+    """Count distinct candidate cells that form a three for *stone* (split ones with *split*).
 
     Mirrors the unique-attacker-cell count used by
     ``ThreatBrain._check_opponent_vct``'s early-reject heuristic.  Stops
@@ -1046,7 +1095,11 @@ def count_distinct_three_cells_grid(
         if grid[r, c] != 0:
             continue
         for d in range(dirs.shape[0]):
-            if _three_defences(grid, size, r, c, stone, dirs[d, 0], dirs[d, 1])[0] > 0:
+            if split:
+                found = _three_defences(grid, size, r, c, stone, dirs[d, 0], dirs[d, 1])[0] > 0
+            else:
+                found = _straight_three_defences(grid, size, r, c, stone, dirs[d, 0], dirs[d, 1])[0] > 0
+            if found:
                 count += 1
                 if count >= cap:
                     return count
@@ -1157,8 +1210,14 @@ def find_three_threats_grid(
     candidates: NDArray,  # type: ignore[type-arg]
     stone: int,
     dirs: NDArray,  # type: ignore[type-arg]
+    split: bool = False,
 ) -> NDArray:  # type: ignore[type-arg]
     """Find three-threats for *stone* across *candidates*.
+
+    With *split*, split threes (``_XX_X_``) count and a three is any move
+    after which one stone makes a live four (:func:`_three_defences`);
+    otherwise only unbroken runs of three with both ends empty
+    (:func:`_straight_three_defences`).
 
     Returns an int32[K, 8] array; each row is
     ``(atk_r, atk_c, d1_r, d1_c, d2_r, d2_c, d3_r, d3_c)`` — the cells that
@@ -1184,7 +1243,12 @@ def find_three_threats_grid(
         if grid[r, c] != 0:
             continue
         for d in range(dirs.shape[0]):
-            n_def, r1, c1, r2, c2, r3, c3 = _three_defences(grid, size, r, c, stone, dirs[d, 0], dirs[d, 1])
+            if split:
+                n_def, r1, c1, r2, c2, r3, c3 = _three_defences(grid, size, r, c, stone, dirs[d, 0], dirs[d, 1])
+            else:
+                n_def, r1, c1, r2, c2, r3, c3 = _straight_three_defences(
+                    grid, size, r, c, stone, dirs[d, 0], dirs[d, 1]
+                )
             if n_def == 0:
                 continue
             out[out_count, 0] = r

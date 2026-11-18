@@ -114,7 +114,7 @@ def test_split_counter_four_refutes_a_false_proof():
 # anti-diagonal through G8; White's stones are in far corners.
 
 
-def _threes_at_g8(black, white=None):
+def _threes_at_g8(black, white=None, split=True):
     from gomoku_brain.threat_detect import _find_three_threats, _find_three_threats_python
 
     board = _board(black, white or [(0, 0), (0, 14), (14, 0), (14, 14)][: len(black) - 1])
@@ -122,8 +122,9 @@ def _threes_at_g8(black, white=None):
     def at_g8(threats):
         return sorted(tuple(sorted((d.row, d.col) for d in defs)) for a, defs in threats if (a.row, a.col) == (7, 6))
 
-    jit = at_g8(_find_three_threats(SearchState.from_board(board, Stone.BLACK), Stone.BLACK))
-    return board, jit, at_g8(_find_three_threats_python(board, Stone.BLACK))
+    state = SearchState.from_board(board, Stone.BLACK)
+    jit = at_g8(_find_three_threats(state, Stone.BLACK, split=split))
+    return board, jit, at_g8(_find_three_threats_python(board, Stone.BLACK, split=split))
 
 
 @pytest.mark.parametrize(
@@ -142,7 +143,7 @@ def test_double_threes_are_found_and_are_fork_cells(label, black, defences):
 
     board, jit, python = _threes_at_g8(black)
     assert jit == python == defences, label
-    forks = find_fork_cells(SearchState.from_board(board, Stone.BLACK), Stone.BLACK)
+    forks = find_fork_cells(SearchState.from_board(board, Stone.BLACK), Stone.BLACK, split=True)
     assert Move(row=7, col=6) in forks, label
 
 
@@ -150,3 +151,34 @@ def test_three_that_cannot_become_a_live_four_is_no_threat():
     # O _ X X G8 _ O: every four made from it has a blocked end.
     _, jit, python = _threes_at_g8([(7, 4), (7, 5)], [(7, 2), (7, 8)])
     assert jit == python == []
+
+
+def test_split_threes_are_off_by_default():
+    """split=False is the classic detector: unbroken threes, ends as defences."""
+    from gomoku_brain.evaluate import find_fork_cells
+
+    gapped = [(7, 3), (7, 4), (4, 9), (5, 8)]
+    board, jit, python = _threes_at_g8(gapped, split=False)
+    assert jit == python == []
+    assert Move(row=7, col=6) not in find_fork_cells(SearchState.from_board(board, Stone.BLACK), Stone.BLACK)
+    _, jit, python = _threes_at_g8([(7, 4), (7, 5)], [(7, 2), (7, 8)], split=False)
+    assert jit == python == [((7, 3), (7, 7))]  # O_XXX_O still counts here
+
+
+def test_brain_settings_reach_the_searches(monkeypatch):
+    import gomoku_brain.threat as threat_mod
+    from gomoku.settings import ThreatBrainSettings
+    from gomoku_brain.threat import ThreatBrain
+
+    assert ThreatBrainSettings().split_threes is False and ThreatBrainSettings().split_forks is False
+    seen = []
+    real = threat_mod.pns_threat_search
+
+    def spy(*args, **kwargs):
+        seen.append(kwargs.get("split_threes"))
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(threat_mod, "pns_threat_search", spy)
+    board = _board([(7, 7), (7, 8)], [(8, 8)])
+    ThreatBrain(split_threes=True).get_move(board, Stone.WHITE)
+    assert seen and all(seen)
