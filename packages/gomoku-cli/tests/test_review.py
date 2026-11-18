@@ -10,13 +10,15 @@ import pytest
 from click.testing import CliRunner
 from gomoku.models import Stone
 from gomoku_cli.main import cli
-from gomoku_cli.match import EngineSpec, GameRecord
+from gomoku_cli.match import Engine, EngineError, EngineSpec, GameRecord, find_repo, resolve_source
 from gomoku_cli.match_worker import merge
 from gomoku_cli.review import (
+    WIN_PATHS,
     Blunder,
     EngineTally,
     GameReview,
     OracleConfig,
+    _EngineSlot,
     _escalate,
     _Oracle,
     escalations,
@@ -307,3 +309,104 @@ class TestReviewEndToEnd:
         assert result.exit_code == (1 if payload["verdict"]["status"] == "FAIL" else 0), result.output
         assert len(payload["games"]) == 2
         assert {"oracle", "blunders", "record"} <= set(payload["games"][0])
+
+
+# ---------------------------------------------------------------------------
+# Real worker processes
+# ---------------------------------------------------------------------------
+
+# Black's open three on row 7 (cols 5-7); White's stones are far away.
+OPEN_THREE = [(7, 5), (0, 0), (7, 6), (0, 14), (7, 7)]
+
+
+@pytest.fixture(scope="module")
+def engine():
+    """One alpha-beta worker on a 15x15 board, shared by the protocol tests."""
+    spec = EngineSpec("alphabeta")
+    worker = Engine(spec, resolve_source(spec, find_repo()), SIZE, move_timeout_s=120.0)
+    yield worker
+    worker.close()
+
+
+class TestWorkerProtocol:
+    def test_settings_are_the_resolved_alias(self, engine):
+        from gomoku.settings import GomokuSettings
+        from gomoku_brain import resolve_brain
+
+        reply = engine.query({"op": "settings"})
+        assert (reply["type"], reply["settings"]) == resolve_brain("alphabeta", GomokuSettings().brains)
+
+    def test_diagnostics_report_the_decision_path(self, engine):
+        moves = [(7, 3), (0, 0), (7, 4), (0, 2), (7, 5), (0, 4), (7, 6), (0, 6)]
+        reply = engine.query({"moves": moves, "diagnostics": True, "overrides": {"depth": 1}})
+        assert tuple(reply["move"]) in {(7, 2), (7, 7)}
+        assert reply["path"] in WIN_PATHS  # instant win, or the VCF pre-check finding it
+        assert "path" not in engine.query({"moves": moves, "overrides": {"depth": 1}})
+
+    def test_bad_requests_get_an_error_and_the_worker_survives(self, engine):
+        with pytest.raises(EngineError, match="ValidationError"):
+            engine.query({"moves": OPEN_THREE, "overrides": {"depth": 99}})
+        with pytest.raises(EngineError, match="unknown op"):
+            engine.query({"op": "nonsense"})
+        assert engine.alive
+        assert engine.query({"op": "settings"})["type"] == "alphabeta"
+
+    def test_oracle_status_for_either_side(self, engine):
+        oracle = _Oracle(engine, OracleConfig(nodes=20_000, time_s=10.0))
+        status, move = oracle.status([*OPEN_THREE, (14, 0)])  # Black to move: open three becomes an open four
+        assert status == "PROVED"
+        assert move is not None and move[0] == 7
+        assert oracle.status(OPEN_THREE, Stone.BLACK)[0] == "PROVED"  # same question, asked for the side not to move
+        assert oracle.status([*OPEN_THREE, (14, 0)], Stone.WHITE)[0] != "PROVED"
+
+    def test_losing_move_found_with_the_real_oracle(self, engine):
+        # White (ply 5) ignores the open three; blocking an end would have held.
+        moves = [*OPEN_THREE, (14, 14)]
+        record = GameRecord(
+            opening=0,
+            a_is_black=True,
+            winner=None,
+            reason="move limit",
+            moves=moves,
+            a_ms=[10.0],
+            b_ms=[10.0],
+            paths=[None, None],
+        )
+        oracle = _Oracle(engine, OracleConfig(nodes=20_000, time_s=10.0, screen_nodes=5_000, screen_time_s=2.0))
+        review = review_game(0, record, 4, oracle, {}, SIZE, escalate=False)
+        assert [(b.ply, b.kind, b.engine) for b in review.blunders] == [(5, "losing_move", "b")]
+        assert review.blunders[0].better in {(7, 4), (7, 8)}
+        assert review.statuses[-1][0] == "PROVED"
+
+
+class TestEngineSlot:
+    def test_timed_out_retry_restarts_the_engine(self):
+        spec = EngineSpec("alphabeta")
+        source = resolve_source(spec, find_repo())
+        slot = _EngineSlot(lambda: Engine(spec, source, SIZE, move_timeout_s=120.0))
+        try:
+            first = slot.engine
+            quiet = [(7, 7), (8, 8), (6, 9), (9, 5)]  # nothing to shortcut: a full search runs
+            assert slot.retry(quiet, {"depth": 8, "max_candidates": 60, "vcf_depth": 0}, timeout_s=0.01) is None
+            assert not first.alive and slot.engine is not first
+            reply = slot.retry(OPEN_THREE, {"depth": 1}, timeout_s=60.0)
+            assert reply is not None and len(reply["move"]) == 2
+        finally:
+            slot.close()
+
+
+class TestCliVerdict:
+    def test_fail_exits_with_status_one(self, tmp_path: Path, monkeypatch):
+        import gomoku_cli.review as review_module
+
+        record = _record([*HALF_FOUR, (10, 10), (10, 11)])
+        bug = Blunder(0, 9, "b", "white", "missed_block", (10, 11), (7, 2), "y", None, 50.0, verdict="bug")
+        monkeypatch.setattr(review_module, "run_review", lambda *a, **k: [GameReview(0, record, [], [bug])])
+        out = tmp_path / "review.json"
+        result = CliRunner().invoke(cli, ["review", "--a", "random", "--b", "random", "--out", str(out)])
+        assert result.exit_code == 1, result.output
+        assert "Verdict: FAIL" in result.output
+        payload = json.loads(out.read_text())
+        assert payload["verdict"]["status"] == "FAIL"
+        assert payload["totals"]["b"]["bugs"] == 1
+        assert payload["games"][0]["blunders"][0]["kind"] == "missed_block"

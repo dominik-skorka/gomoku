@@ -15,7 +15,8 @@ revision's code.  Protocol, one JSON object per line:
   ``"stone"``, 1 = black, 2 = white, when given) and returns
   ``{"status": "PROVED"|"DISPROVED"|"UNKNOWN", "move": [r, c] | null}``.
 
-An empty line ends the session.  Everything a brain or its logging
+A request that fails gets ``{"error": MESSAGE}`` and the worker
+carries on.  An empty line ends the session.  Everything a brain or its logging
 prints goes to stderr, so stdout carries only the protocol.
 """
 
@@ -122,16 +123,19 @@ def main() -> None:
         line = line.strip()
         if not line:
             break
-        request = json.loads(line)
-        op = request.get("op", "move")
-        if op == "move":
-            reply = think(request)
-        elif op == "settings":
-            reply = {"type": brain_type, "settings": base_settings}
-        elif op == "status":
-            reply = status(request)
-        else:
-            reply = {"error": f"unknown op {op!r}"}
+        try:
+            request = json.loads(line)
+            op = request.get("op", "move")
+            if op == "move":
+                reply = think(request)
+            elif op == "settings":
+                reply = {"type": brain_type, "settings": base_settings}
+            elif op == "status":
+                reply = status(request)
+            else:
+                reply = {"error": f"unknown op {op!r}"}
+        except Exception as exc:  # a bad request must not take the engine down
+            reply = {"error": f"{type(exc).__name__}: {exc}"}
         pipe.write(json.dumps(reply) + "\n")
 
 
