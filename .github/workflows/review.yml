@@ -1,0 +1,58 @@
+name: Blunder review
+
+# A few games of the PR's threat brain against its base branch, every move
+# checked by an independent proof search (see `gomoku review` in the README).
+# Fails when the PR adds blunders that no setting fixes.
+on:
+  pull_request:
+    paths:
+      - "packages/gomoku/src/**"
+      - "packages/gomoku-brain/src/**"
+      - "gomoku.toml"
+      - "packages/gomoku-cli/src/gomoku_cli/match.py"
+      - "packages/gomoku-cli/src/gomoku_cli/match_worker.py"
+      - "packages/gomoku-cli/src/gomoku_cli/review.py"
+  workflow_dispatch:
+    inputs:
+      base:
+        description: "Baseline revision"
+        default: "origin/master"
+      games:
+        description: "Games (even)"
+        default: "6"
+
+concurrency:
+  group: review-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      BASE: ${{ github.event.pull_request.base.sha || inputs.base }}
+      GAMES: ${{ inputs.games || '6' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # the baseline revision is exported from history
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Install dependencies
+        run: uv sync --all-packages --frozen
+      - name: Review
+        run: |
+          set -o pipefail
+          uv run gomoku review --a "brain=threat,rev=$BASE" --b brain=threat \
+            --games "$GAMES" --jobs "$(nproc)" --out review.json | tee review.txt
+      - name: Summary
+        if: always()
+        run: |
+          { echo '### Blunder review'; echo '```'; cat review.txt 2>/dev/null; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: review
+          path: review.json
+          if-no-files-found: ignore
