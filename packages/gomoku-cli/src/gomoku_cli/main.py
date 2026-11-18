@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 import time
 from pathlib import Path
 
@@ -439,6 +440,19 @@ def generate_book(
     console.print(f"\n[bold green]Book saved:[/bold green] {output_path} ({len(book.positions)} positions)")
 
 
+def _echo_engines(engine_a, engine_b) -> None:
+    """Name both engines and the commits they run (stale branches are flagged)."""
+    from gomoku_cli.match import describe_rev, find_repo
+
+    repo = find_repo()
+    try:
+        for key, spec in (("A", engine_a), ("B", engine_b)):
+            click.echo(f"{key}: {spec.label}  ({describe_rev(spec, repo)})")
+    except subprocess.CalledProcessError as exc:
+        raise click.ClickException(f"Unknown revision: {exc.stderr.strip() or exc}") from exc
+    click.echo("Starting engines (first start of a revision compiles)...")
+
+
 @cli.command()
 @click.option("--a", "spec_a", required=True, help="Engine A: brain=NAME[,rev=GIT_REV][,config=PATH].")
 @click.option("--b", "spec_b", required=True, help="Engine B, same format. Without rev= the working tree is used.")
@@ -498,7 +512,7 @@ def match(
         raise click.BadParameter(str(exc)) from exc
 
     total = 2 * ((games + 1) // 2)
-    click.echo(f"A: {engine_a.label}\nB: {engine_b.label}\nStarting engines (first start of a revision compiles)...")
+    _echo_engines(engine_a, engine_b)
     try:
         with progress_printer(click.echo, total) as on_game:
             records = run_match(
@@ -524,6 +538,112 @@ def match(
     if out_path is not None:
         save_records(out_path, engine_a, engine_b, records, summary)
         click.echo(f"Games written to {out_path}")
+
+
+@cli.command()
+@click.option("--a", "spec_a", required=True, help="Baseline engine: brain=NAME[,rev=GIT_REV][,config=PATH].")
+@click.option("--b", "spec_b", required=True, help="Candidate engine, same format. Without rev= the working tree.")
+@click.option("--games", type=click.IntRange(2, 200), default=6, show_default=True, help="Games to play (even).")
+@click.option("--seed", type=int, default=1, show_default=True, help="Seed for the generated openings.")
+@click.option("--jobs", type=click.IntRange(1, 64), default=1, show_default=True, help="Games reviewed in parallel.")
+@click.option("--board-size", type=click.IntRange(5, 25), default=15, show_default=True)
+@click.option("--max-moves", type=click.IntRange(10, 625), default=150, show_default=True, help="Draw after this many.")
+@click.option("--opening-stones", type=click.IntRange(0, 12), default=7, show_default=True)
+@click.option("--opening-spread", type=click.IntRange(1, 6), default=3, show_default=True, help="Radius around centre.")
+@click.option(
+    "--oracle-rev",
+    default=None,
+    help="Git revision whose proof search judges the moves (default: A's revision, or the working tree).",
+)
+@click.option("--oracle-nodes", type=click.IntRange(1_000, 10_000_000), default=200_000, show_default=True)
+@click.option("--oracle-time", type=click.FloatRange(0.1, 600.0), default=30.0, show_default=True, help="Seconds.")
+@click.option(
+    "--escalate/--no-escalate",
+    default=True,
+    show_default=True,
+    help="Retry each blunder with larger settings to tell tuning issues from bugs.",
+)
+@click.option(
+    "--escalate-timeout", type=float, default=300.0, show_default=True, help="Seconds allowed per retried move."
+)
+@click.option(
+    "--move-timeout", type=float, default=600.0, show_default=True, help="Seconds before an engine is failed."
+)
+@click.option("--out", "out_path", type=click.Path(path_type=Path), default=None, help="Write the review as JSON.")
+def review(
+    spec_a: str,
+    spec_b: str,
+    games: int,
+    seed: int,
+    jobs: int,
+    board_size: int,
+    max_moves: int,
+    opening_stones: int,
+    opening_spread: int,
+    oracle_rev: str | None,
+    oracle_nodes: int,
+    oracle_time: float,
+    escalate: bool,
+    escalate_timeout: float,
+    move_timeout: float,
+    out_path: Path | None,
+) -> None:
+    """Play a few games and check every move for tactical blunders.
+
+    A quick gate before a long match: A is the baseline, B the
+    candidate.  Each blunder is retried with larger settings and marked
+    TUNING (a setting fixes it, at the cost shown) or BUG (the logic
+    needs a fix).  Exits with status 1 when B has more BUG blunders
+    than A:
+
+      gomoku review --a brain=threat,rev=master --b brain=threat --games 6 --jobs 3
+    """
+    from gomoku_cli.match import EngineError, EngineSpec
+    from gomoku_cli.review import OracleConfig, format_report, game_line, run_review, save_review, tally, verdict
+
+    try:
+        engine_a = EngineSpec.parse(spec_a)
+        engine_b = EngineSpec.parse(spec_b)
+    except ValueError as exc:
+        raise click.BadParameter(str(exc)) from exc
+
+    total = 2 * ((games + 1) // 2)
+    _echo_engines(engine_a, engine_b)
+    done = 0
+
+    def on_game(game_review) -> None:
+        nonlocal done
+        done += 1
+        click.echo(game_line(game_review, done, total))
+
+    try:
+        reviews = run_review(
+            engine_a,
+            engine_b,
+            games=games,
+            seed=seed,
+            size=board_size,
+            max_moves=max_moves,
+            jobs=jobs,
+            move_timeout_s=move_timeout,
+            opening_stones=opening_stones,
+            opening_spread=opening_spread,
+            oracle_rev=oracle_rev,
+            oracle=OracleConfig(nodes=oracle_nodes, time_s=oracle_time),
+            escalate=escalate,
+            escalate_timeout_s=escalate_timeout,
+            on_game=on_game,
+        )
+    except (EngineError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    click.echo()
+    click.echo(format_report(engine_a, engine_b, reviews))
+    if out_path is not None:
+        save_review(out_path, engine_a, engine_b, reviews)
+        click.echo(f"Review written to {out_path}")
+    if verdict(tally(reviews))[0] == "FAIL":
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

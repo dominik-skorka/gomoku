@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -11,6 +12,7 @@ from gomoku_cli.main import cli
 from gomoku_cli.match import (
     EngineSpec,
     GameRecord,
+    describe_rev,
     format_summary,
     generate_openings,
     run_match,
@@ -151,3 +153,28 @@ class TestMatchEndToEnd:
         result = CliRunner().invoke(cli, ["match", "--a", "rev=master", "--b", "random"])
         assert result.exit_code != 0
         assert "Invalid engine spec" in result.output
+
+
+class TestDescribeRev:
+    @staticmethod
+    def _git(cwd: Path, *args: str) -> str:
+        identity = ["-c", "user.name=t", "-c", "user.email=t@example.invalid", "-c", "init.defaultBranch=main"]
+        return subprocess.run(
+            ["git", *identity, *args], cwd=cwd, check=True, capture_output=True, text=True
+        ).stdout.strip()
+
+    def test_stale_branch_is_flagged(self, tmp_path: Path):
+        origin, clone = tmp_path / "origin", tmp_path / "clone"
+        origin.mkdir()
+        self._git(origin, "init", "-q")
+        self._git(origin, "commit", "-q", "--allow-empty", "-m", "first")
+        self._git(tmp_path, "clone", "-q", str(origin), str(clone))
+        assert describe_rev(EngineSpec("threat", rev="main"), clone).endswith(" first")
+
+        self._git(origin, "commit", "-q", "--allow-empty", "-m", "second")
+        self._git(clone, "fetch", "-q")
+        line = describe_rev(EngineSpec("threat", rev="main"), clone)
+        assert line.endswith("[WARNING: main is 1 commit(s) behind its upstream; fetch and update it]")
+        # A remote branch or a commit has no upstream to fall behind.
+        assert "WARNING" not in describe_rev(EngineSpec("threat", rev="origin/main"), clone)
+        assert describe_rev(EngineSpec("threat"), clone) == "working tree"
