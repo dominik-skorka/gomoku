@@ -222,7 +222,9 @@ threat_search = "pns"
 
 # Max nodes explored by PNS before giving up.
 # Default: 10_000 | Valid range: 1_000–10_000_000
-pns_nodes = 10_000
+# 30_000 beat 10_000 by +43 Elo (95% interval +15 to +72, 300 games) at
+# 1.6x the think time; 100_000 gained no more at 2.6x.
+pns_nodes = 30_000
 
 # Max wall-clock seconds for PNS search.
 # Default: 5.0 | Valid range: 0.1–60.0
