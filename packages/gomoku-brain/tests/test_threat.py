@@ -450,3 +450,32 @@ class TestVctAwareBreakerChoice:
         brain, b, state, order = self._setup(monkeypatch, proven=set())
         move = brain._vct_aware_search(b, state, Stone.BLACK, Move(row=0, col=0), {})
         assert move == order[0]
+
+
+class TestVcfBreakerChoice:
+    """Regression from a recorded loss.  Before move 19 White threatens a
+    VCF; ten Black moves break it.  The best-evaluated one, H5, still lets
+    White win with three-threats (from G10), and White did.  J5 leaves no
+    forced win, so the brain must prefer it."""
+
+    MOVES = (
+        (7, 7), (6, 6), (8, 8), (5, 7), (7, 5), (4, 8), (7, 8), (3, 9), (2, 10), (7, 6),
+        (6, 8), (5, 8), (5, 9), (8, 6), (5, 6), (6, 7), (8, 5), (4, 10),
+    )  # fmt: skip
+
+    def _board(self) -> Board:
+        board = Board(size=15)
+        stone = Stone.BLACK
+        for r, c in self.MOVES:
+            board = board.place_stone(Move(row=r, col=c), stone)
+            stone = stone.opponent()
+        return board
+
+    def test_picks_the_breaker_that_leaves_no_forced_win(self):
+        from gomoku_brain.pns import PNSStatus, pns_threat_status
+
+        board = self._board()
+        move = ThreatBrain().get_move(board, Stone.BLACK)
+        assert move == Move(row=4, col=9)  # J5, not H5
+        status, _ = pns_threat_status(board.place_stone(move, Stone.BLACK), Stone.WHITE, max_nodes=50_000)
+        assert status is PNSStatus.DISPROVED

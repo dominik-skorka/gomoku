@@ -313,3 +313,51 @@ class TestPnsStatus:
         assert pns_threat_search(board, Stone.BLACK, max_nodes=20) is None
         status, _ = pns_threat_status(board, Stone.BLACK, max_nodes=10_000, max_time_s=60.0)
         assert status is PNSStatus.PROVED
+
+
+# ---------------------------------------------------------------------------
+# Regression: a recorded game the threat brain lost
+# ---------------------------------------------------------------------------
+
+# Moves alternate Black, White from move 1 (row, col).
+_LOST_GAME = [
+    (7, 7), (6, 6), (8, 8), (5, 7), (7, 5), (4, 8), (7, 8), (3, 9), (2, 10), (7, 6),
+    (6, 8), (5, 8), (5, 9), (8, 6), (5, 6), (6, 7), (8, 5), (4, 10),
+]  # fmt: skip
+
+
+def _replay(moves: list[tuple[int, int]]) -> Board:
+    board = Board(size=15)
+    stone = Stone.BLACK
+    for r, c in moves:
+        board = board.place_stone(Move(row=r, col=c), stone)
+        stone = stone.opponent()
+    return board
+
+
+class TestUnblockableFourDefences:
+    """Before move 11 PNS "proved" that I7 wins for Black.  After I7 Black
+    threatens I10, a four open at both ends; PNS let White answer only at
+    I10, but White can also take an end of the would-be four (I6, as White
+    played, or I11), after which Black has no forced win."""
+
+    def test_defence_set_includes_the_ends_of_the_would_be_four(self):
+        from gomoku_brain.pns import _pns_defence_moves
+        from gomoku_brain.search_state import SearchState
+
+        board = _replay(_LOST_GAME[:10]).place_stone(Move(row=6, col=8), Stone.BLACK)  # I7
+        defences = {(m.row, m.col) for m in _pns_defence_moves(SearchState.from_board(board, Stone.WHITE), Stone.BLACK)}
+        assert {(9, 8), (5, 8), (10, 8)} <= defences  # I10, I6, I11
+
+    def test_no_false_win_before_move_11(self):
+        from gomoku_brain.pns import PNSStatus, pns_threat_status
+
+        status, _ = pns_threat_status(_replay(_LOST_GAME[:10]), Stone.BLACK, max_nodes=50_000, max_time_s=60.0)
+        assert status is not PNSStatus.PROVED
+
+    def test_reply_i6_leaves_black_without_a_forced_win(self):
+        from gomoku_brain.pns import PNSStatus, pns_threat_status
+
+        board = _replay([*_LOST_GAME[:10], (6, 8), (5, 8)])  # I7, I6
+        status, _ = pns_threat_status(board, Stone.BLACK, max_nodes=50_000, max_time_s=60.0)
+        assert status is PNSStatus.DISPROVED

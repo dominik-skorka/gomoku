@@ -325,44 +325,60 @@ class ThreatBrain:
     ) -> Move:
         """Pick the best move when the opponent has a VCT/PNS forced win.
 
-        Order candidates by static evaluation (descending), then probe in
-        order until we find the first move after which the opponent
-        provably has no forced win.  Because the candidate list is
-        eval-sorted, that breaker is also the positionally strongest.
+        Every candidate is probed in static-evaluation order (see
+        :meth:`_probe_breakers`); the first one after which the opponent
+        provably has no forced win is played, so the breaker is also the
+        positionally strongest.  Failing that, the best candidate whose
+        probe ran out of budget; failing that, block the threat's first
+        move.
+        """
+        candidates = get_candidate_moves(state, radius=_CANDIDATE_RADIUS)
+        scored = _scored_moves(state, candidates, stone)
+        safe, unproven = self._probe_breakers(state, stone, scored, vcf_cache, "VCT-aware search")
+        if safe is not None:
+            return safe
+        if unproven is not None:
+            return unproven
 
-        A probe that runs out of budget proves nothing, so such a
-        candidate is only remembered: the search keeps looking for a
-        proven breaker and falls back to the best unproven candidate
-        when the time budget ends without one.  (Treating "budget ran
-        out" as "safe" used to pick an unproven move in over half of the
-        positions that reach this search.)
+        logfire.info(
+            "No VCT breaker found, blocking opponent threat at: {move}",
+            move=str(opp_threat_move),
+        )
+        if board.is_valid_move(opp_threat_move):
+            return opp_threat_move
+        return self._fallback.get_move(board, stone)
 
-        A global wall-clock cap (``self.pns_time_s``) prevents the
-        worst-case blow-up that used to be possible when every one of
-        the 40-50 candidates was probed with a half-budget PNS call.
-        Per-candidate PNS budgets are additionally shrunk to the
-        remaining global budget.
+    def _probe_breakers(
+        self,
+        state: SearchState,
+        stone: Stone,
+        scored: list[tuple[float, Move]],
+        vcf_cache: _ThreatCache,
+        label: str,
+    ) -> tuple[Move | None, Move | None]:
+        """Probe candidate replies, best evaluation first, for the opponent's forced win.
+
+        Returns ``(safe, unproven)``: the first candidate after which the
+        opponent provably has no forced win (VCF, then PNS or VCT), and
+        the best candidate whose probe ran out of budget.  Either may be
+        ``None``.  A probe that runs out of budget proves nothing, so the
+        search keeps looking for a proven candidate instead of trusting
+        it.
+
+        A global wall-clock cap (``self.pns_time_s``) bounds the whole
+        loop, and each PNS probe gets at most half the configured budget
+        and no more than the time remaining.
         """
         opp = stone.opponent()
-        candidates = get_candidate_moves(state, radius=_CANDIDATE_RADIUS)
-
-        # Pre-score every candidate with a static eval so strong moves
-        # are probed first.
-        scored = _scored_moves(state, candidates, stone)
-
         # Probe caches shared across candidates — the positions reached
         # after different first moves transpose heavily.
         vct_probe_cache: _ThreatCache = {}
-
         deadline = time.monotonic() + self.pns_time_s
         probed = 0
-        unproven: tuple[float, Move] | None = None
+        unproven: Move | None = None
         for score, move in scored:
             if time.monotonic() > deadline:
-                logfire.info(
-                    "VCT-aware search: time budget exhausted after {n} candidates",
-                    n=probed,
-                )
+                logfire.info("{label}: time budget exhausted after {n} candidates", label=label, n=probed)
                 break
             probed += 1
 
@@ -384,46 +400,24 @@ class ThreatBrain:
                         continue
                     if status is PNSStatus.UNKNOWN:
                         if unproven is None:
-                            unproven = (score, move)
+                            unproven = move
                         continue
-                else:
-                    if (
-                        _vct_state(
-                            state,
-                            opp,
-                            self.vct_depth,
-                            vct_cache=vct_probe_cache,
-                            vcf_cache=vcf_cache,
-                        )
-                        is not None
-                    ):
-                        continue
+                elif _vct_state(state, opp, self.vct_depth, vct_cache=vct_probe_cache, vcf_cache=vcf_cache) is not None:
+                    continue
                 logfire.info(
-                    "VCT-aware search: first durable breaker {move} (eval={score:.0f}) after {n} probes",
+                    "{label}: first durable breaker {move} (eval={score:.0f}) after {n} probes",
+                    label=label,
                     move=str(move),
                     score=score,
                     n=probed,
                 )
-                return move
+                return move, unproven
             finally:
                 state.unmake()
 
         if unproven is not None:
-            score, move = unproven
-            logfire.info(
-                "VCT-aware search: no proven breaker, best unproven {move} (eval={score:.0f})",
-                move=str(move),
-                score=score,
-            )
-            return move
-
-        logfire.info(
-            "No VCT breaker found, blocking opponent threat at: {move}",
-            move=str(opp_threat_move),
-        )
-        if board.is_valid_move(opp_threat_move):
-            return opp_threat_move
-        return self._fallback.get_move(board, stone)
+            logfire.info("{label}: no proven breaker, best unproven {move}", label=label, move=str(unproven))
+        return None, unproven
 
     # -- Fork detection -----------------------------------------------------
 
@@ -472,13 +466,16 @@ class ThreatBrain:
         restores the VCF via the forced block of one of our counter-
         threats).  Prefer durable breakers when any exist; fall back
         to all breakers otherwise — matching the semantics of
-        :meth:`AlphaBetaBrain._root_vcf`.  Among the chosen set, pick
-        the positionally best move.
+        :meth:`AlphaBetaBrain._root_vcf`.
+
+        Breaking the VCF is not enough if the opponent keeps a forced win
+        that also uses three-threats, so the chosen set is probed like
+        :meth:`_vct_aware_search` does (best evaluation first): a breaker
+        that provably leaves no forced win, else one whose probe ran out
+        of budget, else the positionally best.
         """
         candidates = get_candidate_moves(state, radius=_CANDIDATE_RADIUS)
-        durable, breakers = classify_vcf_breakers(
-            state, candidates, stone, self.vcf_depth, cache=vcf_cache
-        )
+        durable, breakers = classify_vcf_breakers(state, candidates, stone, self.vcf_depth, cache=vcf_cache)
 
         if not breakers:
             logfire.info(
@@ -500,4 +497,10 @@ class ThreatBrain:
         if len(effective) == 1:
             return effective[0]
 
-        return _scored_moves(state, effective, stone)[0][1]
+        scored = _scored_moves(state, effective, stone)
+        safe, unproven = self._probe_breakers(state, stone, scored, vcf_cache, "VCF-aware search")
+        if safe is not None:
+            return safe
+        if unproven is not None:
+            return unproven
+        return scored[0][1]
