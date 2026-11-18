@@ -134,9 +134,7 @@ class AlphaBetaBrain:
         return "alphabeta"
 
     def get_move(self, board: Board, stone: Stone) -> Move:
-        with brain_session(
-            "alphabeta", depth=self.depth, vcf_depth=self.vcf_depth, stone=str(stone)
-        ) as session:
+        with brain_session("alphabeta", depth=self.depth, vcf_depth=self.vcf_depth, stone=str(stone)) as session:
             diag = session.diag
 
             # -- Opening book (file-based, then hardcoded) -------------------
