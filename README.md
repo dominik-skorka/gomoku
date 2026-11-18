@@ -154,6 +154,58 @@ its kernels).  Openings where either colour already has a forced win are
 skipped unless `--any-openings` is given.  `--out games.json` saves every
 game.  Think times are only comparable at `--jobs 1`.
 
+### `review` — Check a change for blunders before a long match
+
+```bash
+uv run gomoku review --a brain=threat,rev=master --b brain=threat --games 6 --jobs 3
+```
+
+A quick gate to run before `match`: plays a few games between the
+baseline (A) and the candidate (B), then checks every engine move with
+an *oracle*, a threat-space proof-number search with a much larger
+budget (`--oracle-nodes`, `--oracle-time`) running from a separate
+source tree (`--oracle-rev`, by default A's revision), so a bug in the
+candidate's search can't vouch for its own moves.  It flags:
+
+| Blunder | Meaning |
+|---|---|
+| `missed_win` | The mover could complete five, or had a proven forced win that is disproved after its move and the reply |
+| `missed_block` | The opponent threatened five on a single cell and the mover played elsewhere |
+| `losing_move` | After the move the opponent has a proven forced win; the report shows a move that held |
+| `unsound_proof` | The brain claimed a forced win the oracle disproves, or the oracle's own proof failed after it was followed |
+
+Each blunder (except `unsound_proof`, which is always a bug) is then
+replayed with the same engine: once unchanged, then with larger
+settings, cheapest first — for the threat brain a 10× PNS budget, one
+more fallback ply, a doubled fallback width, and all of them together.
+The first setting that finds a good move is reported as **TUNING**,
+with its think-time cost; if none does, the blunder is a **BUG** in the
+brain's logic:
+
+```
+game 1, move 16: B (threat, white) played G9 — missed win: forced win starting I8; gone after the reply
+    decision: alphabeta, 0.7 s
+    retried: repeat no G9 (0.6 s) | more_pns ok I8 (0.4 s)
+    => TUNING: more_pns: pns_nodes=100000, pns_time_s=20.0 (0.6x think time)
+
+Verdict: WARN — B has 2 blunder(s), A has 2; no more of them need a code fix than A's
+```
+
+The verdict is `FAIL` (exit status 1) when B has more BUG blunders than
+A, `WARN` when B has blunders, and `PASS` otherwise.  Fix a `FAIL`
+before spending time on a long `match`.  `--out review.json` saves the
+games, the oracle's verdict for every position and each blunder with
+its retries; `--no-escalate` skips the retries.
+
+**In CI.**  Every pull request that touches the engine or `gomoku.toml`
+runs a 6-game review against its base branch (`.github/workflows/review.yml`)
+and fails on `FAIL`.  Adding the `match` label to a pull request runs the
+review and then a 300-game match against the base
+(`.github/workflows/match.yml`; remove and re-add the label to run it
+again, or start it by hand).  The match fails only when the pull request
+is significantly weaker (`gomoku match --fail-if-weaker`).  Results are
+in the run summary and as `review.json` / `match.json` artifacts.
+
 ---
 
 ## Configuration

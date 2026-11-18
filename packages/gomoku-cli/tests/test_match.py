@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -11,6 +12,7 @@ from gomoku_cli.main import cli
 from gomoku_cli.match import (
     EngineSpec,
     GameRecord,
+    describe_rev,
     format_summary,
     generate_openings,
     run_match,
@@ -22,10 +24,17 @@ class TestEngineSpec:
     def test_bare_name_is_a_brain(self):
         assert EngineSpec.parse("threat") == EngineSpec(brain="threat")
 
-    def test_full_spec(self):
+    def test_full_spec(self, tmp_path: Path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        Path("alt.toml").touch()
         spec = EngineSpec.parse("brain=threat, rev=master, config=alt.toml")
         assert spec == EngineSpec(brain="threat", rev="master", config=Path("alt.toml"))
         assert spec.label == "threat@master[alt.toml]"
+
+    def test_missing_config_is_rejected(self, tmp_path: Path):
+        """The settings loader would silently fall back to another config file."""
+        with pytest.raises(ValueError, match="does not exist"):
+            EngineSpec.parse(f"brain=threat,config={tmp_path / 'missing.toml'}")
 
     @pytest.mark.parametrize("text", ["rev=master", "brain=", "brain=x,depth=3", ""])
     def test_invalid_specs_are_rejected(self, text: str):
@@ -151,3 +160,48 @@ class TestMatchEndToEnd:
         result = CliRunner().invoke(cli, ["match", "--a", "rev=master", "--b", "random"])
         assert result.exit_code != 0
         assert "Invalid engine spec" in result.output
+
+
+class TestDescribeRev:
+    @staticmethod
+    def _git(cwd: Path, *args: str) -> str:
+        identity = ["-c", "user.name=t", "-c", "user.email=t@example.invalid", "-c", "init.defaultBranch=main"]
+        return subprocess.run(
+            ["git", *identity, *args], cwd=cwd, check=True, capture_output=True, text=True
+        ).stdout.strip()
+
+    def test_stale_branch_is_flagged(self, tmp_path: Path):
+        origin, clone = tmp_path / "origin", tmp_path / "clone"
+        origin.mkdir()
+        self._git(origin, "init", "-q")
+        self._git(origin, "commit", "-q", "--allow-empty", "-m", "first")
+        self._git(tmp_path, "clone", "-q", str(origin), str(clone))
+        assert describe_rev(EngineSpec("threat", rev="main"), clone).endswith(" first")
+
+        self._git(origin, "commit", "-q", "--allow-empty", "-m", "second")
+        self._git(clone, "fetch", "-q")
+        line = describe_rev(EngineSpec("threat", rev="main"), clone)
+        assert line.endswith("[WARNING: main is 1 commit(s) behind its upstream; fetch and update it]")
+        # A remote branch or a commit has no upstream to fall behind.
+        assert "WARNING" not in describe_rev(EngineSpec("threat", rev="origin/main"), clone)
+        assert describe_rev(EngineSpec("threat"), clone) == "working tree"
+
+
+class TestFailIfWeaker:
+    @pytest.mark.parametrize(
+        ("outcomes", "flag", "status"),
+        [
+            ([("a", "a")] * 20, True, 1),  # B clearly weaker
+            ([("a", "a")] * 20, False, 0),  # without the flag a match only measures
+            ([("a", "b")] * 20, True, 0),  # even
+            ([("b", "b")] * 20, True, 0),  # B stronger
+        ],
+    )
+    def test_exit_status(self, monkeypatch, outcomes, flag, status):
+        import gomoku_cli.match as match_module
+
+        monkeypatch.setattr(match_module, "run_match", lambda *a, **k: _pairs(*outcomes))
+        args = ["match", "--a", "random", "--b", "random", *(["--fail-if-weaker"] if flag else [])]
+        result = CliRunner().invoke(cli, args)
+        assert result.exit_code == status, result.output
+        assert ("significantly weaker" in result.output) == bool(status)

@@ -81,6 +81,10 @@ class EngineSpec:
             msg = f"Invalid engine spec {text!r}: no brain given"
             raise ValueError(msg)
         config = Path(fields["config"]) if "config" in fields else None
+        if config is not None and not config.is_file():
+            # The settings loader would quietly fall back to another config.
+            msg = f"Invalid engine spec {text!r}: config file {str(config)!r} does not exist"
+            raise ValueError(msg)
         return cls(brain=fields["brain"], rev=fields.get("rev"), config=config)
 
 
@@ -201,16 +205,28 @@ class Engine:
 
     def ask(self, moves: list[tuple[int, int]]) -> tuple[tuple[int, int], float]:
         """Return ``((row, col), think_ms)`` for the position after *moves*."""
+        reply = self.query({"moves": moves})
+        row, col = reply["move"]
+        return (int(row), int(col)), float(reply["ms"])
+
+    def query(self, request: dict, timeout_s: float | None = None) -> dict:
+        """Send one protocol request (see :mod:`gomoku_cli.match_worker`) and return the reply."""
         assert self._proc.stdin is not None
         try:
-            self._proc.stdin.write(json.dumps({"moves": moves}) + "\n")
+            self._proc.stdin.write(json.dumps(request) + "\n")
             self._proc.stdin.flush()
         except (BrokenPipeError, OSError) as exc:
             msg = f"Engine {self.spec.label} is not accepting input"
             raise EngineError(msg) from exc
-        reply = self._read(self._timeout)
-        row, col = reply["move"]
-        return (int(row), int(col)), float(reply["ms"])
+        reply = self._read(self._timeout if timeout_s is None else timeout_s)
+        if "error" in reply:
+            msg = f"Engine {self.spec.label}: {reply['error']}"
+            raise EngineError(msg)
+        return reply
+
+    @property
+    def alive(self) -> bool:
+        return self._proc.poll() is None
 
     def _read(self, timeout_s: float) -> dict:
         assert self._proc.stdout is not None
@@ -269,6 +285,26 @@ def resolve_source(spec: EngineSpec, repo: Path | None) -> Path | None:
     return target
 
 
+def describe_rev(spec: EngineSpec, repo: Path | None) -> str:
+    """One line naming the commit an engine runs, with a warning if it looks stale.
+
+    A local branch that is behind its upstream (``master`` not pulled
+    after a merge, say) silently compares against old code; the warning
+    makes that visible before a long run.
+    """
+    if spec.rev is None or repo is None:
+        return "working tree"
+    line = _git(["log", "-1", "--format=%h %s", f"{spec.rev}^{{commit}}"], repo)
+    try:
+        upstream = _git(["rev-parse", "--verify", "--quiet", f"{spec.rev}@{{upstream}}"], repo)
+    except subprocess.CalledProcessError:
+        return line  # not a branch with an upstream
+    behind = _git(["rev-list", "--count", f"{spec.rev}..{upstream}"], repo)
+    if behind != "0":
+        line += f"  [WARNING: {spec.rev} is {behind} commit(s) behind its upstream; fetch and update it]"
+    return line
+
+
 def find_repo() -> Path | None:
     try:
         return Path(_git(["rev-parse", "--show-toplevel"], Path.cwd()))
@@ -292,6 +328,8 @@ class GameRecord:
     moves: list[tuple[int, int]]
     a_ms: list[float] = field(default_factory=list)
     b_ms: list[float] = field(default_factory=list)
+    #: Decision path of every engine move (``play_game(..., diagnostics=True)`` only).
+    paths: list[str | None] = field(default_factory=list)
 
 
 def play_game(
@@ -302,8 +340,14 @@ def play_game(
     a_is_black: bool,
     size: int,
     max_moves: int,
+    *,
+    diagnostics: bool = False,
 ) -> GameRecord:
-    """Play one game from *opening*; an illegal move loses on the spot."""
+    """Play one game from *opening*; an illegal move loses on the spot.
+
+    With *diagnostics*, each engine move's decision path is kept in
+    ``record.paths``.
+    """
     board = Board(size=size)
     stone = Stone.BLACK
     moves: list[tuple[int, int]] = []
@@ -316,7 +360,12 @@ def play_game(
     while len(moves) < min(max_moves, size * size):
         a_to_move = (stone is Stone.BLACK) == a_is_black
         engine = engine_a if a_to_move else engine_b
-        (row, col), think_ms = engine.ask(moves)
+        if diagnostics:
+            reply = engine.query({"moves": moves, "diagnostics": True})
+            (row, col), think_ms = reply["move"], float(reply["ms"])
+            record.paths.append(reply.get("path"))
+        else:
+            (row, col), think_ms = engine.ask(moves)
         (record.a_ms if a_to_move else record.b_ms).append(think_ms)
         move = Move(row=row, col=col)
         if not board.is_valid_move(move):
