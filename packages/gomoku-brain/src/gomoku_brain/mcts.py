@@ -216,11 +216,14 @@ class MCTSBrain:
 
                 opp_vcf = _vcf(board, stone.opponent(), self.vcf_depth)
                 if opp_vcf is not None:
-                    durable, breakers = classify_vcf_breakers(board, candidates, stone, self.vcf_depth)
+                    durable, breakers = classify_vcf_breakers(
+                        board, candidates, stone, self.vcf_depth
+                    )
                     restricted = durable if durable else breakers
                     if restricted:
                         logfire.info(
-                            "VCF safety gate: opponent VCF at {vcf}, restricting to {n} breakers ({durable} durable)",
+                            "VCF safety gate: opponent VCF at {vcf}, restricting to "
+                            "{n} breakers ({durable} durable)",
                             vcf=str(opp_vcf),
                             n=len(restricted),
                             durable=len(durable),
@@ -234,7 +237,9 @@ class MCTSBrain:
                     else:
                         note = f"Opponent VCF at {opp_vcf}, no breakers found"
                     if diag is not None:
-                        diag.opp_threats = diag.opp_threats.model_copy(update={"vcf_result": "win"})
+                        diag.opp_threats = diag.opp_threats.model_copy(
+                            update={"vcf_result": "win"}
+                        )
                         diag.notes.append(note)
 
             stone_val = int(stone)
@@ -282,14 +287,18 @@ class MCTSBrain:
                 from gomoku.diagnostics import CandidateInfo, SearchStats
 
                 search_ms = session.elapsed_ms()
-                diag.decision_path = diag.decision_path or ("mcts_vcf_gated" if vcf_gated else "mcts")
+                diag.decision_path = diag.decision_path or (
+                    "mcts_vcf_gated" if vcf_gated else "mcts"
+                )
                 diag.chosen_move = chosen
                 diag.search_stats = SearchStats(
                     iterations=self.iterations,
                     nodes_searched=root.visits,
                     time_ms=search_ms,
                 )
-                children_sorted = sorted(root.children, key=lambda c: c.visits, reverse=True)
+                children_sorted = sorted(
+                    root.children, key=lambda c: c.visits, reverse=True
+                )
                 diag.top_candidates = [
                     CandidateInfo(
                         move=Move(row=c.move[0], col=c.move[1]),
@@ -301,7 +310,8 @@ class MCTSBrain:
                 if diag.top_candidates and diag.top_candidates[0].move != chosen:
                     diag.alternative_best = diag.top_candidates[0]
                 diag.notes.append(
-                    f"Best: {chosen} visits={best.visits}/{root.visits} wr={best.wins / best.visits:.1%}"
+                    f"Best: {chosen} visits={best.visits}/{root.visits} "
+                    f"wr={best.wins / best.visits:.1%}"
                     if best.visits
                     else f"Best: {chosen} visits=0"
                 )
@@ -336,7 +346,9 @@ class MCTSBrain:
         # 2. Expansion — add one child.
         if node.has_untried():
             move_rc, move_prior = node.pop_untried()
-            child_stone = root_stone if node.stone is not root_stone else root_stone.opponent()
+            child_stone = (
+                root_stone if node.stone is not root_stone else root_stone.opponent()
+            )
             r, c = move_rc
             state.make(r, c, child_stone)
             depth += 1

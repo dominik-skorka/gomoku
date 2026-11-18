@@ -684,7 +684,7 @@ def find_winning_move_grid(
     return np.empty((0, 2), dtype=np.int32)
 
 
-@njit(cache=True, inline="always")
+@njit(cache=True)
 def _five_cells_through(
     grid: NDArray,  # type: ignore[type-arg]
     size: int,
