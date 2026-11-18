@@ -13,10 +13,13 @@ disproof numbers toward the *most-disprovable*.  The search terminates
 when the root is proved (forced win found), disproved (no forced win),
 or the node budget is exhausted.
 
-Positions are represented implicitly: each node stores only its move and
-parent pointer.  A single mutable :class:`SearchState` is replayed along
-the selection path each iteration (O(depth) make/unmake per iteration),
-so no Pydantic ``Board`` is allocated per node.
+The search runs on a graph: positions reached through different move
+orders share one node (keyed by Zobrist hash), and moves live on the
+edges.  Nodes store no positions; a single mutable :class:`SearchState`
+is replayed along the selection path each iteration (O(depth)
+make/unmake per iteration), so no Pydantic ``Board`` is allocated per
+node.  :func:`pns_threat_status` reports whether the root was proved,
+disproved, or left unknown when the budget ran out.
 """
 
 from __future__ import annotations
