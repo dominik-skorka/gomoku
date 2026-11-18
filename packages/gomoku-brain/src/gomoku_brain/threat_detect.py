@@ -18,6 +18,7 @@ from gomoku.models import Move, Stone
 
 from gomoku_brain.candidates import get_candidate_moves
 from gomoku_brain.directions import DIRECTIONS as _DIRECTIONS
+from gomoku_brain.line_patterns import five_cells_through, three_defences
 from gomoku_brain.search_state import SearchState
 
 # Shared JIT scan context: ``(grid, size, candidates, dirs)``.
@@ -135,33 +136,22 @@ def _find_four_threats_python(board: Board, stone: Stone) -> list[tuple[Move, Mo
     by_move: dict[tuple[int, int], tuple[Move, list[Move | None]]] = {}
     candidates = get_candidate_moves(board, radius=2)
 
-    size = board.size
     for move in candidates:
         r, c = move.row, move.col
+        if board.at(r, c) is not Stone.EMPTY:
+            continue
         for dr, dc in _DIRECTIONS:
-            count, _open_ends, end_cells = _line_cells(board, r, c, dr, dc, stone)
-            total = count + 1  # +1 for the placed stone itself
-            # An end cell completes five when the run, the cell and the
-            # stones beyond it reach five — which also catches the split
-            # fours (XXX_X, XX_XX) a run count alone misses.
-            completions = []
-            for er, ec in end_cells:
-                sr, sc = (1, 1) if (er - r) * dr + (ec - c) * dc > 0 else (-1, -1)
-                beyond = 0
-                br, bc = er + sr * dr, ec + sc * dc
-                while 0 <= br < size and 0 <= bc < size and board.at(br, bc) is stone:
-                    beyond += 1
-                    br, bc = br + sr * dr, bc + sc * dc
-                if total + 1 + beyond >= 5:
-                    completions.append(Move(row=er, col=ec))
+            # Cells that would complete five through the move, split fours
+            # (XXX_X, XX_XX) included.
+            run, completions = five_cells_through(board, r, c, dr, dc, stone)
 
             defence: Move | None
             # >= 5 (not == 5): freestyle counts overlines as wins, so a
             # move completing six-or-more is just as unblockable.
-            if total >= 5 or len(completions) == 2:
+            if run >= 5 or len(completions) == 2:
                 defence = None
             elif len(completions) == 1:
-                defence = completions[0]
+                defence = Move(row=completions[0][0], col=completions[0][1])
             else:
                 continue
 
@@ -239,11 +229,9 @@ def _find_three_threats_python(board: Board, stone: Stone) -> list[tuple[Move, l
     for move in candidates:
         r, c = move.row, move.col
         for dr, dc in _DIRECTIONS:
-            count, open_ends, end_cells = _line_cells(board, r, c, dr, dc, stone)
-            total = count + 1
-            if total == 3 and open_ends == 2:
-                defence = [Move(row=er, col=ec) for er, ec in end_cells]
-                threats.append((move, defence))
+            cells = three_defences(board, r, c, dr, dc, stone)
+            if cells:
+                threats.append((move, [Move(row=er, col=ec) for er, ec in cells]))
     return threats
 
 
@@ -273,10 +261,7 @@ def _find_three_threats(board: Board, stone: Stone, ctx: _ScanCtx | None = None)
         threats: list[tuple[Move, list[Move]]] = []
         for i in range(result.shape[0]):
             atk = Move(row=int(result[i, 0]), col=int(result[i, 1]))
-            defence = [
-                Move(row=int(result[i, 2]), col=int(result[i, 3])),
-                Move(row=int(result[i, 4]), col=int(result[i, 5])),
-            ]
+            defence = [Move(row=int(result[i, j]), col=int(result[i, j + 1])) for j in (2, 4, 6) if result[i, j] >= 0]
             threats.append((atk, defence))
     else:
         threats = _find_three_threats_python(board, stone)

@@ -6,6 +6,7 @@ from gomoku.board import Board
 from gomoku.models import Move, Stone
 
 from gomoku_brain.directions import DIRECTIONS as _DIRECTIONS
+from gomoku_brain.line_patterns import five_cells_through, three_defences
 
 # Pattern scores: (count, open_ends) -> score
 # open_ends: 2 = both ends open, 1 = one end open, 0 = blocked both
@@ -106,6 +107,39 @@ def _threat_lines_at(board: Board, row: int, col: int, stone: Stone) -> int:
     return count
 
 
+def _fork_lines_at(board: Board, row: int, col: int, stone: Stone) -> int:
+    """Count the lines a fork at (row, col) would threaten on.
+
+    As :func:`_threat_lines_at`, plus every line where the move makes a
+    three or a four, split ones included (``XX_X``, ``XXX_X``).  Used for
+    fork cells; the evaluation's fork bonus keeps :func:`_threat_lines_at`.
+    """
+    count = 0
+    for dr, dc in _DIRECTIONS:
+        if (
+            _threat_lines_at_direction(board, row, col, dr, dc, stone)
+            or three_defences(board, row, col, dr, dc, stone)
+            or five_cells_through(board, row, col, dr, dc, stone)[1]
+        ):
+            count += 1
+    return count
+
+
+def _threat_lines_at_direction(board: Board, row: int, col: int, dr: int, dc: int, stone: Stone) -> bool:
+    """One direction of :func:`_threat_lines_at`."""
+    size = board.size
+    consecutive = 0
+    open_ends = 0
+    for sign in (1, -1):
+        r, c = row + sign * dr, col + sign * dc
+        while 0 <= r < size and 0 <= c < size and board.at(r, c) is stone:
+            consecutive += 1
+            r, c = r + sign * dr, c + sign * dc
+        if 0 <= r < size and 0 <= c < size and board.at(r, c) is Stone.EMPTY:
+            open_ends += 1
+    return _PATTERN_SCORES.get((consecutive, open_ends), 0) >= _FORK_THRESHOLD
+
+
 def _fork_score(board: Board, stone: Stone) -> float:
     """Score fork potential: cells where multiple threat lines converge.
 
@@ -184,7 +218,7 @@ def find_fork_cells(board: Board, stone: Stone) -> list[Move]:
                     continue
                 if board.at(nr, nc) is not Stone.EMPTY:
                     continue
-                lines = _threat_lines_at(board, nr, nc, stone)
+                lines = _fork_lines_at(board, nr, nc, stone)
                 if lines >= 2:
                     forks.append(Move(row=nr, col=nc))
     return forks

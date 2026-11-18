@@ -104,3 +104,49 @@ def test_split_counter_four_refutes_a_false_proof():
         stone = stone.opponent()
     status, move = pns_threat_status(board, Stone.WHITE, max_nodes=30_000, max_time_s=60.0)
     assert status is not PNSStatus.PROVED, move
+
+
+# ---------------------------------------------------------------------------
+# Split threes: XX_X with open ends threatens a live four like XXX does
+# ---------------------------------------------------------------------------
+
+# Cell G8 = (7, 6).  Each case puts two shapes on the row and the
+# anti-diagonal through G8; White's stones are in far corners.
+
+
+def _threes_at_g8(black, white=None):
+    from gomoku_brain.threat_detect import _find_three_threats, _find_three_threats_python
+
+    board = _board(black, white or [(0, 0), (0, 14), (14, 0), (14, 14)][: len(black) - 1])
+
+    def at_g8(threats):
+        return sorted(tuple(sorted((d.row, d.col) for d in defs)) for a, defs in threats if (a.row, a.col) == (7, 6))
+
+    jit = at_g8(_find_three_threats(SearchState.from_board(board, Stone.BLACK), Stone.BLACK))
+    return board, jit, at_g8(_find_three_threats_python(board, Stone.BLACK))
+
+
+@pytest.mark.parametrize(
+    ("label", "black", "defences"),
+    [
+        # XX + G8 on both lines: two straight threes, defended at their ends.
+        ("adjacent pairs", [(7, 4), (7, 5), (5, 8), (6, 7)], [((4, 9), (8, 5)), ((7, 3), (7, 7))]),
+        # XX _ G8 on both lines: two split threes, defended at the gap or an end.
+        ("pairs with a gap", [(7, 3), (7, 4), (4, 9), (5, 8)], [((3, 10), (6, 7), (8, 5)), ((7, 2), (7, 5), (7, 7))]),
+        # X G8 X on both lines.
+        ("G8 fills the middle", [(7, 5), (7, 7), (6, 7), (8, 5)], [((5, 8), (9, 4)), ((7, 4), (7, 8))]),
+    ],
+)
+def test_double_threes_are_found_and_are_fork_cells(label, black, defences):
+    from gomoku_brain.evaluate import find_fork_cells
+
+    board, jit, python = _threes_at_g8(black)
+    assert jit == python == defences, label
+    forks = find_fork_cells(SearchState.from_board(board, Stone.BLACK), Stone.BLACK)
+    assert Move(row=7, col=6) in forks, label
+
+
+def test_three_that_cannot_become_a_live_four_is_no_threat():
+    # O _ X X G8 _ O: every four made from it has a blocked end.
+    _, jit, python = _threes_at_g8([(7, 4), (7, 5)], [(7, 2), (7, 8)])
+    assert jit == python == []

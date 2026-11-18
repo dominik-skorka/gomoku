@@ -165,7 +165,7 @@ def _pns_defence_moves(
 
     Includes:
     1. Forced blocks of attacker four-threats.
-    2. End cells of attacker live-three threats.
+    2. Cells that stop the attacker's three-threats, split ones included.
     3. Defender's own four-threat moves (counter-fours).
     4. Defender's own three-threat moves (counter-threes).
     5. Every cell that defuses an attacker's unblockable-four threat
@@ -199,11 +199,13 @@ def _pns_defence_moves(
             else:
                 cells.add((dr_end, int(atk_fours[i, 3])))
 
-        # 2) Attacker live-threes — end-cell blocks.
+        # 2) Attacker threes — the cells that stop them (both ends of a
+        #    straight three; the gap and both ends of a split three).
         atk_threes = find_three_threats_grid(grid, size, candidates, atk_int, dirs)
         for i in range(atk_threes.shape[0]):
-            cells.add((int(atk_threes[i, 2]), int(atk_threes[i, 3])))
-            cells.add((int(atk_threes[i, 4]), int(atk_threes[i, 5])))
+            for j in (2, 4, 6):
+                if atk_threes[i, j] >= 0:
+                    cells.add((int(atk_threes[i, j]), int(atk_threes[i, j + 1])))
 
         # 3) Defender's own four-threats (counter-fours).
         def_fours = find_four_threats_grid(grid, size, candidates, def_int, dirs)
@@ -222,7 +224,7 @@ def _pns_defence_moves(
             else:
                 cells.add((attack.row, attack.col))
 
-        # 2) End cells of attacker live threes
+        # 2) Cells that stop the attacker's threes
         for _attack, defs in _find_three_threats(state, attacker):
             for d in defs:
                 cells.add((d.row, d.col))

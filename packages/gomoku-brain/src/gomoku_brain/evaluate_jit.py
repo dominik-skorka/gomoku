@@ -174,6 +174,56 @@ def _fork_score(
 
 
 @njit(cache=True)
+def _fork_lines_at(
+    grid: NDArray,  # type: ignore[type-arg]
+    size: int,
+    row: int,
+    col: int,
+    stone: int,
+    dirs: NDArray,  # type: ignore[type-arg]
+    table: NDArray,  # type: ignore[type-arg]
+    fork_threshold: int,
+) -> int:
+    """Count the lines a fork at (row, col) would threaten on.
+
+    As :func:`_threat_lines_at` (unbroken neighbours scoring a live two or
+    better), plus every line where the move makes a three or a four —
+    split ones included (``XX_X``, ``XXX_X``), which the run table can't
+    see.  Used for fork *cells*; the evaluation's fork bonus keeps
+    :func:`_threat_lines_at`.
+    """
+    line_count = 0
+    for d in range(dirs.shape[0]):
+        dr = dirs[d, 0]
+        dc = dirs[d, 1]
+        consecutive = 0
+        open_ends = 0
+        r = row + dr
+        c = col + dc
+        while 0 <= r < size and 0 <= c < size and grid[r, c] == stone:
+            consecutive += 1
+            r += dr
+            c += dc
+        if 0 <= r < size and 0 <= c < size and grid[r, c] == 0:
+            open_ends += 1
+        r = row - dr
+        c = col - dc
+        while 0 <= r < size and 0 <= c < size and grid[r, c] == stone:
+            consecutive += 1
+            r -= dr
+            c -= dc
+        if 0 <= r < size and 0 <= c < size and grid[r, c] == 0:
+            open_ends += 1
+        if (
+            _pattern_score(consecutive, open_ends, table) >= fork_threshold
+            or _three_defences(grid, size, row, col, stone, dr, dc)[0] > 0
+            or _five_cells_through(grid, size, row, col, stone, dr, dc)[1] > 0
+        ):
+            line_count += 1
+    return line_count
+
+
+@njit(cache=True)
 def find_fork_cells_grid(
     grid: NDArray,  # type: ignore[type-arg]
     size: int,
@@ -208,7 +258,7 @@ def find_fork_cells_grid(
                 seen[nr, nc] = True
                 if grid[nr, nc] != 0:
                     continue
-                lines = _threat_lines_at(grid, size, nr, nc, stone, dirs, table, fork_threshold)
+                lines = _fork_lines_at(grid, size, nr, nc, stone, dirs, table, fork_threshold)
                 if lines >= 2:
                     out[out_count, 0] = nr
                     out[out_count, 1] = nc
@@ -762,6 +812,90 @@ def _five_cells_through(
 
 
 @njit(cache=True)
+def _three_defences(
+    grid: NDArray,  # type: ignore[type-arg]
+    size: int,
+    row: int,
+    col: int,
+    stone: int,
+    dr: int,
+    dc: int,
+) -> tuple[int, int, int, int, int, int, int]:
+    """Does placing *stone* at the empty (row, col) make a three on this line?
+
+    A three is a move after which one more stone makes a *live* four
+    (``_XXXX_``, completable at both ends): some window of four cells
+    through the move holds three of *stone* and one empty cell, and the
+    cells on both sides of the window are empty.  That covers the
+    straight three ``_XXX_`` and the split threes ``_XX_X_``, ``_X_XX_``
+    — and leaves out ``O_XXX_O``, which no move turns into a live four.
+
+    Returns ``(n, r1, c1, r2, c2, r3, c3)``: the ``n`` (0-3) cells that
+    stop every such live four (``n == 0``: no three).  For ``_XXX_``
+    those are the two ends; for ``_XX_X_`` the gap and the two ends.
+    """
+    inter = -1  # bit i: offset i - 4 from (row, col), along (dr, dc)
+    union = 0
+    for k in range(-3, 1):
+        ours = 0
+        empty_off = 99
+        ok = True
+        for off in range(k, k + 4):
+            if off == 0:
+                ours += 1
+                continue
+            r = row + off * dr
+            c = col + off * dc
+            if not (0 <= r < size and 0 <= c < size):
+                ok = False
+                break
+            v = grid[r, c]
+            if v == stone:
+                ours += 1
+            elif v == 0 and empty_off == 99:
+                empty_off = off
+            else:
+                ok = False
+                break
+        if not ok or ours != 3 or empty_off == 99:
+            continue
+        # Both cells flanking the window must be empty for a live four.
+        ok = True
+        for off in (k - 1, k + 4):
+            r = row + off * dr
+            c = col + off * dc
+            if not (0 <= r < size and 0 <= c < size) or grid[r, c] != 0:
+                ok = False
+        if not ok:
+            continue
+        mask = (1 << (empty_off + 4)) | (1 << (k - 1 + 4)) | (1 << (k + 4 + 4))
+        inter &= mask
+        union |= mask
+    if union == 0:
+        return 0, -1, -1, -1, -1, -1, -1
+    # A defence must stop every live four; if no single cell does, list
+    # the cells of all of them (more defences is the safe side).
+    bits = inter if inter != 0 else union
+    n = 0
+    r1 = c1 = r2 = c2 = r3 = c3 = -1
+    for i in range(9):
+        if (bits >> i) & 1:
+            r = row + (i - 4) * dr
+            c = col + (i - 4) * dc
+            if n == 0:
+                r1 = r
+                c1 = c
+            elif n == 1:
+                r2 = r
+                c2 = c
+            elif n == 2:
+                r3 = r
+                c3 = c
+            n += 1
+    return min(n, 3), r1, c1, r2, c2, r3, c3
+
+
+@njit(cache=True)
 def is_four_threat(
     grid: NDArray,  # type: ignore[type-arg]
     size: int,
@@ -897,7 +1031,7 @@ def count_distinct_three_cells_grid(
     dirs: NDArray,  # type: ignore[type-arg]
     cap: int,
 ) -> int:
-    """Count distinct candidate cells that form a live-three for *stone*.
+    """Count distinct candidate cells that form a three (straight or split) for *stone*.
 
     Mirrors the unique-attacker-cell count used by
     ``ThreatBrain._check_opponent_vct``'s early-reject heuristic.  Stops
@@ -912,28 +1046,7 @@ def count_distinct_three_cells_grid(
         if grid[r, c] != 0:
             continue
         for d in range(dirs.shape[0]):
-            dr = dirs[d, 0]
-            dc = dirs[d, 1]
-            consec = 0
-            pos_open = False
-            neg_open = False
-            rr = r + dr
-            cc = c + dc
-            while 0 <= rr < size and 0 <= cc < size and grid[rr, cc] == stone:
-                consec += 1
-                rr += dr
-                cc += dc
-            if 0 <= rr < size and 0 <= cc < size and grid[rr, cc] == 0:
-                pos_open = True
-            rr = r - dr
-            cc = c - dc
-            while 0 <= rr < size and 0 <= cc < size and grid[rr, cc] == stone:
-                consec += 1
-                rr -= dr
-                cc -= dc
-            if 0 <= rr < size and 0 <= cc < size and grid[rr, cc] == 0:
-                neg_open = True
-            if consec + 1 == 3 and pos_open and neg_open:
+            if _three_defences(grid, size, r, c, stone, dirs[d, 0], dirs[d, 1])[0] > 0:
                 count += 1
                 if count >= cap:
                     return count
@@ -1045,13 +1158,15 @@ def find_three_threats_grid(
     stone: int,
     dirs: NDArray,  # type: ignore[type-arg]
 ) -> NDArray:  # type: ignore[type-arg]
-    """Find live-three threats for *stone* across *candidates*.
+    """Find three-threats for *stone* across *candidates*.
 
-    Returns an int32[K, 6] array; each row is
-    ``(atk_r, atk_c, def1_r, def1_c, def2_r, def2_c)`` — the two open-end
-    defence cells of the live three.
+    Returns an int32[K, 8] array; each row is
+    ``(atk_r, atk_c, d1_r, d1_c, d2_r, d2_c, d3_r, d3_c)`` — the cells that
+    stop the three (see :func:`_three_defences`), unused ones ``-1``: the
+    two ends of a straight three, or the gap and both ends of a split
+    three.
 
-    One entry per ``(candidate, direction)`` pair that forms a live three.
+    One entry per ``(candidate, direction)`` pair that forms a three.
     The same candidate may appear multiple times for different directions,
     matching the pure-Python implementation.
 
@@ -1060,7 +1175,7 @@ def find_three_threats_grid(
     """
     n = candidates.shape[0]
     # Upper bound: n candidates × 4 directions.
-    out = np.empty((n * 4, 6), dtype=np.int32)
+    out = np.empty((n * 4, 8), dtype=np.int32)
     out_count = 0
 
     for i in range(n):
@@ -1069,53 +1184,18 @@ def find_three_threats_grid(
         if grid[r, c] != 0:
             continue
         for d in range(dirs.shape[0]):
-            dr = dirs[d, 0]
-            dc = dirs[d, 1]
-            count = 0
-            pos_end_r = -1
-            pos_end_c = -1
-            neg_end_r = -1
-            neg_end_c = -1
-
-            # Positive direction
-            rr = r + dr
-            cc = c + dc
-            while 0 <= rr < size and 0 <= cc < size and grid[rr, cc] == stone:
-                count += 1
-                rr += dr
-                cc += dc
-            if 0 <= rr < size and 0 <= cc < size and grid[rr, cc] == 0:
-                pos_end_r = rr
-                pos_end_c = cc
-
-            # Negative direction
-            rr = r - dr
-            cc = c - dc
-            while 0 <= rr < size and 0 <= cc < size and grid[rr, cc] == stone:
-                count += 1
-                rr -= dr
-                cc -= dc
-            if 0 <= rr < size and 0 <= cc < size and grid[rr, cc] == 0:
-                neg_end_r = rr
-                neg_end_c = cc
-
-            open_ends = 0
-            if pos_end_r >= 0:
-                open_ends += 1
-            if neg_end_r >= 0:
-                open_ends += 1
-
-            total = count + 1
-            if total == 3 and open_ends == 2:
-                out[out_count, 0] = r
-                out[out_count, 1] = c
-                # Match the Python order: positive-sign end first, then
-                # negative-sign end.
-                out[out_count, 2] = pos_end_r
-                out[out_count, 3] = pos_end_c
-                out[out_count, 4] = neg_end_r
-                out[out_count, 5] = neg_end_c
-                out_count += 1
+            n_def, r1, c1, r2, c2, r3, c3 = _three_defences(grid, size, r, c, stone, dirs[d, 0], dirs[d, 1])
+            if n_def == 0:
+                continue
+            out[out_count, 0] = r
+            out[out_count, 1] = c
+            out[out_count, 2] = r1
+            out[out_count, 3] = c1
+            out[out_count, 4] = r2
+            out[out_count, 5] = c2
+            out[out_count, 6] = r3
+            out[out_count, 7] = c3
+            out_count += 1
 
     return out[:out_count].copy()
 
