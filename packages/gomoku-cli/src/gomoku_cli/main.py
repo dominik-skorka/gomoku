@@ -473,6 +473,11 @@ def _echo_engines(engine_a, engine_b) -> None:
     "--move-timeout", type=float, default=600.0, show_default=True, help="Seconds before an engine is failed."
 )
 @click.option("--out", "out_path", type=click.Path(path_type=Path), default=None, help="Write all games as JSON.")
+@click.option(
+    "--fail-if-weaker",
+    is_flag=True,
+    help="Exit with status 1 when B is significantly weaker than A (A's 95% score interval above 50%).",
+)
 def match(
     spec_a: str,
     spec_b: str,
@@ -486,6 +491,7 @@ def match(
     quiet_openings: bool,
     move_timeout: float,
     out_path: Path | None,
+    fail_if_weaker: bool,
 ) -> None:
     """Play engine A against engine B and report who is stronger.
 
@@ -538,6 +544,9 @@ def match(
     if out_path is not None:
         save_records(out_path, engine_a, engine_b, records, summary)
         click.echo(f"Games written to {out_path}")
+    if fail_if_weaker and summary.score_low > 0.5:
+        click.echo("B is significantly weaker than A.")
+        raise SystemExit(1)
 
 
 @cli.command()

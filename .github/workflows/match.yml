@@ -1,0 +1,67 @@
+name: Strength match
+
+# A long engine match of the PR's threat brain against its base branch
+# (see `gomoku match` in the README).  Too slow for every push, so it runs
+# when the `match` label is added to a pull request (remove and re-add it
+# to run again) or by hand.  The blunder review runs first, as a gate.
+# Fails only when the PR is significantly weaker than its base.
+on:
+  pull_request:
+    types: [labeled]
+  workflow_dispatch:
+    inputs:
+      base:
+        description: "Baseline revision"
+        default: "origin/master"
+      games:
+        description: "Games (even)"
+        default: "300"
+
+concurrency:
+  group: match-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  match:
+    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'match'
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    env:
+      BASE: ${{ github.event.pull_request.base.sha || inputs.base }}
+      GAMES: ${{ inputs.games || '300' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # the baseline revision is exported from history
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Install dependencies
+        run: uv sync --all-packages --frozen
+      - name: Blunder review
+        run: |
+          set -o pipefail
+          uv run gomoku review --a "brain=threat,rev=$BASE" --b brain=threat \
+            --games 6 --jobs "$(nproc)" --out review.json | tee review.txt
+      - name: Match
+        run: |
+          set -o pipefail
+          uv run gomoku match --a "brain=threat,rev=$BASE" --b brain=threat \
+            --games "$GAMES" --jobs "$(nproc)" --fail-if-weaker --out match.json | tee match.txt
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo '### Blunder review'; echo '```'; cat review.txt 2>/dev/null; echo '```'
+            echo '### Match (A = base, B = this PR)'; echo '```'
+            sed -n '/^Games:/,$p' match.txt 2>/dev/null
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: match
+          path: |
+            review.json
+            match.json
+          if-no-files-found: ignore

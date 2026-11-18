@@ -197,6 +197,15 @@ before spending time on a long `match`.  `--out review.json` saves the
 games, the oracle's verdict for every position and each blunder with
 its retries; `--no-escalate` skips the retries.
 
+**In CI.**  Every pull request that touches the engine or `gomoku.toml`
+runs a 6-game review against its base branch (`.github/workflows/review.yml`)
+and fails on `FAIL`.  Adding the `match` label to a pull request runs the
+review and then a 300-game match against the base
+(`.github/workflows/match.yml`; remove and re-add the label to run it
+again, or start it by hand).  The match fails only when the pull request
+is significantly weaker (`gomoku match --fail-if-weaker`).  Results are
+in the run summary and as `review.json` / `match.json` artifacts.
+
 ---
 
 ## Configuration

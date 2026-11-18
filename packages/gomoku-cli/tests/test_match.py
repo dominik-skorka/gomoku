@@ -185,3 +185,23 @@ class TestDescribeRev:
         # A remote branch or a commit has no upstream to fall behind.
         assert "WARNING" not in describe_rev(EngineSpec("threat", rev="origin/main"), clone)
         assert describe_rev(EngineSpec("threat"), clone) == "working tree"
+
+
+class TestFailIfWeaker:
+    @pytest.mark.parametrize(
+        ("outcomes", "flag", "status"),
+        [
+            ([("a", "a")] * 20, True, 1),  # B clearly weaker
+            ([("a", "a")] * 20, False, 0),  # without the flag a match only measures
+            ([("a", "b")] * 20, True, 0),  # even
+            ([("b", "b")] * 20, True, 0),  # B stronger
+        ],
+    )
+    def test_exit_status(self, monkeypatch, outcomes, flag, status):
+        import gomoku_cli.match as match_module
+
+        monkeypatch.setattr(match_module, "run_match", lambda *a, **k: _pairs(*outcomes))
+        args = ["match", "--a", "random", "--b", "random", *(["--fail-if-weaker"] if flag else [])]
+        result = CliRunner().invoke(cli, args)
+        assert result.exit_code == status, result.output
+        assert ("significantly weaker" in result.output) == bool(status)
