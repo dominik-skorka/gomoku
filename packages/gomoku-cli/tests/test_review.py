@@ -470,3 +470,30 @@ class TestSecondOracle:
         b = Blunder(0, 3, "b", "white", "losing_move", (14, 14), None, "x", None, 1.0, verdict="disputed", remedy="r")
         text = format_report(EngineSpec("x"), EngineSpec("y"), [GameReview(0, record, [], [b])])
         assert "=> DISPUTED: r" in text and "1 disputed by the second oracle" in text
+
+
+class TestBoards:
+    def test_render_board_crops_and_marks(self):
+        from gomoku_cli.review import render_board
+
+        text = render_board([(7, 7), (7, 8), (8, 7)], {(9, 7): "!", (6, 7): "*"}, size=15, pad=1)
+        assert text.splitlines() == [
+            "    G H I J",
+            " 11 . . . .",
+            " 10 . ! . .",
+            "  9 . x . .",
+            "  8 . X O .",
+            "  7 . * . .",
+            "  6 . . . .",
+        ]
+
+    def test_report_draws_each_blunder_unless_asked_not_to(self):
+        record = _record([*HALF_FOUR, (10, 10), (10, 11)])
+        blunder = Blunder(0, 9, "b", "white", "missed_block", (10, 11), (7, 2), "y", None, 50.0, verdict="bug")
+        review = GameReview(0, record, [], [blunder])
+        text = format_report(EngineSpec("x"), EngineSpec("y"), [review])
+        assert "board: X black, O white" in text
+        assert "  8 . . * X X X X O" in text  # the blocked four, completed at C8
+        assert "!" in text.split("=> BUG")[1] and "*" in text.split("=> BUG")[1]
+        plain = format_report(EngineSpec("x"), EngineSpec("y"), [review], boards=False)
+        assert "board:" not in plain and "  8 " not in plain

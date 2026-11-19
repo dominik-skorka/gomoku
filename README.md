@@ -189,13 +189,27 @@ with its think-time cost; if none does, the blunder is a **BUG** in the
 brain's logic:
 
 ```
-game 1, move 16: B (threat, white) played G9 — missed win: forced win starting I8; gone after the reply
-    decision: alphabeta, 0.7 s
-    retried: repeat no G9 (0.6 s) | more_pns ok I8 (0.4 s)
-    => TUNING: more_pns: pns_nodes=100000, pns_time_s=20.0 (0.6x think time)
+board: X black, O white (lower case: the move just before), ! played, * a better move
+game 1, move 18: B (alphabeta, white) played I3 — losing move: the opponent then wins by force; I2 held
+    decision: vcf_breaker, 0.0 s
+    retried: repeat no I3 (0.0 s) | deeper no I3 (0.0 s) | wider no I3 (0.0 s) | all no I3 (0.0 s)
+    => BUG: no setting tried finds a good move; the brain's logic needs a fix
+        E F G H I J K L M
+     10 . . . . . . O . .
+      9 . . . . . . X . .
+      8 . . X . X . . . .
+      7 . . O O x . X . .
+      6 . . O X O . . . .
+      5 . . O X O . . . .
+      4 . . X X O . . . .
+      3 . . . . ! . . . .
+      2 . . . . * . . . .
 
-Verdict: WARN — B has 2 blunder(s), A has 2; no more of them need a code fix than A's
+Verdict: FAIL — B has 4 blunder(s) needing a fix in the brain's code, A has 1; fix them before a long match
 ```
+
+Each blunder's position is drawn as it was before the move (rows
+cropped here); `--no-boards` leaves the boards out.
 
 The verdict is `FAIL` (exit status 1) when B has more BUG blunders than
 A, `WARN` when B has blunders or disputed ones, and `PASS` otherwise.  Fix a `FAIL`
