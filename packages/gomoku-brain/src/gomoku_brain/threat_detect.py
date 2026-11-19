@@ -127,7 +127,7 @@ def _line_cells(
     return count, open_ends, end_cells
 
 
-def _find_four_threats_python(board: Board, stone: Stone) -> list[tuple[Move, Move | None]]:
+def _find_four_threats_python(board: Board, stone: Stone, split: bool = True) -> list[tuple[Move, Move | None]]:
     """Pure-Python fallback for :func:`_find_four_threats`.
 
     Kept for boards that aren't routed through the JIT path (tests that
@@ -143,7 +143,7 @@ def _find_four_threats_python(board: Board, stone: Stone) -> list[tuple[Move, Mo
         for dr, dc in _DIRECTIONS:
             # Cells that would complete five through the move, split fours
             # (XXX_X, XX_XX) included.
-            run, completions = five_cells_through(board, r, c, dr, dc, stone)
+            run, completions = five_cells_through(board, r, c, dr, dc, stone, split)
 
             defence: Move | None
             # >= 5 (not == 5): freestyle counts overlines as wins, so a
@@ -169,7 +169,9 @@ def _find_four_threats_python(board: Board, stone: Stone) -> list[tuple[Move, Mo
     return threats
 
 
-def _find_four_threats(board: Board, stone: Stone, ctx: _ScanCtx | None = None) -> list[tuple[Move, Move | None]]:
+def _find_four_threats(
+    board: Board, stone: Stone, ctx: _ScanCtx | None = None, split: bool = True
+) -> list[tuple[Move, Move | None]]:
     """Find all moves that create a four-in-a-row for ``stone``.
 
     Returns a list of ``(attack_move, defence_move | None)`` sorted by
@@ -204,7 +206,7 @@ def _find_four_threats(board: Board, stone: Stone, ctx: _ScanCtx | None = None) 
         from gomoku_brain.evaluate_jit import find_four_threats_grid
 
         grid, size, candidates, dirs = ctx
-        result = find_four_threats_grid(grid, size, candidates, int(stone), dirs)
+        result = find_four_threats_grid(grid, size, candidates, int(stone), dirs, split)
         threats: list[tuple[Move, Move | None]] = []
         for i in range(result.shape[0]):
             atk = Move(row=int(result[i, 0]), col=int(result[i, 1]))
@@ -214,7 +216,7 @@ def _find_four_threats(board: Board, stone: Stone, ctx: _ScanCtx | None = None) 
             else:
                 threats.append((atk, Move(row=dr_end, col=int(result[i, 3]))))
     else:
-        threats = _find_four_threats_python(board, stone)
+        threats = _find_four_threats_python(board, stone, split)
 
     # Stable sort by strength: unblockables (defence is None) first.
     threats.sort(key=lambda t: 0 if t[1] is None else 1)
@@ -328,7 +330,7 @@ def _find_winning_move(board: Board, stone: Stone, ctx: _ScanCtx | None = None) 
     return None
 
 
-def _has_any_four_threat(board: Board, stone: Stone, ctx: _ScanCtx | None = None) -> bool:
+def _has_any_four_threat(board: Board, stone: Stone, ctx: _ScanCtx | None = None, split: bool = True) -> bool:
     """Return True if *stone* has any four-threat candidate.
 
     Short-circuits on the first hit — cheaper than enumerating every
@@ -341,12 +343,12 @@ def _has_any_four_threat(board: Board, stone: Stone, ctx: _ScanCtx | None = None
         from gomoku_brain.evaluate_jit import has_any_four_threat_grid
 
         grid, size, candidates, dirs = ctx
-        return bool(has_any_four_threat_grid(grid, size, candidates, int(stone), dirs))
+        return bool(has_any_four_threat_grid(grid, size, candidates, int(stone), dirs, split))
 
-    return bool(_find_four_threats_python(board, stone))
+    return bool(_find_four_threats_python(board, stone, split))
 
 
-def _has_unblockable_four(board: Board, stone: Stone, ctx: _ScanCtx | None = None) -> bool:
+def _has_unblockable_four(board: Board, stone: Stone, ctx: _ScanCtx | None = None, split: bool = True) -> bool:
     """Return True if *stone* has an unblockable four-threat.
 
     Unblockable = five-or-more completion, live four, or double-four —
@@ -360,9 +362,9 @@ def _has_unblockable_four(board: Board, stone: Stone, ctx: _ScanCtx | None = Non
         from gomoku_brain.evaluate_jit import has_unblockable_four_grid
 
         grid, size, candidates, dirs = ctx
-        return bool(has_unblockable_four_grid(grid, size, candidates, int(stone), dirs))
+        return bool(has_unblockable_four_grid(grid, size, candidates, int(stone), dirs, split))
 
-    return any(d is None for _, d in _find_four_threats_python(board, stone))
+    return any(d is None for _, d in _find_four_threats_python(board, stone, split))
 
 
 def _count_distinct_three_cells(

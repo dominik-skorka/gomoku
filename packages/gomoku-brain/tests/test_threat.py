@@ -430,7 +430,7 @@ class TestVctAwareBreakerChoice:
         b = _place(b, [(7, 8), (6, 6), (9, 9)], Stone.WHITE)
         state = SearchState.from_board(b, Stone.BLACK)
 
-        def fake_status(st, _opp, max_nodes, max_time_s, split_threes=False):
+        def fake_status(st, _opp, max_nodes, max_time_s, space=None):
             row, col, _ = st.last_move()
             return (PNSStatus.DISPROVED if (row, col) in proven else PNSStatus.UNKNOWN), None
 

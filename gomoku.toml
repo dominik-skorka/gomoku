@@ -239,19 +239,6 @@ threat_search = "pns"
 # sweet spot (+43 over 10_000, 100_000 no better).
 pns_nodes = 60_000
 
-# Split threes (_XX_X_) as threats in PNS / VCT, for both sides.  Proofs
-# are sound either way (a split three only threatens a live four, which
-# the defence enumeration already answers); on finds wins that use them
-# but widens the search a lot.  At pns_nodes = 30_000 it lost 125-175
-# (-58 Elo, 95% interval -92 to -26) at 2.1x the think time.
-# Default: false
-split_threes = false
-
-# Count split threes and fours (XX_X, XXX_X) when looking for the
-# opponent's fork cells to block.  It lost 140-160 (-23 Elo, 95% interval
-# -40 to -7): the brain blocked more and attacked less.
-# Default: false
-split_forks = false
 
 # Max wall-clock seconds for PNS search.
 # Default: 5.0 | Valid range: 0.1–60.0
@@ -278,6 +265,68 @@ eval_ordering_depth = 11
 # Candidate moves kept per node after the early game.
 # Default: 20 | Valid range: 5–60
 max_candidates = 12
+
+# -- Threat spaces ------------------------------------------------------------
+# Which threats the forced-win searches (VCF, PNS / VCT) play and answer.
+# "own" is our search for a win, "opponent" the search for the opponent's
+# (steps 5-6 and the breaker probes); "defence" is what the defender may
+# reply inside both.  "Four" = one cell then completes five; "three" = one
+# more stone makes a live four.  Defaults are the measured configuration.
+#
+# Fewer ATTACK threats only make a search less complete (fewer wins found,
+# never false ones); more find more wins but widen the search, so the same
+# pns_nodes proves less.  Fewer DEFENCE replies make proofs UNSOUND: the
+# search "proves" wins that kind of reply refutes, and the brain plays them.
+
+[brains.threat.threats.own]
+# Fours.  false: no VCF; PNS / VCT attack with threes only.
+fours = true
+# Split fours (XXX_X, XX_XX) count as fours.  false: unbroken runs only,
+# as before split fours were detected.
+split_fours = true
+# Threes.  false: PNS / VCT attack with fours only.
+threes = true
+# Split threes (_XX_X_) count as threes, defended at the gap or either end.
+# Here only (our attack, at pns_nodes = 60_000): +7 Elo (95% interval -16
+# to +30), 1.2x the think time.  With the opponent's searches too (at
+# 30_000): -58 Elo (-92 to -26), 2.1x.
+split_threes = false
+
+[brains.threat.threats.opponent]
+# The same switches for the opponent's threats: what we look for when
+# checking whether the opponent has a forced win.  Fewer: the brain may not
+# notice a win the opponent has; more: slower probes.
+fours = true
+split_fours = true
+threes = true
+split_threes = false
+
+[brains.threat.threats.defence]
+# Block the attacker's four.  false: every four "wins" -- false proofs.
+block_fours = true
+# Block the attacker's three (both ends; the gap and both ends of a split
+# three).  false: a three is answered by counter-threats only -- false proofs.
+block_threes = true
+# The defender's own fours as replies.  false: an attack refuted by a
+# counter-four is "proved" (the "K8" bug) -- false proofs.
+counter_fours = true
+# Split fours count as counter-fours.  false: an attack refuted by a split
+# counter-four is "proved" (the F5/E9 bug) -- false proofs.
+split_counter_fours = true
+# The defender's own threes as replies (PNS).  A heuristic: proofs made of
+# fours stay sound without them.  false: smaller, faster PNS.
+counter_threes = true
+# Split threes count as counter-threes.  true: wider PNS.
+split_counter_threes = false
+# Every cell that defuses an attacker's threat to make an unblockable four
+# next move (PNS).  false: the bug fixed in PR #42 -- false proofs.
+unblockable_four_defences = true
+
+[brains.threat.threats.forks]
+# Count split threes and fours (XX_X, XXX_X) as fork lines when looking for
+# the opponent's fork cells to block.  true: -23 Elo (95% interval -40 to
+# -7); the brain blocked more and attacked less.
+split = false
 
 # -----------------------------------------------------------------------------
 # Brain: mcts — Monte Carlo Tree Search with PUCT formula, heuristic priors,

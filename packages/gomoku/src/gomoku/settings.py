@@ -136,6 +136,54 @@ class AlphaBetaBrainSettings(BaseModel):
     )
 
 
+class ThreatAttackSettings(BaseModel):
+    """Threats an attacker may force with in VCF / PNS / VCT.
+
+    Fewer only make the search less complete (fewer wins found, never false
+    ones); more find more wins but widen the search.
+    """
+
+    fours: bool = Field(default=True, description="Fours. Off: no VCF, PNS / VCT attack with threes only.")
+    split_fours: bool = Field(default=True, description="Split fours (XXX_X, XX_XX) count as fours.")
+    threes: bool = Field(default=True, description="Threes. Off: PNS / VCT attack with fours only.")
+    split_threes: bool = Field(
+        default=False, description="Split threes (_XX_X_) count as threes; widens the search a lot."
+    )
+
+
+class ThreatDefenceSettings(BaseModel):
+    """Replies the defender gets inside the searches.
+
+    Turning one off makes proofs unsound: the search can prove wins that
+    kind of reply refutes, and the brain plays them.
+    """
+
+    block_fours: bool = Field(default=True, description="Block the attacker's four. Off: every four 'wins'.")
+    block_threes: bool = Field(default=True, description="Block the attacker's three (ends; gap and ends).")
+    counter_fours: bool = Field(default=True, description="The defender's own fours as replies.")
+    split_counter_fours: bool = Field(default=True, description="Split fours count as counter-fours.")
+    counter_threes: bool = Field(default=True, description="The defender's own threes as replies (PNS).")
+    split_counter_threes: bool = Field(default=False, description="Split threes count as counter-threes.")
+    unblockable_four_defences: bool = Field(
+        default=True, description="Cells that defuse an attacker's threat of an unblockable four (PNS)."
+    )
+
+
+class ThreatForkSettings(BaseModel):
+    """How the threat brain finds the opponent's fork cells to block."""
+
+    split: bool = Field(default=False, description="Count split threes and fours (XX_X, XXX_X) as fork lines.")
+
+
+class ThreatSearchSettings(BaseModel):
+    """[brains.<alias>.threats]: the threat spaces of the threat brain's searches."""
+
+    own: ThreatAttackSettings = Field(default_factory=ThreatAttackSettings)
+    opponent: ThreatAttackSettings = Field(default_factory=ThreatAttackSettings)
+    defence: ThreatDefenceSettings = Field(default_factory=ThreatDefenceSettings)
+    forks: ThreatForkSettings = Field(default_factory=ThreatForkSettings)
+
+
 class ThreatBrainSettings(BaseModel):
     """Settings for the threat brain."""
 
@@ -145,17 +193,12 @@ class ThreatBrainSettings(BaseModel):
     threat_search: str = Field(default="pns", pattern="^(pns|vct)$")
     pns_nodes: int = Field(default=10_000, ge=1_000, le=10_000_000)
     pns_time_s: float = Field(default=5.0, ge=0.1, le=60.0)
-    split_threes: bool = Field(
-        default=False,
+    threats: ThreatSearchSettings = Field(
+        default_factory=ThreatSearchSettings,
         description=(
-            "Let PNS / VCT use split threes (_XX_X_) as threats for both sides.  "
-            "Proofs are sound without them; on lets the search find wins that use "
-            "them, at a much wider search (needs a larger pns_nodes)."
+            "Which threats the forced-win searches play and answer ([brains.<alias>.threats.*] "
+            "tables): own / opponent attack threats, the defender's replies, fork cells."
         ),
-    )
-    split_forks: bool = Field(
-        default=False,
-        description="Count split threes and fours (XX_X, XXX_X) when looking for the opponent's fork cells.",
     )
     fallback: AlphaBetaBrainSettings | None = Field(
         default=None,

@@ -432,7 +432,7 @@ caching.  See [ALPHABETA_BRAIN.md](ALPHABETA_BRAIN.md).
 
 ## Parameters
 
-The brain has nine settings.  "Default" is the built-in value, used
+The brain has eight settings, one of them the `threats` tables.  "Default" is the built-in value, used
 when a setting is left out; the shipped `gomoku.toml` changes some:
 
 | Parameter       | Default  | `gomoku.toml` | Controls                        | Effect of increasing           |
@@ -444,12 +444,41 @@ when a setting is left out; the shipped `gomoku.toml` changes some:
 | `threat_search` | `"pns"`  | `"pns"`       | Algorithm: `"pns"` or `"vct"`   | Selects the algorithm of steps 4 and 6 |
 | `depth`         | 4        | 5 (ignored)   | Fallback depth without a `fallback` table | Better positional play |
 | `fallback`      | none     | **table**     | `AlphaBetaBrain` settings for the fallback (its `depth` replaces the top-level one) | — |
-| `split_threes`  | `false`  | `false`       | Split threes (`_XX_X_`) as threats in PNS / VCT, for both sides | Finds wins that use them; much wider search |
-| `split_forks`   | `false`  | `false`       | Split threes and fours count when looking for the opponent's fork cells | Blocks more forks |
+| `threats`       | defaults | defaults      | Threat spaces of the searches (tables below) | — |
 
 The shipped fallback table is `depth = 5`, `eval_ordering_depth = 11`,
 `max_candidates = 12`: a depth-5 search that orders moves by cheap
 pattern priors and keeps 12 candidates per node.
+
+### Threat spaces (`[brains.threat.threats.*]`)
+
+Which threats VCF and PNS / VCT play and answer.  `own` is the attacker's
+side of our forced-win search (steps 3–4), `opponent` of the search for the
+opponent's win (steps 5–6 and the breaker probes); `defence` is what the
+defender may reply inside both; `forks` is the fork-cell rule of step 7.
+A *four* is a move after which one cell completes five, a *three* one after
+which one more stone makes a live four.
+
+| Table | Key | Default | Off / on |
+|-------|-----|---------|----------|
+| `own`, `opponent` | `fours` | `true` | off: no VCF; PNS / VCT attack with threes only |
+| | `split_fours` | `true` | off: unbroken runs only (`XXX_X`, `XX_XX` not fours) |
+| | `threes` | `true` | off: PNS / VCT attack with fours only |
+| | `split_threes` | `false` | on: `_XX_X_` is a three (defended at gap or ends); wider search |
+| `defence` | `block_fours` | `true` | off: every four "wins" — **false proofs** |
+| | `block_threes` | `true` | off: threes answered by counter-threats only — **false proofs** |
+| | `counter_fours` | `true` | off: the "K8" bug returns — **false proofs** |
+| | `split_counter_fours` | `true` | off: the F5/E9 bug returns — **false proofs** |
+| | `counter_threes` | `true` | off: smaller, faster PNS (a heuristic reply) |
+| | `split_counter_threes` | `false` | on: wider PNS |
+| | `unblockable_four_defences` | `true` | off: the #42 bug returns — **false proofs** |
+| `forks` | `split` | `false` | on: split threes / fours count as fork lines |
+
+Fewer **attack** threats only make a search less complete — fewer wins
+found, never false ones — and more find more wins but widen the search.
+Fewer **defence** replies make proofs unsound: the search proves wins that
+kind of reply refutes, and the brain plays them.  `gomoku.toml` documents
+each key; `gomoku_brain.threat_space.ThreatSpace` is the code side.
 
 ### How depth is consumed
 
@@ -489,8 +518,9 @@ Measured with `gomoku match` (300 games each, colours swapped per opening):
 |--------|--------|---------------------|
 | `pns_nodes` 30,000 → 60,000 | **+30 Elo** (95% interval +4 to +57) | 667 → 968 ms |
 | `pns_nodes` 30,000 → 100,000 | +40 Elo (+11 to +69) | 651 → 1231 ms |
-| `split_threes = true` (at 30,000) | **−58 Elo** (−92 to −26) | 385 → 817 ms |
-| `split_forks = true` (at 30,000) | −23 Elo (−40 to −7) | 643 → 657 ms |
+| split threes for both sides (`own` and `opponent` `split_threes = true`, at 30,000) | **−58 Elo** (−92 to −26) | 385 → 817 ms |
+| split threes in our attack only (`own.split_threes = true`, at 60,000) | +7 Elo (−16 to +30): no measurable difference | 1040 → 1248 ms |
+| `forks.split = true` (at 30,000) | −23 Elo (−40 to −7) | 643 → 657 ms |
 | fallback depth 5 → 4 (at 30,000) | −24 Elo (−59 to +10): no measurable difference | ~6% faster |
 
 Earlier measurements, before split fours were detected (PNS was then
@@ -618,13 +648,20 @@ vct_depth = 12
 threat_search = "pns"   # "pns" (default) or "vct"
 pns_nodes = 60_000      # distinct positions PNS may create
 pns_time_s = 5.0        # time budget for PNS (seconds)
-split_threes = false    # split threes as threats in PNS / VCT
-split_forks = false     # split threes / fours in fork cells
 
 [brains.threat.fallback]  # AlphaBetaBrain settings for the fallback
 depth = 5                 # replaces the top-level depth
 eval_ordering_depth = 11
 max_candidates = 12
+
+[brains.threat.threats.own]       # see "Threat spaces" above; these are
+split_threes = false              # the defaults, so all four tables may
+[brains.threat.threats.opponent]  # be left out
+split_threes = false
+[brains.threat.threats.defence]
+counter_threes = true
+[brains.threat.threats.forks]
+split = false
 ```
 
 ### Python API

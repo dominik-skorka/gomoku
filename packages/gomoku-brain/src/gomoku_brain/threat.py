@@ -50,6 +50,7 @@ from gomoku_brain.threat_search import (
     _vct_state,
     classify_vcf_breakers,
 )
+from gomoku_brain.threat_space import ThreatSpace
 
 __all__ = (
     "ThreatBrain",
@@ -108,14 +109,18 @@ class ThreatBrain:
         pns_nodes: int = 10_000,
         pns_time_s: float = 5.0,
         fallback: dict[str, object] | None = None,
-        split_threes: bool = False,
-        split_forks: bool = False,
+        threats: dict[str, dict[str, bool]] | None = None,
     ) -> None:
         self.depth = depth
-        # Split threes (_XX_X_) as threats in PNS / VCT, and split threes
-        # and fours when looking for the opponent's fork cells.
-        self.split_threes = split_threes
-        self.split_forks = split_forks
+        # Threat spaces of our own forced-win search and of the opponent's
+        # (``[brains.threat.threats]``): ``own`` / ``opponent`` hold the
+        # attacker's threats, ``defence`` the defender's replies in both,
+        # ``forks`` the fork-cell rule.  See gomoku_brain.threat_space.
+        threats = threats or {}
+        defence = threats.get("defence") or {}
+        self.own_space = ThreatSpace(**{**(threats.get("own") or {}), **defence})
+        self.opponent_space = ThreatSpace(**{**(threats.get("opponent") or {}), **defence})
+        self.split_forks = bool((threats.get("forks") or {}).get("split", False))
         self.vcf_depth = vcf_depth
         self.vct_depth = vct_depth
         self.threat_search = threat_search
@@ -199,7 +204,7 @@ class ThreatBrain:
             vcf_cache: _ThreatCache = {}
 
             # 2) Try VCF — very fast, deep search
-            move = _vcf_state(state, stone, self.vcf_depth, cache=vcf_cache)
+            move = _vcf_state(state, stone, self.vcf_depth, cache=vcf_cache, space=self.own_space)
             if move is not None:
                 logfire.info("VCF found winning move: {move}", move=str(move))
                 if diag is not None:
@@ -211,7 +216,7 @@ class ThreatBrain:
             # 3) Try broader threat search (PNS or VCT)
             if self.threat_search == "pns":
                 move = pns_threat_search(
-                    state, stone, max_nodes=self.pns_nodes, max_time_s=self.pns_time_s, split_threes=self.split_threes
+                    state, stone, max_nodes=self.pns_nodes, max_time_s=self.pns_time_s, space=self.own_space
                 )
                 if move is not None:
                     logfire.info("PNS found winning move: {move}", move=str(move))
@@ -220,7 +225,7 @@ class ThreatBrain:
                         diag.chosen_move = move
                     return move
             else:
-                move = _vct(state, stone, self.vct_depth, vcf_cache=vcf_cache, split_threes=self.split_threes)
+                move = _vct(state, stone, self.vct_depth, vcf_cache=vcf_cache, space=self.own_space)
                 if move is not None:
                     logfire.info("VCT found winning move: {move}", move=str(move))
                     if diag is not None:
@@ -233,7 +238,7 @@ class ThreatBrain:
                 diag.notes.append("No forced win found (VCF/PNS/VCT)")
 
             # 4) Check if opponent has a VCF threat
-            opp_vcf = _vcf_state(opp_state, opp, self.vcf_depth, cache=vcf_cache)
+            opp_vcf = _vcf_state(opp_state, opp, self.vcf_depth, cache=vcf_cache, space=self.opponent_space)
             if opp_vcf is not None:
                 if diag is not None:
                     diag.opp_threats = diag.opp_threats.model_copy(update={"vcf_result": "win"})
@@ -301,10 +306,10 @@ class ThreatBrain:
         # threat lists just to ask "any?" / "≥ 2?" used to dominate the
         # quiet-position cost of every threat-brain ``get_move``.
         ctx = _scan_context(state)
-        if (
-            not _has_any_four_threat(state, opp, ctx)
-            and _count_distinct_three_cells(state, opp, 2, ctx, self.split_threes) < 2
-        ):
+        space = self.opponent_space
+        has_four = space.fours and _has_any_four_threat(state, opp, ctx, space.split_fours)
+        threes = _count_distinct_three_cells(state, opp, 2, ctx, space.split_threes) if space.threes else 0
+        if not has_four and threes < 2:
             return None
 
         if self.threat_search == "pns":
@@ -313,10 +318,10 @@ class ThreatBrain:
                 opp,
                 max_nodes=self.pns_nodes,
                 max_time_s=self.pns_time_s,
-                split_threes=self.split_threes,
+                space=self.opponent_space,
             )
         else:
-            opp_threat = _vct(opp_state, opp, self.vct_depth, vcf_cache=vcf_cache, split_threes=self.split_threes)
+            opp_threat = _vct(opp_state, opp, self.vct_depth, vcf_cache=vcf_cache, space=self.opponent_space)
 
         if opp_threat is None:
             return None
@@ -397,7 +402,7 @@ class ThreatBrain:
             state.make(move.row, move.col, stone)
             try:
                 # Fast VCF probe first.
-                if _vcf_state(state, opp, self.vcf_depth, cache=vcf_cache) is not None:
+                if _vcf_state(state, opp, self.vcf_depth, cache=vcf_cache, space=self.opponent_space) is not None:
                     continue
                 # Expensive threat probe — bounded by remaining global budget.
                 if self.threat_search == "pns":
@@ -407,7 +412,7 @@ class ThreatBrain:
                         opp,
                         max_nodes=int(self.pns_nodes * _OPP_PNS_NODE_FRACTION),
                         max_time_s=min(self.pns_time_s * _OPP_PNS_TIME_FRACTION, remaining),
-                        split_threes=self.split_threes,
+                        space=self.opponent_space,
                     )
                     if status is PNSStatus.PROVED:
                         continue
@@ -422,7 +427,7 @@ class ThreatBrain:
                         self.vct_depth,
                         vct_cache=vct_probe_cache,
                         vcf_cache=vcf_cache,
-                        split_threes=self.split_threes,
+                        space=self.opponent_space,
                     )
                     is not None
                 ):
@@ -498,7 +503,9 @@ class ThreatBrain:
         of budget, else the positionally best.
         """
         candidates = get_candidate_moves(state, radius=_CANDIDATE_RADIUS)
-        durable, breakers = classify_vcf_breakers(state, candidates, stone, self.vcf_depth, cache=vcf_cache)
+        durable, breakers = classify_vcf_breakers(
+            state, candidates, stone, self.vcf_depth, cache=vcf_cache, space=self.opponent_space
+        )
 
         if not breakers:
             logfire.info(

@@ -12,7 +12,8 @@ revision's code.  Protocol, one JSON object per line:
 * ``{"op": "settings"}`` returns ``{"type": TYPE, "settings": {...}}``.
 * ``{"op": "status", "moves": [...], "nodes": N, "time_s": T}`` runs a
   threat-space proof-number search for the side to move (or for
-  ``"stone"``, 1 = black, 2 = white, when given) and returns
+  ``"stone"``, 1 = black, 2 = white, when given; with ``"space": "brain"``
+  in the brain's own threat space, if it has one) and returns
   ``{"status": "PROVED"|"DISPROVED"|"UNKNOWN", "move": [r, c] | null}``.
 
 A request that fails gets ``{"error": MESSAGE}`` and the worker
@@ -107,7 +108,14 @@ def main() -> None:
             found = pns_threat_search(board, stone, max_nodes=nodes, max_time_s=time_s)
             name = "PROVED" if found is not None else "UNKNOWN"
         else:
-            state, found = pns_threat_status(board, stone, max_nodes=nodes, max_time_s=time_s)
+            # "space": "brain" judges with the brain's own threat space
+            # (threat brains that have one), so a brain configured to see
+            # more threats is not judged by a search that sees fewer.
+            space = getattr(brain_for({}), "own_space", None) if request.get("space") == "brain" else None
+            if space is not None:
+                state, found = pns_threat_status(board, stone, max_nodes=nodes, max_time_s=time_s, space=space)
+            else:
+                state, found = pns_threat_status(board, stone, max_nodes=nodes, max_time_s=time_s)
             name = state.name
         return {"status": name, "move": None if found is None else [found.row, found.col]}
 

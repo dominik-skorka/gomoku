@@ -750,6 +750,7 @@ def _five_cells_through(
     stone: int,
     dr: int,
     dc: int,
+    split: bool = True,
 ) -> tuple[int, int, int, int, int, int]:
     """Scan the line through an empty (row, col) as if *stone* were placed there.
 
@@ -760,7 +761,8 @@ def _five_cells_through(
     of the run can (a five through the placed stone may not contain a
     second gap), and it does when the run, that cell and the *stone* run
     beyond it add up to five.  This catches the split fours
-    (``XXX_X``, ``XX_XX``) a run count alone misses.
+    (``XXX_X``, ``XX_XX``) a run count alone misses; with ``split=False``
+    the stones beyond are not counted (unbroken runs only).
     """
     # Unbroken run on each side of the cell; (pr, pc) / (nr, nc) is the
     # first cell past it.
@@ -791,7 +793,7 @@ def _five_cells_through(
         beyond = 0
         rr = pr + dr
         cc = pc + dc
-        while beyond < need and 0 <= rr < size and 0 <= cc < size and grid[rr, cc] == stone:
+        while split and beyond < need and 0 <= rr < size and 0 <= cc < size and grid[rr, cc] == stone:
             beyond += 1
             rr += dr
             cc += dc
@@ -803,7 +805,7 @@ def _five_cells_through(
         beyond = 0
         rr = nr - dr
         cc = nc - dc
-        while beyond < need and 0 <= rr < size and 0 <= cc < size and grid[rr, cc] == stone:
+        while split and beyond < need and 0 <= rr < size and 0 <= cc < size and grid[rr, cc] == stone:
             beyond += 1
             rr -= dr
             cc -= dc
@@ -991,6 +993,7 @@ def makes_four_threat(
     col: int,
     stone: int,
     dirs: NDArray,  # type: ignore[type-arg]
+    split: bool = True,
 ) -> bool:
     """Return True if placing *stone* at (row, col) threatens five next move.
 
@@ -998,7 +1001,9 @@ def makes_four_threat(
     ``XX_XX``) — with an empty completion cell.
     """
     for d in range(dirs.shape[0]):
-        run, n_five, _r1, _c1, _r2, _c2 = _five_cells_through(grid, size, row, col, stone, dirs[d, 0], dirs[d, 1])
+        run, n_five, _r1, _c1, _r2, _c2 = _five_cells_through(
+            grid, size, row, col, stone, dirs[d, 0], dirs[d, 1], split
+        )
         if run >= 5 or n_five > 0:
             return True
     return False
@@ -1011,6 +1016,7 @@ def has_any_four_threat_grid(
     candidates: NDArray,  # type: ignore[type-arg]
     stone: int,
     dirs: NDArray,  # type: ignore[type-arg]
+    split: bool = True,
 ) -> bool:
     """Return True if any cell in *candidates* would create a four-threat.
 
@@ -1023,7 +1029,7 @@ def has_any_four_threat_grid(
         c = candidates[i, 1]
         if grid[r, c] != 0:
             continue
-        if makes_four_threat(grid, size, r, c, stone, dirs):
+        if makes_four_threat(grid, size, r, c, stone, dirs, split):
             return True
     return False
 
@@ -1035,6 +1041,7 @@ def has_unblockable_four_grid(
     candidates: NDArray,  # type: ignore[type-arg]
     stone: int,
     dirs: NDArray,  # type: ignore[type-arg]
+    split: bool = True,
 ) -> bool:
     """Return True if *stone* has an unblockable four-threat cell.
 
@@ -1059,7 +1066,7 @@ def has_unblockable_four_grid(
         first_r = -1
         first_c = -1
         for d in range(dirs.shape[0]):
-            run, n_five, r1, c1, _r2, _c2 = _five_cells_through(grid, size, r, c, stone, dirs[d, 0], dirs[d, 1])
+            run, n_five, r1, c1, _r2, _c2 = _five_cells_through(grid, size, r, c, stone, dirs[d, 0], dirs[d, 1], split)
             if run >= 5 or n_five == 2:
                 return True
             if n_five == 1:
@@ -1140,6 +1147,7 @@ def find_four_threats_grid(
     candidates: NDArray,  # type: ignore[type-arg]
     stone: int,
     dirs: NDArray,  # type: ignore[type-arg]
+    split: bool = True,
 ) -> NDArray:  # type: ignore[type-arg]
     """Find four-threat moves for *stone* across *candidates*.
 
@@ -1170,7 +1178,7 @@ def find_four_threats_grid(
         if grid[r, c] != 0:
             continue
         for d in range(dirs.shape[0]):
-            run, n_five, r1, c1, _r2, _c2 = _five_cells_through(grid, size, r, c, stone, dirs[d, 0], dirs[d, 1])
+            run, n_five, r1, c1, _r2, _c2 = _five_cells_through(grid, size, r, c, stone, dirs[d, 0], dirs[d, 1], split)
             # >= 5 (not == 5): freestyle counts overlines as wins, so a
             # move completing six-or-more is just as unblockable.  Two
             # completion cells on one line is a live four.
