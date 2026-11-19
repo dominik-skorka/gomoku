@@ -61,6 +61,16 @@ depth = 4
 # Default: 0 (disabled) | Valid range: 0–40 | Typical: 20
 vcf_depth = 20
 
+# When the opponent has a VCF, PNS budget per VCF breaker for checking it
+# leaves the opponent no other forced win (breakers tried best evaluation
+# first, vcf_breaker_time_s seconds in all).  0 picks by evaluation only.
+# 10_000 beat 0 by +56 Elo (95% interval +29 to +84, 300 games), with no
+# extra think time; 30_000 ran out of time on a position 10_000 solved.
+# Default: 0 | Valid range: 0–1_000_000
+vcf_breaker_pns_nodes = 10_000
+# Default: 2.0 | Valid range: 0.1–60.0
+vcf_breaker_time_s = 2.0
+
 # VCF depth limit inside quiescence search (at frontier nodes).
 # Default: 0 (disabled) | Valid range: 0–40 | Typical: 12
 qs_vcf_depth = 12
