@@ -53,8 +53,10 @@ In the diagrams below `X` is the attacker, `O` the defender, `.` empty,
 
 The threat searches recognise fours by what they threaten — a cell that
 completes five — so split fours count exactly like straight ones.  Split
-threes count only with `split_threes` (see
-[Three-Threats](#three-threats-used-by-vct)).
+threes count only where `split_threes` is on (see
+[Three-Threats](#three-threats-used-by-vct)).  Which threats each search
+plays and answers is configurable — see
+[Configuring the threat spaces](#configuring-the-threat-spaces).
 
 ### By forcing power
 
@@ -160,7 +162,7 @@ After ★:   . . X X ★ . .        ← unbroken three, both ends empty
 Defences:  . ◇ X X ★ ◇ .        ← block either end
 ```
 
-### Split three (with `split_threes = true`)
+### Split three (with `split_threes`)
 
 ```
 Before:    . X X . . . .
@@ -175,10 +177,13 @@ windows — both ends of `. X X X .`; the gap and both ends of `. X X . X .`.
 This definition also drops "threes" no move turns into a live four, such
 as `O . X X X . O`.
 
-`split_threes` is **off by default** (`gomoku.toml`): it widens VCT/PNS a
-lot and cost 58 Elo at `pns_nodes = 30_000`.  Proofs are sound without it:
-a split three only threatens a live four, which the defence enumeration
-already answers (see [Defensive Considerations](#defensive-considerations)).
+`split_threes` is **off by default** in both `[brains.threat.threats.own]`
+and `[brains.threat.threats.opponent]`.  On for both sides it widens
+VCT/PNS a lot and cost 58 Elo at `pns_nodes = 30_000`; on for our attack
+only it was neutral (+7 Elo, −16 to +30) at 1.2× the think time.  Proofs
+are sound without it: a split three only threatens a live four, which the
+defence enumeration already answers (see
+[Defensive Considerations](#defensive-considerations)).
 
 Besides blocking, the defender can answer any three with a
 **counter-threat** — a four of their own that seizes the initiative.  This
@@ -207,9 +212,10 @@ Forks are used in two places:
   `_FORK_BONUS = 3,000`.
 - **Fork cells to block** (`find_fork_cells`, the threat brain's
   `block_fork` step): the opponent's cells where two or more such lines
-  meet.  With `split_forks = true` a line also counts when the move makes a
-  split three or four on it — two `X X _` shapes meeting at one cell, say.
-  Off by default: it cost 23 Elo (the brain blocked more and attacked less).
+  meet.  With `[brains.threat.threats.forks] split = true` a line also
+  counts when the move makes a split three or four on it — two `X X _`
+  shapes meeting at one cell, say.  Off by default: it cost 23 Elo (the
+  brain blocked more and attacked less).
 
 ---
 
@@ -224,7 +230,7 @@ two shared helpers, mirrored in Python in `line_patterns.py`:
 | `_five_cells_through` | `five_cells_through` | Along one line: the run through a cell and the cells (0–2) that would then complete five |
 | `_three_defences` | `three_defences` | Along one line: the cells (0–3) that stop the three a move makes (split rules) |
 
-### `_find_four_threats(board, stone, ctx=None)`
+### `_find_four_threats(board, stone, ctx=None, split=True)`
 
 ```python
 list[tuple[Move, Move | None]]
@@ -234,7 +240,8 @@ list[tuple[Move, Move | None]]
 
 - `defence` is the single completion cell; `None` means unblockable (live
   four, double four, or a five).
-- Straight and split fours alike.
+- Straight and split fours alike; `split=False` counts unbroken runs only
+  (a `ThreatSpace` with `split_fours` / `split_counter_fours` off).
 - Sorted strongest first (unblockable before blockable), so VCF tries wins
   and refutations early.
 - Candidates are the empty cells within radius 2 of a stone; `ctx` is an
@@ -323,7 +330,26 @@ At every defender node PNS tries:
 Point 5 also answers split threes when `split_threes` is off: such a three
 threatens nothing but a live four.  A proof is only as good as this list —
 each missing kind of defence (points 3 for split fours, and 5) once let PNS
-prove wins the defender could refute.
+prove wins the defender could refute.  Every point can be switched off in
+`[brains.threat.threats.defence]`, at that price.
+
+### Configuring the threat spaces
+
+A `ThreatSpace` (`gomoku_brain/threat_space.py`) tells VCF, PNS and VCT
+which threats the attacker plays and which replies the defender gets.  The
+threat brain builds one for its own forced-win search and one for the
+opponent's, from `gomoku.toml`:
+
+| Table | Keys | Effect of turning fewer on |
+|-------|------|----------------------------|
+| `[brains.threat.threats.own]` | `fours`, `split_fours`, `threes`, `split_threes` | Our search finds fewer wins (never false ones) |
+| `[brains.threat.threats.opponent]` | the same | The brain may miss a win the opponent has |
+| `[brains.threat.threats.defence]` | `block_fours`, `block_threes`, `counter_fours`, `split_counter_fours`, `counter_threes`, `split_counter_threes`, `unblockable_four_defences` | **Unsound proofs**: wins that kind of reply refutes are "proved" (except `counter_threes` / `split_counter_threes`, heuristics) |
+| `[brains.threat.threats.forks]` | `split` | Fork cells counted from unbroken runs only |
+
+More attack threats find more wins but widen the search, so the same
+`pns_nodes` proves less.  `gomoku.toml` documents each key; the defaults are
+the measured configuration.
 
 ### VCF-aware positional defence
 
