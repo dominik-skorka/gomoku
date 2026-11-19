@@ -567,6 +567,12 @@ def match(
         "Use worktree when B changes threat detection: an older oracle cannot see B's new threats."
     ),
 )
+@click.option(
+    "--second-oracle/--no-second-oracle",
+    default=True,
+    show_default=True,
+    help="Re-judge each blunder with B's own search; blunders the two disagree on are DISPUTED, not BUG.",
+)
 @click.option("--oracle-nodes", type=click.IntRange(1_000, 10_000_000), default=200_000, show_default=True)
 @click.option("--oracle-time", type=click.FloatRange(0.1, 600.0), default=30.0, show_default=True, help="Seconds.")
 @click.option(
@@ -593,6 +599,7 @@ def review(
     opening_stones: int,
     opening_spread: int,
     oracle_rev: str | None,
+    second_oracle: bool,
     oracle_nodes: int,
     oracle_time: float,
     escalate: bool,
@@ -641,6 +648,7 @@ def review(
             opening_stones=opening_stones,
             opening_spread=opening_spread,
             oracle_rev=oracle_rev,
+            second_oracle=second_oracle,
             oracle=OracleConfig(nodes=oracle_nodes, time_s=oracle_time),
             escalate=escalate,
             escalate_timeout_s=escalate_timeout,

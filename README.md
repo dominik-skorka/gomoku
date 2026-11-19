@@ -165,9 +165,13 @@ baseline (A) and the candidate (B), then checks every engine move with
 an *oracle*, a threat-space proof-number search with a much larger
 budget (`--oracle-nodes`, `--oracle-time`) running from a separate
 source tree (`--oracle-rev`, by default A's revision), so a bug in the
-candidate's search can't vouch for its own moves.  When B changes what
-counts as a threat, judge with `--oracle-rev worktree` as well: an older
-oracle cannot see B's new threats and reports B's sound wins as unsound.  It flags:
+candidate's search can't vouch for its own moves.  An older oracle,
+though, cannot see a threat B newly detects, and reports B's sound wins
+as unsound.  So each blunder is also re-judged by B's own search (turn
+off with `--no-second-oracle`): one the two oracles disagree on is
+**DISPUTED** — listed, not retried, not counted as a bug — and makes the
+verdict `WARN`, to be checked by hand.  `--oracle-rev worktree` judges
+everything with the working tree's search.  It flags:
 
 | Blunder | Meaning |
 |---|---|
@@ -194,7 +198,7 @@ Verdict: WARN — B has 2 blunder(s), A has 2; no more of them need a code fix t
 ```
 
 The verdict is `FAIL` (exit status 1) when B has more BUG blunders than
-A, `WARN` when B has blunders, and `PASS` otherwise.  Fix a `FAIL`
+A, `WARN` when B has blunders or disputed ones, and `PASS` otherwise.  Fix a `FAIL`
 before spending time on a long `match`.  `--out review.json` saves the
 games, the oracle's verdict for every position and each blunder with
 its retries; `--no-escalate` skips the retries.

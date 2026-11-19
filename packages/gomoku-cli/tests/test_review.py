@@ -26,6 +26,7 @@ from gomoku_cli.review import (
     format_report,
     review_game,
     run_review,
+    tally,
     verdict,
 )
 
@@ -438,3 +439,34 @@ class TestOracleSource:
                     EngineSpec("random", rev="base"), EngineSpec("random"), games=2, oracle_rev=oracle_rev
                 )
             assert seen[2].rev == expected
+
+
+class TestSecondOracle:
+    MOVES = ((7, 7), (0, 0), (7, 8), (14, 14), (3, 3), (4, 4))
+
+    def _review(self, second):
+        # The brain claims a forced win at ply 2 that the first oracle disproves.
+        record = _record(list(self.MOVES), paths=["pns_win", None, None, None])
+        return review_game(0, record, 2, FakeOracle(), {}, SIZE, escalate=False, second_oracle=second)
+
+    def test_agreeing_oracles_confirm_the_blunder(self):
+        review = self._review(FakeOracle())
+        assert [(b.kind, b.verdict) for b in review.blunders] == [("unsound_proof", "bug")]
+
+    def test_disagreeing_oracles_dispute_it(self):
+        # The candidate's own search proves the claimed win.
+        second = FakeOracle({(tuple(self.MOVES[:2]), None): ("PROVED", (7, 8))})
+        second.table[(tuple(self.MOVES[:4]), None)] = ("PROVED", (7, 9))
+        review = self._review(second)
+        (blunder,) = review.blunders
+        assert blunder.verdict == "disputed" and "no blunder" in blunder.remedy
+        totals = tally([review])
+        assert (totals["b"].bugs, totals["a"].bugs, totals["a"].disputed) == (0, 0, 1)
+
+    def test_disputed_blunders_warn_but_do_not_fail(self):
+        totals = {"a": EngineTally(moves=10), "b": EngineTally(moves=10, blunders=1, disputed=1)}
+        assert verdict(totals)[0] == "WARN"
+        record = _record(list(self.MOVES))
+        b = Blunder(0, 3, "b", "white", "losing_move", (14, 14), None, "x", None, 1.0, verdict="disputed", remedy="r")
+        text = format_report(EngineSpec("x"), EngineSpec("y"), [GameReview(0, record, [], [b])])
+        assert "=> DISPUTED: r" in text and "1 disputed by the second oracle" in text
