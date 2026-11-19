@@ -1035,6 +1035,35 @@ def has_any_four_threat_grid(
 
 
 @njit(cache=True)
+def is_unblockable_four_at(
+    grid: NDArray,  # type: ignore[type-arg]
+    size: int,
+    row: int,
+    col: int,
+    stone: int,
+    dirs: NDArray,  # type: ignore[type-arg]
+    split: bool = True,
+) -> bool:
+    """Would placing *stone* at the empty (row, col) be unblockable?
+
+    A five-or-more, a live four (two completion cells on one line), or
+    fours on two lines with distinct completion cells.
+    """
+    first_r = -1
+    first_c = -1
+    for d in range(dirs.shape[0]):
+        run, n_five, r1, c1, _r2, _c2 = _five_cells_through(grid, size, row, col, stone, dirs[d, 0], dirs[d, 1], split)
+        if run >= 5 or n_five == 2:
+            return True
+        if n_five == 1:
+            if first_r >= 0 and (first_r != r1 or first_c != c1):
+                return True
+            first_r = r1
+            first_c = c1
+    return False
+
+
+@njit(cache=True)
 def has_unblockable_four_grid(
     grid: NDArray,  # type: ignore[type-arg]
     size: int,
@@ -1059,22 +1088,75 @@ def has_unblockable_four_grid(
     for i in range(n):
         r = candidates[i, 0]
         c = candidates[i, 1]
+        if grid[r, c] == 0 and is_unblockable_four_at(grid, size, r, c, stone, dirs, split):
+            return True
+    return False
+
+
+@njit(cache=True)
+def unblockable_four_defences_grid(
+    grid: NDArray,  # type: ignore[type-arg]
+    size: int,
+    candidates: NDArray,  # type: ignore[type-arg]
+    attacker: int,
+    defender: int,
+    dirs: NDArray,  # type: ignore[type-arg]
+    split: bool = True,
+) -> NDArray:  # type: ignore[type-arg]
+    """Candidate cells after which *attacker* has no unblockable four left.
+
+    Empty when the attacker has no unblockable four now.  Two facts keep
+    this cheap without changing the answer from trying every candidate:
+    a defender's stone never gives the attacker a *new* unblockable four,
+    so only the cells that are unblockable now (U) need re-checking; and
+    a stone can only change a cell's status along its four lines, within
+    four cells of it, so only candidates on those lines are tried.
+
+    Returns an int32[K, 2] array of (row, col), in candidate order.
+    """
+    n = candidates.shape[0]
+    u = np.empty((n, 2), dtype=np.int32)
+    nu = 0
+    for i in range(n):
+        r = candidates[i, 0]
+        c = candidates[i, 1]
+        if grid[r, c] == 0 and is_unblockable_four_at(grid, size, r, c, attacker, dirs, split):
+            u[nu, 0] = r
+            u[nu, 1] = c
+            nu += 1
+    out = np.empty((n, 2), dtype=np.int32)
+    if nu == 0:
+        return out[:0].copy()
+    count = 0
+    for i in range(n):
+        r = candidates[i, 0]
+        c = candidates[i, 1]
         if grid[r, c] != 0:
             continue
-        # Distinct cells that would complete five: two or more (a live
-        # four, or fours on two lines) cannot all be blocked.
-        first_r = -1
-        first_c = -1
-        for d in range(dirs.shape[0]):
-            run, n_five, r1, c1, _r2, _c2 = _five_cells_through(grid, size, r, c, stone, dirs[d, 0], dirs[d, 1], split)
-            if run >= 5 or n_five == 2:
-                return True
-            if n_five == 1:
-                if first_r >= 0 and (first_r != r1 or first_c != c1):
-                    return True
-                first_r = r1
-                first_c = c1
-    return False
+        # Only cells on a line through some unblockable cell, within 4.
+        near = False
+        for j in range(nu):
+            dr = r - u[j, 0]
+            dc = c - u[j, 1]
+            if (dr == 0 or dc == 0 or dr == dc or dr == -dc) and max(abs(dr), abs(dc)) <= 4:
+                near = True
+                break
+        if not near:
+            continue
+        grid[r, c] = defender
+        still = False
+        for j in range(nu):
+            ur = u[j, 0]
+            uc = u[j, 1]
+            if grid[ur, uc] == 0 and is_unblockable_four_at(grid, size, ur, uc, attacker, dirs, split):
+                still = True
+                break
+        grid[r, c] = 0
+        if not still:
+            out[count, 0] = r
+            out[count, 1] = c
+            count += 1
+    return out[:count].copy()
 
 
 @njit(cache=True)

@@ -87,9 +87,11 @@ class SearchState:
         # size*size (fill the board), but typical alpha-beta depth is far less.
         # We size to size*size + small headroom so it is never the bottleneck.
         cap = max_ply if max_ply is not None else (size * size + 16)
-        self._undo_row = np.empty(cap, dtype=np.int32)
-        self._undo_col = np.empty(cap, dtype=np.int32)
-        self._undo_stone = np.empty(cap, dtype=np.int8)
+        # Plain lists: only Python reads these, and storing one value in a
+        # NumPy array costs several times a list store on this hot path.
+        self._undo_row: list[int] = [0] * cap
+        self._undo_col: list[int] = [0] * cap
+        self._undo_stone: list[int] = [0] * cap
         # Eager int8 grid mirror — maintained O(1) per make/unmake so the
         # grid-JIT path (bitboard mode off) doesn't pay an O(size*size)
         # bitboard→grid conversion per node.
@@ -114,7 +116,7 @@ class SearchState:
         # the new ply only, so cached ancestor evaluations survive and
         # ``gomoku_brain.evaluate`` can fill gaps with local deltas.
         self._eval_stack = np.zeros(cap, dtype=np.float64)
-        self._eval_valid = np.zeros(cap, dtype=np.bool_)
+        self._eval_valid: list[bool] = [False] * cap
         # Per-ply memo of the radius-2 candidate scan, keyed by the
         # zobrist hash of the position each slot was derived from (no
         # explicit invalidation: a make at the same ply changes the
@@ -229,9 +231,9 @@ class SearchState:
         Precondition: ``self.ply > 0``.
         """
         p = self.ply - 1
-        row = int(self._undo_row[p])
-        col = int(self._undo_col[p])
-        stone_int = int(self._undo_stone[p])
+        row = self._undo_row[p]
+        col = self._undo_col[p]
+        stone_int = self._undo_stone[p]
         # Clear the bit.
         bit_mask = _BIT_INV[col]
         if stone_int == 1:
