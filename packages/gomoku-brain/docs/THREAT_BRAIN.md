@@ -519,6 +519,7 @@ Measured with `gomoku match` (300 games each, colours swapped per opening):
 | `pns_nodes` 30,000 → 60,000 | **+30 Elo** (95% interval +4 to +57) | 667 → 968 ms |
 | `pns_nodes` 30,000 → 100,000 | +40 Elo (+11 to +69) | 651 → 1231 ms |
 | split threes for both sides (`own` and `opponent` `split_threes = true`, at 30,000) | **−58 Elo** (−92 to −26) | 385 → 817 ms |
+| split threes in our attack only (`own.split_threes = true`, at 60,000) | +7 Elo (−16 to +30): no measurable difference | 1040 → 1248 ms |
 | `forks.split = true` (at 30,000) | −23 Elo (−40 to −7) | 643 → 657 ms |
 | fallback depth 5 → 4 (at 30,000) | −24 Elo (−59 to +10): no measurable difference | ~6% faster |
 
