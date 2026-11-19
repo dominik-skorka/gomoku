@@ -196,7 +196,7 @@ warm when they're disabled.
 | Brain | Decision paths | Stats recorded |
 |-------|---------------|----------------|
 | **ThreatBrain** | `"immediate_win"`, `"block_immediate_win"`, `"vcf_win"`, `"pns_win"`, `"vct_win"`, `"vcf_aware_search"`, `"vct_aware_search"`, `"block_fork"`; falls through to the alpha-beta paths below | Threats, VCF/VCT results, PNS nodes, fallback depth |
-| **AlphaBetaBrain** | `"opening_book"`, `"vcf_precheck"`, `"alphabeta"`; VCF-aware: `"instant_win"`, `"vcf_win"`, `"vcf_block_no_breaker"`, `"vcf_breaker"` | TT size / hits / probes, depth, main and QS nodes, aspiration resets, top candidates (`score_type="eval"`), `alternative_best`, our/opp threats |
+| **AlphaBetaBrain** | `"opening_book"`, `"alphabeta"`; root VCF pre-check: `"instant_win"`, `"vcf_win"` (own forced win), `"vcf_breaker"`, `"vcf_block_no_breaker"` (defences against the opponent's VCF).  Recordings from earlier versions show `"vcf_precheck"` for all four | TT size / hits / probes, depth, main and QS nodes, aspiration resets, top candidates (`score_type="eval"`), `alternative_best`, our/opp threats |
 | **MCTSBrain** | `"mcts"`, `"mcts_vcf_gated"`, `"single_candidate"`, `"instant_win"`, `"instant_block"` | Iterations, root visits (`nodes_searched`), top candidates as average-value winrates (`score_type="winrate"`), `alternative_best` |
 
 ---
