@@ -316,6 +316,8 @@ separately.
 | --------- | ------- | ----- | -------- | -------------------- |
 | `depth` | 4 | 1–10 | Maximum search depth (plies) | Stronger but exponentially slower |
 | `vcf_depth` | 0 | 0–40 | Root-level VCF pre-check depth | Detects forced wins before main search |
+| `vcf_breaker_pns_nodes` | 0 | 0–1,000,000 | When the opponent has a VCF: PNS budget per breaker for checking it leaves no other forced win (0: pick the best-evaluated breaker) | Fewer breakers that still lose to three-threats; `gomoku.toml` uses 10,000 (+56 Elo) |
+| `vcf_breaker_time_s` | 2.0 | 0.1–60 | Time cap for all breaker probes of one move | Probes more breakers |
 | `qs_vcf_depth` | 0 | 0–40 | VCF depth inside quiescence search | Adds tactical vision at leaf nodes |
 | `threat_ordering` | true | — | Promote threat moves in move ordering | Better ordering, more cutoffs |
 | `threat_extensions` | 0 | 0–8 | Extra plies for forcing moves | Deeper search on tactical lines |
