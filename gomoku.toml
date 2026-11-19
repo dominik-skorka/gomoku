@@ -222,9 +222,12 @@ threat_search = "pns"
 
 # Max nodes explored by PNS before giving up.
 # Default: 10_000 | Valid range: 1_000–10_000_000
-# 30_000 beat 10_000 by +43 Elo (95% interval +15 to +72, 300 games) at
-# 1.6x the think time; 100_000 gained no more at 2.6x.
-pns_nodes = 30_000
+# Measured with `gomoku match` (300 games each).  With split fours seen
+# (they make proofs larger), 60_000 beat 30_000 by +30 Elo (95% interval
+# +4 to +57) at 1.45x the think time (968 vs 667 ms per move); 100_000
+# gained +40 (+11 to +69) at 1.9x.  Before that, 30_000 had been the
+# sweet spot (+43 over 10_000, 100_000 no better).
+pns_nodes = 60_000
 
 # Split threes (_XX_X_) as threats in PNS / VCT, for both sides.  Proofs
 # are sound either way (a split three only threatens a live four, which

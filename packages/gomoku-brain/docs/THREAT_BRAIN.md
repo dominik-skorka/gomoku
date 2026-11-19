@@ -30,7 +30,7 @@ resorting to general search.  It chains together *threats* — moves the opponen
 | Algorithm       | VCF + (PNS or VCT) with alpha-beta fallback       |
 | Default search  | `threat_search=pns` (configurable: `pns` or `vct`)|
 | Built-in defaults | `vcf_depth=20`, `vct_depth=12`, `pns_nodes=10000`, `pns_time_s=5.0`, `depth=4` |
-| Shipped `gomoku.toml` | `pns_nodes=30000`; fallback `depth=5`, `max_candidates=12`, `eval_ordering_depth=11` (see [Parameters](#parameters)) |
+| Shipped `gomoku.toml` | `pns_nodes=60000`; fallback `depth=5`, `max_candidates=12`, `eval_ordering_depth=11` (see [Parameters](#parameters)) |
 | Strength        | Strongest brain in the workspace                  |
 | Best at         | Endgame / tactical positions                      |
 
@@ -247,7 +247,8 @@ such as the breaker probes in the defensive steps, need the difference.
 At **AND nodes** (defender to move), PNS considers **all threat-relevant
 defensive moves** (`_pns_defence_moves()`):
 
-1. Forced blocks of the attacker's fours.
+1. Forced blocks of the attacker's fours — straight or split (`XXX_X`,
+   `XX_XX`): a four is any move after which one empty cell completes five.
 2. Both end cells of the attacker's live threes.
 3. The defender's own fours (counter-fours).
 4. The defender's own threes (counter-threes).
@@ -431,18 +432,20 @@ caching.  See [ALPHABETA_BRAIN.md](ALPHABETA_BRAIN.md).
 
 ## Parameters
 
-The brain has seven settings.  "Default" is the built-in value, used
+The brain has nine settings.  "Default" is the built-in value, used
 when a setting is left out; the shipped `gomoku.toml` changes some:
 
 | Parameter       | Default  | `gomoku.toml` | Controls                        | Effect of increasing           |
 | --------------- | -------- | ------------- | ------------------------------- | ------------------------------ |
 | `vcf_depth`     | 20       | 20            | Max plies for VCF search        | Finds longer four-chains       |
 | `vct_depth`     | 12       | 12            | Max plies for VCT search        | Finds longer three/four-chains |
-| `pns_nodes`     | 10,000   | **30,000**    | Distinct positions PNS may create | Proves/disproves more positions |
+| `pns_nodes`     | 10,000   | **60,000**    | Distinct positions PNS may create | Proves/disproves more positions |
 | `pns_time_s`    | 5.0      | 5.0           | Time budget for PNS (seconds)   | Allows longer proof search     |
 | `threat_search` | `"pns"`  | `"pns"`       | Algorithm: `"pns"` or `"vct"`   | Selects the algorithm of steps 4 and 6 |
 | `depth`         | 4        | 5 (ignored)   | Fallback depth without a `fallback` table | Better positional play |
 | `fallback`      | none     | **table**     | `AlphaBetaBrain` settings for the fallback (its `depth` replaces the top-level one) | — |
+| `split_threes`  | `false`  | `false`       | Split threes (`_XX_X_`) as threats in PNS / VCT, for both sides | Finds wins that use them; much wider search |
+| `split_forks`   | `false`  | `false`       | Split threes and fours count when looking for the opponent's fork cells | Blocks more forks |
 
 The shipped fallback table is `depth = 5`, `eval_ordering_depth = 11`,
 `max_candidates = 12`: a depth-5 search that orders moves by cheap
@@ -476,16 +479,28 @@ and `vct_depth=8` means up to **4 mixed threats**.
 | Scenario                        | Recommendation                                          |
 | ------------------------------- | ------------------------------------------------------- |
 | Fast play / low resources       | `vcf_depth=12, threat_search=vct, vct_depth=6`         |
-| Default / balanced              | the shipped `gomoku.toml` (`pns_nodes=30000`)           |
+| Default / balanced              | the shipped `gomoku.toml` (`pns_nodes=60000`)           |
+| Maximum strength                | `pns_nodes=100000` (+10 Elo over 60,000, not significant; 1.27x the time) |
 | Better fallback positional play | Raise `fallback.depth` and measure it (see below)       |
 
 Measured with `gomoku match` (300 games each, colours swapped per opening):
 
 | Change | Result | Think time per move |
 |--------|--------|---------------------|
-| `pns_nodes` 10,000 → 30,000 | **+43 Elo** (95% interval +15 to +72) | 270 → 436 ms |
+| `pns_nodes` 30,000 → 60,000 | **+30 Elo** (95% interval +4 to +57) | 667 → 968 ms |
+| `pns_nodes` 30,000 → 100,000 | +40 Elo (+11 to +69) | 651 → 1231 ms |
+| `split_threes = true` (at 30,000) | **−58 Elo** (−92 to −26) | 385 → 817 ms |
+| `split_forks = true` (at 30,000) | −23 Elo (−40 to −7) | 643 → 657 ms |
+| fallback depth 5 → 4 (at 30,000) | −24 Elo (−59 to +10): no measurable difference | ~6% faster |
+
+Earlier measurements, before split fours were detected (PNS was then
+blind to them; proofs were smaller and sometimes false):
+
+| Change | Result | Think time per move |
+|--------|--------|---------------------|
+| `pns_nodes` 10,000 → 30,000 | +43 Elo (+15 to +72) | 270 → 436 ms |
 | `pns_nodes` 10,000 → 100,000 | +40 Elo (+10 to +69): no more than 30,000 | 270 → ~730 ms |
-| fallback depth 4 → 5 with the 12-candidate table (at `pns_nodes=10000`) | −16 Elo (−49 to +16): no measurable difference | ~9% slower |
+| fallback depth 4 → 5 with the 12-candidate table (at 10,000) | −16 Elo (−49 to +16): no measurable difference | ~9% slower |
 
 Before a long match, `gomoku review` (see the main README) tells whether
 the brain's mistakes come from too small a budget or from bugs.  It
@@ -583,7 +598,7 @@ New behaviour:
 ### CLI
 
 ```bash
-# The [brains.threat] alias from gomoku.toml (PNS, pns_nodes=30000, fallback depth 5)
+# The [brains.threat] alias from gomoku.toml (PNS, pns_nodes=60000, fallback depth 5)
 uv run gomoku play --black threat --white alphabeta
 
 # Custom board size
@@ -601,8 +616,10 @@ depth = 5               # fallback depth when there is no fallback table
 vcf_depth = 20
 vct_depth = 12
 threat_search = "pns"   # "pns" (default) or "vct"
-pns_nodes = 30_000      # distinct positions PNS may create
+pns_nodes = 60_000      # distinct positions PNS may create
 pns_time_s = 5.0        # time budget for PNS (seconds)
+split_threes = false    # split threes as threats in PNS / VCT
+split_forks = false     # split threes / fours in fork cells
 
 [brains.threat.fallback]  # AlphaBetaBrain settings for the fallback
 depth = 5                 # replaces the top-level depth
@@ -671,7 +688,7 @@ ThreatBrain(
 | `minimax`   | Classic minimax         | ~50              | 3                    | ~125,000          |
 | `negamax`   | Negamax                 | ~50              | 3                    | ~125,000          |
 | `alphabeta` | Alpha-beta pruning      | ~7 (with cutoff) | 4                    | ~2,400            |
-| **`threat`**| **VCF + PNS + AB**      | **1-5 / all**    | **20 / 30k / 5**    | **~100-30,000**   |
+| **`threat`**| **VCF + PNS + AB**      | **1-5 / all**    | **20 / 60k / 5**    | **~100-60,000**   |
 
 > Node counts are approximate for a mid-game 15x15 board.
 
