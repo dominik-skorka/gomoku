@@ -362,6 +362,12 @@ class TestWorkerProtocol:
         assert oracle.status(OPEN_THREE, Stone.BLACK)[0] == "PROVED"  # same question, asked for the side not to move
         assert oracle.status([*OPEN_THREE, (14, 0)], Stone.WHITE)[0] != "PROVED"
 
+    def test_status_in_the_brain_space_falls_back_without_one(self, engine):
+        # alpha-beta has no threat space of its own: the default search runs.
+        plain = engine.query({"op": "status", "moves": OPEN_THREE, "nodes": 5_000, "time_s": 5.0})
+        brain = engine.query({"op": "status", "moves": OPEN_THREE, "nodes": 5_000, "time_s": 5.0, "space": "brain"})
+        assert brain == plain
+
     def test_losing_move_found_with_the_real_oracle(self, engine):
         # White (ply 5) ignores the open three; blocking an end would have held.
         moves = [*OPEN_THREE, (14, 14)]

@@ -255,9 +255,12 @@ def _describe(overrides: dict[str, Any], prefix: str = "") -> str:
 
 
 class _Oracle:
-    def __init__(self, engine: Engine, config: OracleConfig) -> None:
+    def __init__(self, engine: Engine, config: OracleConfig, *, brain_space: bool = False) -> None:
         self.engine = engine
         self.config = config
+        # Search in the engine's own threat space (the second oracle: judge
+        # B in the threat space B plays in).
+        self.brain_space = brain_space
 
     def status(self, moves: list[Cell], stone: Stone | None = None, *, screen: bool = False) -> tuple[str, Cell | None]:
         nodes = self.config.screen_nodes if screen else self.config.nodes
@@ -265,6 +268,8 @@ class _Oracle:
         request: dict[str, Any] = {"op": "status", "moves": moves, "nodes": nodes, "time_s": time_s}
         if stone is not None:
             request["stone"] = int(stone)
+        if self.brain_space:
+            request["space"] = "brain"
         reply = self.engine.query(request, timeout_s=time_s * 4 + 60)
         move = reply["move"]
         return reply["status"], None if move is None else (int(move[0]), int(move[1]))
@@ -555,7 +560,9 @@ def run_review(
     else:
         oracle_spec = EngineSpec("random", rev=oracle_rev if oracle_rev is not None else spec_a.rev)
     source_oracle = resolve_source(oracle_spec, repo)
-    use_second = second_oracle and source_b != source_oracle
+    # The second oracle also runs when B is the oracle's code configured to
+    # search differently (config= with its own threat space).
+    use_second = second_oracle and (source_b != source_oracle or spec_b.config is not None)
 
     schedule = [(i, a_black) for i in range(pairs) for a_black in (True, False)]
     local = threading.local()
@@ -589,7 +596,7 @@ def run_review(
             size,
             escalate=escalate,
             escalate_timeout_s=escalate_timeout_s,
-            second_oracle=_Oracle(slot_b.engine, oracle) if use_second else None,
+            second_oracle=_Oracle(slot_b.engine, oracle, brain_space=True) if use_second else None,
         )
         if on_game is not None:
             with lock:
