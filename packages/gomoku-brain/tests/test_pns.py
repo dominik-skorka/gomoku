@@ -366,3 +366,57 @@ class TestUnblockableFourDefences:
         board = _replay([*_LOST_GAME[:10], (6, 8), (5, 8)])  # I7, I6
         status, _ = pns_threat_status(board, Stone.BLACK, max_nodes=200_000, max_time_s=60.0)
         assert status is PNSStatus.PROVED
+
+
+class TestUnblockableFourDefencesKernel:
+    """The JIT kernel only tries cells on the threat lines and only re-checks
+    the attacker's unblockable cells; it must find exactly the cells that
+    trying every candidate finds."""
+
+    @staticmethod
+    def _brute_force(state, attacker, ctx, split=True):
+        from gomoku_brain.threat_detect import _has_unblockable_four
+
+        _grid, _size, candidates, _dirs = ctx
+        found = set()
+        if not _has_unblockable_four(state, attacker, ctx, split):
+            return found
+        for i in range(candidates.shape[0]):
+            r, c = int(candidates[i, 0]), int(candidates[i, 1])
+            if not state.is_empty(r, c):
+                continue
+            state.make(r, c, attacker.opponent())
+            try:
+                if not _has_unblockable_four(state, attacker, ctx, split):
+                    found.add((r, c))
+            finally:
+                state.unmake()
+        return found
+
+    def test_matches_trying_every_candidate(self):
+        import random
+
+        from gomoku_brain.pns import _unblockable_four_defences
+        from gomoku_brain.search_state import SearchState
+        from gomoku_brain.threat_detect import _scan_context
+
+        rng = random.Random(11)
+        checked = with_threat = 0
+        for _ in range(400):
+            board = Board(size=15)
+            stone = Stone.BLACK
+            # Dense random clusters make unblockable-four threats common.
+            for _ in range(rng.randint(8, 30)):
+                r, c = rng.randint(4, 10), rng.randint(4, 10)
+                if board.is_valid_move(Move(row=r, col=c)):
+                    board = board.place_stone(Move(row=r, col=c), stone)
+                    stone = stone.opponent()
+            for attacker in (Stone.BLACK, Stone.WHITE):
+                for split in (True, False):
+                    state = SearchState.from_board(board, attacker.opponent())
+                    ctx = _scan_context(state)
+                    expected = self._brute_force(state, attacker, ctx, split)
+                    assert _unblockable_four_defences(state, attacker, ctx, split) == expected
+                    checked += 1
+                    with_threat += bool(expected)
+        assert with_threat > 50, (checked, with_threat)  # the threats did occur

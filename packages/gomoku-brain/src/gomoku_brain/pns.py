@@ -272,18 +272,24 @@ def _unblockable_four_defences(
 
     Empty when the attacker has no such threat.  Tried over the node's
     candidate cells: any cell that can affect a four lies within the
-    candidate radius of the attacker's stones.  The detection reuses
-    *ctx*, which stays valid because only the defender moves (see the
-    staleness contract on ``_ScanCtx``).
+    candidate radius of the attacker's stones.  On the JIT path
+    :func:`~gomoku_brain.evaluate_jit.unblockable_four_defences_grid` only
+    tries the candidates on the lines of the attacker's unblockable cells
+    and only re-checks those cells — the same answer, a fraction of the
+    work.  It reuses *ctx*, which stays valid because only the defender
+    moves (see the staleness contract on ``_ScanCtx``).
     """
+    defender = attacker.opponent()
+    if ctx is not None:
+        from gomoku_brain.evaluate_jit import unblockable_four_defences_grid
+
+        grid, size, candidates, dirs = ctx
+        found = unblockable_four_defences_grid(grid, size, candidates, int(attacker), int(defender), dirs, split)
+        return {(int(found[i, 0]), int(found[i, 1])) for i in range(found.shape[0])}
+
     if not _has_unblockable_four(state, attacker, ctx, split):
         return set()
-    if ctx is not None:
-        _grid, _size, candidates, _dirs = ctx
-        cells = [(int(candidates[i, 0]), int(candidates[i, 1])) for i in range(candidates.shape[0])]
-    else:
-        cells = [(m.row, m.col) for m in get_candidate_moves(state)]
-    defender = attacker.opponent()
+    cells = [(m.row, m.col) for m in get_candidate_moves(state)]
     defences: set[tuple[int, int]] = set()
     for r, c in cells:
         if not state.is_empty(r, c):
