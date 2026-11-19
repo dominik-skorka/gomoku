@@ -166,19 +166,30 @@ def test_split_threes_are_off_by_default():
 
 
 def test_brain_settings_reach_the_searches(monkeypatch):
+    """[brains.threat.threats] builds the own and opponent spaces the searches get."""
     import gomoku_brain.threat as threat_mod
     from gomoku.settings import ThreatBrainSettings
     from gomoku_brain.threat import ThreatBrain
+    from gomoku_brain.threat_space import DEFAULT_THREAT_SPACE
 
-    assert ThreatBrainSettings().split_threes is False and ThreatBrainSettings().split_forks is False
+    defaults = ThreatBrainSettings().model_dump()["threats"]
+    assert defaults["own"]["split_threes"] is False and defaults["forks"]["split"] is False
+    assert ThreatBrain(threats=defaults).own_space == DEFAULT_THREAT_SPACE
+
+    threats = {"own": {"split_threes": True}, "defence": {"counter_threes": False}, "forks": {"split": True}}
+    brain = ThreatBrain(threats=threats)
+    assert brain.own_space.split_threes and not brain.opponent_space.split_threes
+    assert not brain.own_space.counter_threes and not brain.opponent_space.counter_threes
+    assert brain.split_forks
+
     seen = []
     real = threat_mod.pns_threat_search
 
     def spy(*args, **kwargs):
-        seen.append(kwargs.get("split_threes"))
+        seen.append(kwargs.get("space"))
         return real(*args, **kwargs)
 
     monkeypatch.setattr(threat_mod, "pns_threat_search", spy)
     board = _board([(7, 7), (7, 8)], [(8, 8)])
-    ThreatBrain(split_threes=True).get_move(board, Stone.WHITE)
-    assert seen and all(seen)
+    brain.get_move(board, Stone.WHITE)
+    assert seen and seen[0] == brain.own_space

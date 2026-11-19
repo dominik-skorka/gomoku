@@ -41,6 +41,7 @@ from gomoku_brain.threat_detect import (
     _ScanCtx,
 )
 from gomoku_brain.threat_search import _state_is_win
+from gomoku_brain.threat_space import DEFAULT_THREAT_SPACE, ThreatSpace
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -163,17 +164,21 @@ def _pns_defence_moves(
     state: SearchState,
     attacker: Stone,
     ctx: _ScanCtx | None = None,
-    split_threes: bool = False,
+    space: ThreatSpace = DEFAULT_THREAT_SPACE,
 ) -> list[Move]:
     """Compute defender moves for an AND node: blocks + counter-threats.
 
-    Includes:
-    1. Forced blocks of attacker four-threats.
-    2. Cells that stop the attacker's three-threats, split ones included.
-    3. Defender's own four-threat moves (counter-fours).
-    4. Defender's own three-threat moves (counter-threes).
+    Includes, each when its *space* field is on:
+    1. Forced blocks of the attacker's fours (``block_fours``).
+    2. Cells that stop the attacker's threes (``block_threes``).
+    3. The defender's own fours (``counter_fours``, ``split_counter_fours``).
+    4. The defender's own threes (``counter_threes``, ``split_counter_threes``).
     5. Every cell that defuses an attacker's unblockable-four threat
-       (see :func:`_unblockable_four_defences`).
+       (``unblockable_four_defences``; see :func:`_unblockable_four_defences`).
+
+    The attacker's fours and threes are read with the *space*'s attack
+    fields, so every attack the search plays has its blocks here.  Each
+    kind left out lets the search prove wins that kind of reply refutes.
 
     On the JIT path the four detection routines share one scan context —
     ``ctx`` (the expanding node's context, built at the node's own
@@ -193,65 +198,76 @@ def _pns_defence_moves(
         def_int = int(defender)
 
         # 1) Attacker fours — forced blocks (or attack cell if unblockable).
-        atk_fours = find_four_threats_grid(grid, size, candidates, atk_int, dirs)
-        for i in range(atk_fours.shape[0]):
-            ar = int(atk_fours[i, 0])
-            ac = int(atk_fours[i, 1])
-            dr_end = int(atk_fours[i, 2])
-            if dr_end < 0:
-                cells.add((ar, ac))
-            else:
-                cells.add((dr_end, int(atk_fours[i, 3])))
+        if space.block_fours:
+            atk_fours = find_four_threats_grid(grid, size, candidates, atk_int, dirs, space.split_fours)
+            for i in range(atk_fours.shape[0]):
+                ar = int(atk_fours[i, 0])
+                ac = int(atk_fours[i, 1])
+                dr_end = int(atk_fours[i, 2])
+                if dr_end < 0:
+                    cells.add((ar, ac))
+                else:
+                    cells.add((dr_end, int(atk_fours[i, 3])))
 
         # 2) Attacker threes — the cells that stop them (both ends of a
         #    straight three; the gap and both ends of a split three).
-        atk_threes = find_three_threats_grid(grid, size, candidates, atk_int, dirs, split_threes)
-        for i in range(atk_threes.shape[0]):
-            for j in (2, 4, 6):
-                if atk_threes[i, j] >= 0:
-                    cells.add((int(atk_threes[i, j]), int(atk_threes[i, j + 1])))
+        if space.block_threes:
+            atk_threes = find_three_threats_grid(grid, size, candidates, atk_int, dirs, space.split_threes)
+            for i in range(atk_threes.shape[0]):
+                for j in (2, 4, 6):
+                    if atk_threes[i, j] >= 0:
+                        cells.add((int(atk_threes[i, j]), int(atk_threes[i, j + 1])))
 
         # 3) Defender's own four-threats (counter-fours).
-        def_fours = find_four_threats_grid(grid, size, candidates, def_int, dirs)
-        for i in range(def_fours.shape[0]):
-            cells.add((int(def_fours[i, 0]), int(def_fours[i, 1])))
+        if space.counter_fours:
+            def_fours = find_four_threats_grid(grid, size, candidates, def_int, dirs, space.split_counter_fours)
+            for i in range(def_fours.shape[0]):
+                cells.add((int(def_fours[i, 0]), int(def_fours[i, 1])))
 
         # 4) Defender's own three-threats (counter-threes).
-        def_threes = find_three_threats_grid(grid, size, candidates, def_int, dirs, split_threes)
-        for i in range(def_threes.shape[0]):
-            cells.add((int(def_threes[i, 0]), int(def_threes[i, 1])))
+        if space.counter_threes:
+            def_threes = find_three_threats_grid(grid, size, candidates, def_int, dirs, space.split_counter_threes)
+            for i in range(def_threes.shape[0]):
+                cells.add((int(def_threes[i, 0]), int(def_threes[i, 1])))
     else:
         # 1) Forced blocks of attacker fours
-        for attack, block in _find_four_threats(state, attacker):
-            if block is not None:
-                cells.add((block.row, block.col))
-            else:
-                cells.add((attack.row, attack.col))
+        if space.block_fours:
+            for attack, block in _find_four_threats(state, attacker, split=space.split_fours):
+                if block is not None:
+                    cells.add((block.row, block.col))
+                else:
+                    cells.add((attack.row, attack.col))
 
         # 2) Cells that stop the attacker's threes
-        for _attack, defs in _find_three_threats(state, attacker, split=split_threes):
-            for d in defs:
-                cells.add((d.row, d.col))
+        if space.block_threes:
+            for _attack, defs in _find_three_threats(state, attacker, split=space.split_threes):
+                for d in defs:
+                    cells.add((d.row, d.col))
 
         # 3) Defender's own four-threats (counter-fours)
-        for attack, _block in _find_four_threats(state, defender):
-            cells.add((attack.row, attack.col))
+        if space.counter_fours:
+            for attack, _block in _find_four_threats(state, defender, split=space.split_counter_fours):
+                cells.add((attack.row, attack.col))
 
         # 4) Defender's own three-threats (counter-threes)
-        for attack, _defs in _find_three_threats(state, defender, split=split_threes):
-            cells.add((attack.row, attack.col))
+        if space.counter_threes:
+            for attack, _defs in _find_three_threats(state, defender, split=space.split_counter_threes):
+                cells.add((attack.row, attack.col))
 
     # 5) Attacker threats of an unblockable four (a live four, or a
     #    double four, next move).  Occupying the attack cell is only one
     #    defence: taking either end of the would-be four, for one, leaves
     #    the attacker a four that can be blocked.  Missing those let the
     #    search "prove" wins the defender can refute.
-    cells |= _unblockable_four_defences(state, attacker, ctx)
+    if space.unblockable_four_defences:
+        cells |= _unblockable_four_defences(state, attacker, ctx, space.split_fours)
 
     return [Move(row=r, col=c) for r, c in sorted(cells) if state.is_empty(r, c)]
 
 
-def _unblockable_four_defences(state: SearchState, attacker: Stone, ctx: _ScanCtx | None) -> set[tuple[int, int]]:
+def _unblockable_four_defences(
+    state: SearchState, attacker: Stone, ctx: _ScanCtx | None, split: bool = True
+) -> set[tuple[int, int]]:
     """Cells after which the attacker no longer has an unblockable four.
 
     Empty when the attacker has no such threat.  Tried over the node's
@@ -260,7 +276,7 @@ def _unblockable_four_defences(state: SearchState, attacker: Stone, ctx: _ScanCt
     *ctx*, which stays valid because only the defender moves (see the
     staleness contract on ``_ScanCtx``).
     """
-    if not _has_unblockable_four(state, attacker, ctx):
+    if not _has_unblockable_four(state, attacker, ctx, split):
         return set()
     if ctx is not None:
         _grid, _size, candidates, _dirs = ctx
@@ -274,7 +290,7 @@ def _unblockable_four_defences(state: SearchState, attacker: Stone, ctx: _ScanCt
             continue
         state.make(r, c, defender)
         try:
-            if not _has_unblockable_four(state, attacker, ctx):
+            if not _has_unblockable_four(state, attacker, ctx, split):
                 defences.add((r, c))
         finally:
             state.unmake()
@@ -302,7 +318,9 @@ def _link(node: _PNSNode, child: _PNSNode, move: Move) -> None:
     node.moves.append(move)
 
 
-def _expand(node: _PNSNode, state: SearchState, attacker: Stone, table: _NodeTable, split_threes: bool = False) -> int:
+def _expand(
+    node: _PNSNode, state: SearchState, attacker: Stone, table: _NodeTable, space: ThreatSpace = DEFAULT_THREAT_SPACE
+) -> int:
     """Generate children for ``node``; return how many new nodes were created.
 
     Precondition: ``state`` is at ``node``'s position.  Postcondition:
@@ -351,8 +369,13 @@ def _expand(node: _PNSNode, state: SearchState, attacker: Stone, table: _NodeTab
 
         # Four-threats first (stronger), then live-three threats; a cell
         # that is both is tried once.
-        attacks = [atk for atk, _defence in _find_four_threats(state, attacker, ctx)]
-        attacks.extend(atk for atk, _defs in _find_three_threats(state, attacker, ctx, split_threes))
+        attacks = (
+            [atk for atk, _defence in _find_four_threats(state, attacker, ctx, space.split_fours)]
+            if space.fours
+            else []
+        )
+        if space.threes:
+            attacks.extend(atk for atk, _defs in _find_three_threats(state, attacker, ctx, space.split_threes))
         seen_moves: set[tuple[int, int]] = set()
         for attack in attacks:
             key = (attack.row, attack.col)
@@ -415,7 +438,7 @@ def _expand(node: _PNSNode, state: SearchState, attacker: Stone, table: _NodeTab
             finally:
                 state.unmake()
 
-        defences = _pns_defence_moves(state, attacker, ctx, split_threes)
+        defences = _pns_defence_moves(state, attacker, ctx, space)
 
         if not defences:
             # No blocks or counter-threats -> attacker's threat is unanswerable
@@ -541,7 +564,7 @@ def pns_threat_status(
     stone: Stone,
     max_nodes: int = 10_000,
     max_time_s: float = 5.0,
-    split_threes: bool = False,
+    space: ThreatSpace = DEFAULT_THREAT_SPACE,
 ) -> tuple[PNSStatus, Move | None]:
     """Run Proof-Number Search in threat-space and report how it ended.
 
@@ -551,10 +574,9 @@ def pns_threat_status(
     last two apart matters to callers that use "no forced win" as a
     safety guarantee.
 
-    ``split_threes`` lets both sides use split threes (``_XX_X_``) as
-    threats.  Proofs stay sound without them — a split three only threatens
-    a live four, which the defence enumeration already answers — so it
-    widens the search for completeness only.
+    *space* chooses the attacker's threats and the defender's replies (see
+    :class:`gomoku_brain.threat_space.ThreatSpace`); the default is the
+    brain's measured configuration.
 
     ``max_nodes`` counts distinct positions.  Accepts an existing
     :class:`SearchState` to skip the per-call Pydantic→bitboard
@@ -599,7 +621,7 @@ def pns_threat_status(
             #    stale walk can end on an expanded, solved node; it then
             #    only needs the backpropagation below.
             if not mpn.expanded:
-                nodes_created += _expand(mpn, state, attacker, table, split_threes)
+                nodes_created += _expand(mpn, state, attacker, table, space)
 
             # 4) Backpropagate along the selection path only.
             _backpropagate_path(path)
@@ -623,12 +645,12 @@ def pns_threat_search(
     stone: Stone,
     max_nodes: int = 10_000,
     max_time_s: float = 5.0,
-    split_threes: bool = False,
+    space: ThreatSpace = DEFAULT_THREAT_SPACE,
 ) -> Move | None:
     """Return the first move of a forced win for *stone*, or ``None``.
 
     ``None`` covers both "no forced win" and "budget ran out"; use
     :func:`pns_threat_status` when the difference matters.
     """
-    status, move = pns_threat_status(board, stone, max_nodes, max_time_s, split_threes)
+    status, move = pns_threat_status(board, stone, max_nodes, max_time_s, space)
     return move if status is PNSStatus.PROVED else None

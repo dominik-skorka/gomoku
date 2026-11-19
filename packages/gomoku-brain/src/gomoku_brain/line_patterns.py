@@ -12,13 +12,16 @@ from gomoku.board import Board
 from gomoku.models import Stone
 
 
-def five_cells_through(board: Board, row: int, col: int, dr: int, dc: int, stone: Stone) -> tuple[int, list]:
+def five_cells_through(
+    board: Board, row: int, col: int, dr: int, dc: int, stone: Stone, split: bool = True
+) -> tuple[int, list]:
     """Return ``(run, cells)``: the unbroken run through the cell, and the
     empty cells (0-2) that would then complete five or more on this line.
 
     Only the first cell past each end of the run can, when the run, that
     cell and the *stone* run beyond it add up to five — which catches the
-    split fours ``XXX_X`` and ``XX_XX``.
+    split fours ``XXX_X`` and ``XX_XX``.  With ``split=False`` the stones
+    beyond are not counted (unbroken runs only).
     """
     size = board.size
     ends = []
@@ -37,7 +40,7 @@ def five_cells_through(board: Board, row: int, col: int, dr: int, dc: int, stone
             continue
         beyond = 0
         br, bc = r + sign * dr, c + sign * dc
-        while beyond < 4 - run and 0 <= br < size and 0 <= bc < size and board.at(br, bc) is stone:
+        while split and beyond < 4 - run and 0 <= br < size and 0 <= bc < size and board.at(br, bc) is stone:
             beyond += 1
             br, bc = br + sign * dr, bc + sign * dc
         if run + 1 + beyond >= 5:

@@ -148,7 +148,7 @@ class TestQuiesceVcfProbe:
         ctx = QuiesceCtx(qs_vcf_depth=12, eval_cache={})
         first = quiesce(state, float("-inf"), float("inf"), Stone.BLACK, ctx, 0)
         assert first == 100_000.0
-        assert state.zobrist in ctx.vcf_cache
+        assert (state.zobrist, int(Stone.BLACK)) in ctx.vcf_cache  # keyed by position and attacker
         size = len(ctx.vcf_cache)
         assert quiesce(state, float("-inf"), float("inf"), Stone.BLACK, ctx, 0) == first
         assert len(ctx.vcf_cache) == size
