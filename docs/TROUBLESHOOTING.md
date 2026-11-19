@@ -277,7 +277,7 @@ For each identified issue, match it to a root cause:
 |-------|-----|
 | VCF too shallow → missed forced win | Increase `vcf_depth` (e.g., 20 → 30) |
 | VCT too shallow → missed threat chain | Increase `vct_depth` (e.g., 12 → 16) |
-| PNS gives up too early | Increase `pns_nodes` (shipped: 60k, +30 Elo over 30k; 100k adds ~10 more at 1.27x the time) or `pns_time_s` |
+| PNS gives up too early | Increase `pns_nodes` (shipped: 120k, +47 Elo over 60k at the same think time once PNS was made faster) or `pns_time_s` |
 | Alpha-beta too weak positionally | Increase `depth` (e.g., 4 → 5) |
 | Opening phase wastes time | Add an opening book (`opening_book = "..."`) |
 | Moves too slow | Set `time_limit_s` or reduce depths |

@@ -232,12 +232,13 @@ threat_search = "pns"
 
 # Max nodes explored by PNS before giving up.
 # Default: 10_000 | Valid range: 1_000–10_000_000
-# Measured with `gomoku match` (300 games each).  With split fours seen
-# (they make proofs larger), 60_000 beat 30_000 by +30 Elo (95% interval
-# +4 to +57) at 1.45x the think time (968 vs 667 ms per move); 100_000
-# gained +40 (+11 to +69) at 1.9x.  Before that, 30_000 had been the
-# sweet spot (+43 over 10_000, 100_000 no better).
-pns_nodes = 60_000
+# Measured with `gomoku match` (300 games each).  120_000 on the faster
+# PNS of PR #55 beat 60_000 on the code before it by +47 Elo (95% interval
+# +22 to +72) at about the same think time (954 vs 1027 ms per move).
+# Earlier, with split fours seen (they make proofs larger), 60_000 had
+# beaten 30_000 by +30 (+4 to +57), and before that 30_000 was the sweet
+# spot (+43 over 10_000).
+pns_nodes = 120_000
 
 
 # Max wall-clock seconds for PNS search.

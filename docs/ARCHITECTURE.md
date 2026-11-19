@@ -402,7 +402,7 @@ depth = 4
 [brains.threat]
 type = "threat"
 vcf_depth = 20
-pns_nodes = 60_000
+pns_nodes = 120_000
 # ...
 
 [brains.threat.fallback]        # alpha-beta settings for the fallback
