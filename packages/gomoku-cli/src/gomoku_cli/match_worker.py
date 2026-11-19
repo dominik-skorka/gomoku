@@ -10,6 +10,9 @@ revision's code.  Protocol, one JSON object per line:
   included) and ``"diagnostics": true`` (also return ``"path"``, the
   brain's decision path).  Reply: ``{"move": [row, col], "ms": ...}``.
 * ``{"op": "settings"}`` returns ``{"type": TYPE, "settings": {...}}``.
+* ``{"op": "profile", "positions": [[[r, c], ...], ...], "top": N}`` runs
+  the brain on each position under cProfile and returns ``{"text": ...}``,
+  the top *N* functions by self time.
 * ``{"op": "status", "moves": [...], "nodes": N, "time_s": T}`` runs a
   threat-space proof-number search for the side to move (or for
   ``"stone"``, 1 = black, 2 = white, when given; with ``"space": "brain"``
@@ -119,6 +122,23 @@ def main() -> None:
             name = state.name
         return {"status": name, "move": None if found is None else [found.row, found.col]}
 
+    def profile(request: dict[str, Any]) -> dict[str, Any]:
+        import cProfile
+        import io
+        import pstats
+
+        brain = brain_for(request.get("overrides") or {})
+        prof = cProfile.Profile()
+        for moves in request["positions"]:
+            board, stone = position(moves)
+            prof.enable()
+            brain.get_move(board, stone)
+            prof.disable()
+        out = io.StringIO()
+        stats = pstats.Stats(prof, stream=out).strip_dirs()
+        stats.sort_stats(request.get("sort", "tottime")).print_stats(int(request.get("top", 30)))
+        return {"text": out.getvalue()}
+
     # Warm up (JIT compilation, lazy imports) so think times exclude it.
     centre = args.size // 2
     warm = [[centre, centre], [centre, centre + 1], [centre + 1, centre], [centre - 1, centre + 1]]
@@ -140,6 +160,8 @@ def main() -> None:
                 reply = {"type": brain_type, "settings": base_settings}
             elif op == "status":
                 reply = status(request)
+            elif op == "profile":
+                reply = profile(request)
             else:
                 reply = {"error": f"unknown op {op!r}"}
         except Exception as exc:  # a bad request must not take the engine down
