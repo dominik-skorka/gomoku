@@ -193,3 +193,64 @@ def test_brain_settings_reach_the_searches(monkeypatch):
     board = _board([(7, 7), (7, 8)], [(8, 8)])
     brain.get_move(board, Stone.WHITE)
     assert seen and seen[0] == brain.own_space
+
+
+# ---------------------------------------------------------------------------
+# ThreatSpace switches do what gomoku.toml says they do
+# ---------------------------------------------------------------------------
+
+_F5_POSITION = [
+    (7, 10), (4, 7), (9, 5), (5, 4), (6, 4), (9, 9), (10, 5), (6, 5),
+    (8, 5), (7, 5), (7, 4), (7, 6), (8, 7), (6, 3), (10, 4),
+]  # fmt: skip
+
+
+def _replay_moves(moves):
+    board = Board(size=15)
+    stone = Stone.BLACK
+    for r, c in moves:
+        board = board.place_stone(Move(row=r, col=c), stone)
+        stone = stone.opponent()
+    return board
+
+
+class TestThreatSpaceSwitches:
+    @pytest.mark.parametrize(
+        ("space_name", "nodes"),
+        [("RUNS_ONLY_THREAT_SPACE", 30_000), ("no_split_counter_fours", 200_000)],
+    )
+    def test_dropping_split_counter_fours_brings_the_f5_false_proof_back(self, space_name, nodes):
+        from gomoku_brain import threat_space
+
+        space = (
+            threat_space.ThreatSpace(split_counter_fours=False)
+            if space_name == "no_split_counter_fours"
+            else getattr(threat_space, space_name)
+        )
+        board = _replay_moves(_F5_POSITION)
+        status, move = pns_threat_status(board, Stone.WHITE, max_nodes=nodes, max_time_s=60.0, space=space)
+        assert (status, move) == (PNSStatus.PROVED, Move(row=4, col=5))  # F5, refuted by E9
+        assert pns_threat_status(board, Stone.WHITE, max_nodes=nodes, max_time_s=60.0)[0] is not PNSStatus.PROVED
+
+    def test_attack_switches(self):
+        from gomoku_brain.threat_search import _vcf
+        from gomoku_brain.threat_space import ThreatSpace
+
+        # Black's straight four on row 7, open at (7, 7): VCF wins at once.
+        board = _board([(7, 3), (7, 4), (7, 5)], FAR_WHITE)
+        assert _vcf(board, Stone.BLACK, 20) is not None
+        assert _vcf(board, Stone.BLACK, 20, space=ThreatSpace(fours=False)) is None
+        # A split-only four: XX__X.  Without split fours there is nothing to force.
+        split_only = _board([(7, 4), (7, 5), (7, 8), (3, 3), (3, 5)], FAR_WHITE)
+        assert _find_four_threats(SearchState.from_board(split_only, Stone.BLACK), Stone.BLACK)
+        runs_only = _find_four_threats(SearchState.from_board(split_only, Stone.BLACK), Stone.BLACK, split=False)
+        assert not runs_only
+
+    def test_no_block_means_every_four_wins(self):
+        from gomoku_brain.threat_search import _vcf
+        from gomoku_brain.threat_space import ThreatSpace
+
+        # One blocked three: a single four, which the defender blocks.
+        board = _board([(7, 3), (7, 4), (7, 5)], [(7, 2), (0, 14), (14, 0)])
+        assert _vcf(board, Stone.BLACK, 20) is None
+        assert _vcf(board, Stone.BLACK, 20, space=ThreatSpace(block_fours=False)) is not None
