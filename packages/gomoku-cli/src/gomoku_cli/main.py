@@ -587,6 +587,9 @@ def match(
 @click.option(
     "--move-timeout", type=float, default=600.0, show_default=True, help="Seconds before an engine is failed."
 )
+@click.option(
+    "--boards/--no-boards", default=True, show_default=True, help="Draw the position of each blunder in the report."
+)
 @click.option("--out", "out_path", type=click.Path(path_type=Path), default=None, help="Write the review as JSON.")
 def review(
     spec_a: str,
@@ -605,6 +608,7 @@ def review(
     escalate: bool,
     escalate_timeout: float,
     move_timeout: float,
+    boards: bool,
     out_path: Path | None,
 ) -> None:
     """Play a few games and check every move for tactical blunders.
@@ -658,7 +662,7 @@ def review(
         raise click.ClickException(str(exc)) from exc
 
     click.echo()
-    click.echo(format_report(engine_a, engine_b, reviews))
+    click.echo(format_report(engine_a, engine_b, reviews, boards=boards))
     if out_path is not None:
         save_review(out_path, engine_a, engine_b, reviews)
         click.echo(f"Review written to {out_path}")

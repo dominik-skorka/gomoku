@@ -125,6 +125,7 @@ class GameReview:
     # the opening; None for the final position of a won game.
     statuses: list[tuple[str, Cell | None] | None]
     blunders: list[Blunder]
+    size: int = 15
 
 
 @dataclass
@@ -393,7 +394,7 @@ def review_game(
             _escalate(blunder, moves, slots[blunder.engine], oracle, size, escalate_timeout_s)
         else:
             blunder.verdict, blunder.remedy = "unclassified", "escalation disabled"
-    return GameReview(index=index, record=record, statuses=statuses, blunders=blunders)
+    return GameReview(index=index, record=record, statuses=statuses, blunders=blunders, size=size)
 
 
 def _classify(
@@ -649,7 +650,37 @@ def verdict(totals: dict[str, EngineTally]) -> tuple[str, str]:
     return "PASS", "no blunders by B"
 
 
-def format_blunder(blunder: Blunder, labels: dict[str, str]) -> str:
+BOARD_LEGEND = "board: X black, O white (lower case: the move just before), ! played, * a better move"
+
+
+def render_board(
+    moves: list[Cell],
+    marks: dict[Cell, str],
+    size: int = 15,
+    pad: int = 2,
+    indent: str = "",
+) -> str:
+    """Draw the position after *moves* as text, cropped to the stones and marks.
+
+    Columns are lettered and rows numbered as in move names (``H8``), with
+    row 1 at the bottom.  *marks* override what is drawn on a cell.
+    """
+    grid = {cell: "X" if i % 2 == 0 else "O" for i, cell in enumerate(moves)}
+    if moves:
+        last = moves[-1]
+        grid[last] = grid[last].lower()
+    cells = [*grid, *marks] or [(size // 2, size // 2)]
+    r0, r1 = max(0, min(r for r, _ in cells) - pad), min(size - 1, max(r for r, _ in cells) + pad)
+    c0, c1 = max(0, min(c for _, c in cells) - pad), min(size - 1, max(c for _, c in cells) + pad)
+    lines = [indent + "    " + " ".join(chr(ord("A") + c) for c in range(c0, c1 + 1))]
+    for r in range(r1, r0 - 1, -1):
+        row = " ".join(marks.get((r, c)) or grid.get((r, c), ".") for c in range(c0, c1 + 1))
+        lines.append(f"{indent}{r + 1:3d} {row}")
+    return "\n".join(lines)
+
+
+def format_blunder(blunder: Blunder, labels: dict[str, str], moves: list[Cell] | None = None, size: int = 15) -> str:
+    """One blunder; with the game's *moves*, also the position before it."""
     who = f"{blunder.engine.upper()} ({labels[blunder.engine]}, {blunder.stone})"
     lines = [
         f"game {blunder.game + 1}, move {blunder.ply + 1}: {who} played {cell_name(blunder.played)} — "
@@ -665,10 +696,17 @@ def format_blunder(blunder: Blunder, labels: dict[str, str]) -> str:
         lines.append("    retried: " + " | ".join(tried))
     label = {"tuning": "TUNING", "bug": "BUG", "disputed": "DISPUTED", "unclassified": "?"}[blunder.verdict]
     lines.append(f"    => {label}: {blunder.remedy}")
+    if moves is not None:
+        marks = {tuple(blunder.played): "!"}
+        if blunder.better is not None:
+            marks[tuple(blunder.better)] = "*"
+        history = [tuple(m) for m in moves[: blunder.ply]]
+        lines.append(render_board(history, marks, size, indent="    "))
     return "\n".join(lines)
 
 
-def format_report(spec_a: EngineSpec, spec_b: EngineSpec, reviews: list[GameReview]) -> str:
+def format_report(spec_a: EngineSpec, spec_b: EngineSpec, reviews: list[GameReview], *, boards: bool = True) -> str:
+    """The review report; with *boards*, each blunder's position is drawn."""
     labels = {"a": spec_a.label, "b": spec_b.label}
     totals = tally(reviews)
     blunders = sorted((b for r in reviews for b in r.blunders), key=lambda b: (b.engine != "b", b.game, b.ply))
@@ -681,9 +719,15 @@ def format_report(spec_a: EngineSpec, spec_b: EngineSpec, reviews: list[GameRevi
             f"{t.tuning} fixable by tuning the brain's settings, {t.bugs} need a fix in the brain's code"
             + (f", {t.disputed} disputed by the second oracle" if t.disputed else "")
         )
+    games = {r.index: r for r in reviews}
     if blunders:
         lines.append("")
-        lines += [format_blunder(b, labels) for b in blunders]
+        if boards:
+            lines.append(BOARD_LEGEND)
+        for b in blunders:
+            game = games.get(b.game)
+            moves = game.record.moves if boards and game is not None else None
+            lines.append(format_blunder(b, labels, moves, game.size if game is not None else 15))
     status, reason = verdict(totals)
     lines += ["", f"Verdict: {status} — {reason}"]
     return "\n".join(lines)
