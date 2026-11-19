@@ -42,3 +42,42 @@ def test_root_vcf_decision_path_is_kept(moves, path, cells):
     move, decision = _decide(moves)
     assert decision == path
     assert (move.row, move.col) in cells
+
+
+class TestVcfBreakerProbe:
+    """From `gomoku review` of the alpha-beta brain: White must break
+    Black's VCF.  The best-evaluated breaker, I3, still lets Black win with
+    three-threats; probing the breakers with PNS finds one that holds."""
+
+    MOVES = (
+        (6, 10), (5, 6), (7, 8), (9, 10), (4, 7), (4, 8), (8, 10), (6, 6), (5, 7),
+        (4, 6), (3, 6), (5, 8), (3, 7), (6, 7), (7, 6), (3, 8), (6, 8),
+    )  # fmt: skip
+
+    def _board(self) -> Board:
+        board = Board(size=15)
+        stone = Stone.BLACK
+        for r, c in self.MOVES:
+            board = board.place_stone(Move(row=r, col=c), stone)
+            stone = stone.opponent()
+        return board
+
+    def _move(self, nodes: int) -> Move:
+        # A generous time cap keeps the test independent of machine speed.
+        brain = AlphaBetaBrain(depth=4, vcf_depth=20, vcf_breaker_pns_nodes=nodes, vcf_breaker_time_s=60.0)
+        return brain.get_move(self._board(), Stone.WHITE)
+
+    def test_without_the_probe_the_evaluation_picks_a_losing_breaker(self):
+        from gomoku_brain.pns import PNSStatus, pns_threat_status
+
+        move = self._move(0)
+        assert move == Move(row=2, col=8)  # I3
+        status, _ = pns_threat_status(self._board().place_stone(move, Stone.WHITE), Stone.BLACK, max_nodes=200_000)
+        assert status is PNSStatus.PROVED
+
+    def test_the_probe_picks_a_breaker_that_holds(self):
+        from gomoku_brain.pns import PNSStatus, pns_threat_status
+
+        move = self._move(10_000)
+        status, _ = pns_threat_status(self._board().place_stone(move, Stone.WHITE), Stone.BLACK, max_nodes=200_000)
+        assert status is PNSStatus.DISPROVED

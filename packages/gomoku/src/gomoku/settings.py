@@ -122,6 +122,18 @@ class AlphaBetaBrainSettings(BaseModel):
     )
     time_limit_s: float = Field(default=0.0, ge=0.0, le=600.0)
     opening_book: str = Field(default="", description="Path to an opening book JSON file.")
+    vcf_breaker_pns_nodes: int = Field(
+        default=0,
+        ge=0,
+        le=1_000_000,
+        description=(
+            "When the opponent has a VCF, PNS budget per breaker for checking it leaves no other "
+            "forced win (breakers tried best evaluation first).  0 picks by evaluation only."
+        ),
+    )
+    vcf_breaker_time_s: float = Field(
+        default=2.0, ge=0.1, le=60.0, description="Time cap for all the breaker probes of one move."
+    )
 
 
 class ThreatBrainSettings(BaseModel):

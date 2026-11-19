@@ -7,7 +7,8 @@ VCF probe from the root:
   needed.
 * If the *opponent* has a forced VCF win, restrict the root candidate
   set to moves that genuinely break the threat (durable breakers) and
-  pick the positionally best one.
+  pick the positionally best one — or, with a breaker probe budget, the
+  best one after which the opponent provably has no other forced win.
 * Otherwise, return ``None`` and let the caller run normal search.
 
 This logic is significant enough (≈90 lines) that bundling it into the
@@ -18,6 +19,8 @@ search code.
 """
 
 from __future__ import annotations
+
+import time
 
 import logfire
 from gomoku.board import Board
@@ -30,7 +33,13 @@ from gomoku_brain.threat_detect import _find_winning_move
 from gomoku_brain.threat_search import _vcf, classify_vcf_breakers
 
 
-def root_vcf(board: Board, stone: Stone, vcf_depth: int) -> Move | None:
+def root_vcf(
+    board: Board,
+    stone: Stone,
+    vcf_depth: int,
+    breaker_pns_nodes: int = 0,
+    breaker_pns_time_s: float = 2.0,
+) -> Move | None:
     """Run VCF at the root for *stone* and its opponent.
 
     Returns:
@@ -120,4 +129,47 @@ def root_vcf(board: Board, stone: Stone, vcf_depth: int) -> Move | None:
     # Multiple breakers — pick via evaluation (make/unmake on one state
     # instead of a Pydantic board copy per breaker).
     state = SearchState.from_board(board, stone)
-    return _scored_moves(state, effective, stone)[0][1]
+    scored = _scored_moves(state, effective, stone)
+    if breaker_pns_nodes > 0:
+        probed = _probe_breakers(state, stone, scored, breaker_pns_nodes, breaker_pns_time_s)
+        if probed is not None:
+            return probed
+    return scored[0][1]
+
+
+def _probe_breakers(
+    state: SearchState,
+    stone: Stone,
+    scored: list[tuple[float, Move]],
+    pns_nodes: int,
+    time_s: float,
+) -> Move | None:
+    """Breaking the VCF is not enough if the opponent keeps a forced win
+    that also uses threes.  Probe the breakers, best evaluation first,
+    with a threat-space PNS for the opponent: return the first after which
+    it is ``DISPROVED``, else the best whose probe ran out of budget
+    (``UNKNOWN``), else ``None`` (every probe proved a win: keep the
+    evaluation's pick).  The whole loop is capped at *time_s*.
+
+    The same check the threat brain makes in ``ThreatBrain._probe_breakers``.
+    """
+    from gomoku_brain.pns import PNSStatus, pns_threat_status
+
+    opp = stone.opponent()
+    deadline = time.monotonic() + time_s
+    unproven: Move | None = None
+    for _score, move in scored:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        state.make(move.row, move.col, stone)
+        try:
+            status, _ = pns_threat_status(state, opp, max_nodes=pns_nodes, max_time_s=remaining)
+        finally:
+            state.unmake()
+        if status is PNSStatus.DISPROVED:
+            logfire.info("VCF breaker {move} leaves the opponent no forced win", move=str(move))
+            return move
+        if status is PNSStatus.UNKNOWN and unproven is None:
+            unproven = move
+    return unproven
