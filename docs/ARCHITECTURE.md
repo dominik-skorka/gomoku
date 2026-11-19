@@ -17,7 +17,9 @@ relationships of the Gomoku workspace.
 8. [Board Evaluation](#board-evaluation)
 9. [Candidate Generation](#candidate-generation)
 10. [Configuration System](#configuration-system)
-11. [Observability](#observability)
+11. [HTTP API](#http-api)
+12. [Strength Testing](#strength-testing)
+13. [Observability](#observability)
 
 ---
 
@@ -27,6 +29,7 @@ relationships of the Gomoku workspace.
 gomoku/
 ├── pyproject.toml            ← uv workspace root
 ├── gomoku.toml               ← runtime configuration (TOML)
+├── .github/workflows/        ← ci.yml (lint + tests), review.yml, match.yml
 ├── docs/                     ← project-level documentation
 ├── packages/
 │   ├── gomoku/               ← core game engine
@@ -34,50 +37,63 @@ gomoku/
 │   │   │   ├── models.py     ← Stone, Move, GameConfig, GameResult
 │   │   │   ├── board.py      ← Board (Pydantic, immutable-style)
 │   │   │   ├── rules.py      ← Win detection
-│   │   │   ├── game.py       ← Game orchestration loop
+│   │   │   ├── game.py       ← Game: both sides brain-driven
+│   │   │   ├── runner.py     ← GameRunner: each side brain-driven or external
 │   │   │   ├── protocol.py   ← MoveProvider protocol
 │   │   │   ├── recorder.py   ← Game recording & playback data
 │   │   │   ├── diagnostics.py← Per-move diagnostics capture
+│   │   │   ├── analyze.py    ← Post-game diagnostics analysis
 │   │   │   └── settings.py   ← Pydantic-settings configuration
+│   │   ├── docs/RECORDING.md
 │   │   └── tests/
 │   ├── gomoku-brain/         ← AI move providers
 │   │   ├── src/gomoku_brain/
-│   │   │   ├── random.py     ← RandomBrain
-│   │   │   ├── minimax.py    ← MinimaxBrain
-│   │   │   ├── negamax.py    ← NegamaxBrain
+│   │   │   ├── __init__.py   ← Brain registry & factory
+│   │   │   ├── brain_base.py ← Shared per-move span / diagnostics session
+│   │   │   ├── random.py, minimax.py, negamax.py
 │   │   │   ├── alphabeta.py  ← AlphaBetaBrain (8 enhancements)
-│   │   │   ├── alphabeta_ordering.py ← Move-classification helpers
-│   │   │   ├── alphabeta_quiescence.py ← Quiescence search (free function)
-│   │   │   ├── alphabeta_root.py     ← Root-level VCF pre-check
-│   │   │   ├── threat.py     ← ThreatBrain (VCF/VCT/PNS)
-│   │   │   ├── threat_detect.py      ← Threat-detection primitives
-│   │   │   ├── threat_search.py      ← VCF / VCT recursive search core
+│   │   │   ├── alphabeta_ordering.py ← Move classification and ordering
+│   │   │   ├── alphabeta_quiescence.py ← Quiescence search
+│   │   │   ├── alphabeta_root.py     ← Root VCF pre-check and breaker probe
+│   │   │   ├── threat.py     ← ThreatBrain (VCF / PNS or VCT / defence / fallback)
+│   │   │   ├── threat_detect.py      ← Four / three / five detection
+│   │   │   ├── threat_search.py      ← VCF and VCT searches, VCF breakers
+│   │   │   ├── threat_space.py       ← ThreatSpace: threats a search plays and answers
+│   │   │   ├── pns.py        ← Proof-number search in threat space
+│   │   │   ├── line_patterns.py      ← Pure-Python line rules (five / three cells)
 │   │   │   ├── mcts.py       ← MCTSBrain (PUCT + heuristic eval)
-│   │   │   ├── pns.py        ← Proof-Number Search
-│   │   │   ├── evaluate.py   ← Heuristic board evaluation
-│   │   │   ├── evaluate_jit.py ← Numba JIT evaluation
+│   │   │   ├── priors.py     ← Move priors (MCTS, alpha-beta ordering)
+│   │   │   ├── evaluate.py   ← Heuristic board evaluation (dispatch + Python)
+│   │   │   ├── evaluate_jit.py ← Numba kernels: evaluation, threat detection
+│   │   │   ├── bitboard.py, bitboard_jit.py ← Bitboard representation and kernels
+│   │   │   ├── search_state.py ← Mutable make/unmake board with Zobrist hash
+│   │   │   ├── zobrist.py    ← Zobrist keys & transposition table
 │   │   │   ├── candidates.py ← Candidate move generation
-│   │   │   ├── opening.py    ← Hardcoded opening book + symmetry
-│   │   │   ├── opening_book.py ← File-based opening book
-│   │   │   ├── zobrist.py    ← Zobrist hashing & transposition table
-│   │   │   ├── bitboard.py   ← Bitboard representation
-│   │   │   ├── bitboard_jit.py ← Numba JIT bitboard ops
+│   │   │   ├── directions.py ← The four line directions
 │   │   │   ├── grid_utils.py ← Raw int-grid board helpers
-│   │   │   └── __init__.py   ← Brain registry & factory
-│   │   ├── docs/
-│   │   │   ├── THREAT_BRAIN.md
-│   │   │   ├── ALPHABETA_BRAIN.md
-│   │   │   └── MCTS_BRAIN.md
+│   │   │   ├── opening.py    ← Hardcoded opening book + symmetry
+│   │   │   ├── opening_book.py, opening_book_gen.py ← File-based book, generator
+│   │   ├── docs/             ← THREAT_BRAIN.md, ALPHABETA_BRAIN.md, MCTS_BRAIN.md
 │   │   └── tests/
-│   └── gomoku-cli/           ← Terminal user interface
-│       ├── src/gomoku_cli/
-│       │   ├── main.py       ← Click CLI (play, playback, analyze, generate-book)
-│       │   ├── display.py    ← Rich-based board rendering
-│       │   ├── keyboard.py   ← Human player input provider
-│       │   ├── playback.py   ← Arrow-key game replay + diagnostics overlay
-│       │   └── analyze.py    ← Post-game .diag.jsonl analyser
-│       └── tests/
-└── recordings/               ← Saved game JSON files + MD5 checksums
+│   ├── gomoku-cli/           ← Terminal user interface and tooling
+│   │   ├── src/gomoku_cli/
+│   │   │   ├── main.py       ← Click CLI (play, playback, analyze, generate-book, match, review)
+│   │   │   ├── display.py    ← Rich-based board rendering
+│   │   │   ├── keyboard.py   ← Human player input provider
+│   │   │   ├── playback.py   ← Arrow-key game replay + diagnostics overlay
+│   │   │   ├── analyze.py    ← Post-game .diag.jsonl analyser
+│   │   │   ├── match.py      ← Engine-vs-engine matches (strength measurement)
+│   │   │   ├── match_worker.py ← One brain per process, JSON lines
+│   │   │   └── review.py     ← Blunder review with a proof-search oracle
+│   │   └── tests/
+│   └── gomoku-fastapi/       ← HTTP API (see its README.md)
+│       ├── src/gomoku_fastapi/
+│       │   ├── main.py, api_v1.py, versioning.py ← App, versioned router, version lifecycle
+│       │   ├── routers/      ← brains, moves, evaluate, analyze, sessions, health, versions
+│       │   ├── sessions/     ← In-memory game sessions (GameRunner)
+│       │   └── deps.py, limits.py, observability.py, schemas.py
+│       └── tests/            ← incl. contracts/v1.openapi.json (API contract snapshot)
+└── recordings/               ← Saved games and diagnostics (created on demand)
 ```
 
 ---
@@ -87,26 +103,30 @@ gomoku/
 | Package | Import name | Purpose | Key dependencies |
 |---------|-------------|---------|------------------|
 | **gomoku** | `gomoku` | Core engine: board, rules, game loop, recording, settings | pydantic, pydantic-settings, logfire |
-| **gomoku-brain** | `gomoku_brain` | AI brains, evaluation, search algorithms | gomoku, numba (optional), numpy |
-| **gomoku-cli** | `gomoku_cli` | Terminal interface, display, human input | gomoku, gomoku-brain, click, rich |
+| **gomoku-brain** | `gomoku_brain` | AI brains, evaluation, search algorithms | gomoku, numba, numpy, logfire |
+| **gomoku-cli** | `gomoku_cli` | Terminal interface, display, human input, `match` / `review` tooling | gomoku, gomoku-brain, click, rich |
+| **gomoku-fastapi** | `gomoku_fastapi` | Versioned HTTP API over the engine and brains | gomoku, gomoku-brain, fastapi, uvicorn, slowapi, logfire |
+
+Numba is a hard dependency; `[evaluation] use_jit = false` switches the
+JIT kernels off in favour of the pure-Python paths.
 
 ---
 
 ## Dependency Graph
 
 ```
-gomoku-cli
-  ├── gomoku-brain
-  │     └── gomoku (core)
-  └── gomoku (core)
+gomoku-cli ─────┐
+                ├── gomoku-brain
+gomoku-fastapi ─┘       └── gomoku (core)
+   (both also import gomoku directly)
 ```
 
 - **gomoku** has zero internal package dependencies — it defines the models,
   rules, and protocol that everything else builds on.
 - **gomoku-brain** depends on **gomoku** for `Board`, `Stone`, `Move`, and the
   `MoveProvider` protocol.
-- **gomoku-cli** depends on both packages and wires them together at the CLI
-  entrypoint.
+- **gomoku-cli** and **gomoku-fastapi** depend on both and wire them
+  together: one in the terminal, the other over HTTP.
 
 ---
 
@@ -165,9 +185,14 @@ class GameResult(BaseModel):
 
 Key methods:
 - `at(row, col) → Stone` — read a cell.
-- `is_valid_move(row, col) → bool` — bounds check + empty check.
-- `place_stone(row, col, stone) → Board` — returns a **new** board with the
+- `is_valid_move(move) → bool` — bounds check + empty check.
+- `place_stone(move, stone) → Board` — returns a **new** board with the
   stone placed (the original is unchanged).
+- `get_valid_moves()`, `is_full()`, `stone_count()`.
+
+Searches don't copy boards: they use `gomoku_brain.search_state.SearchState`,
+a mutable grid with `make` / `unmake` and an incrementally updated Zobrist
+hash (which encodes the side to move).
 
 ---
 
@@ -192,7 +217,7 @@ Every brain (AI or human) implements this protocol.  The game engine calls
 `gomoku.game.Game` orchestrates a full match:
 
 ```
-Game(config, black_provider, white_provider, on_move=callback)
+Game(config, black, white, on_move=callback)
 ```
 
 Loop:
@@ -203,8 +228,12 @@ Loop:
 5. Checks win condition via `rules.check_winner()`.
 6. Alternates stone colour.
 
-The game is played turn by turn — the caller drives the loop (the CLI calls
-`play_turn()` in a `while True` loop).
+The caller drives the loop turn by turn (`play_turn()`), or `play()` runs
+it to the end.
+
+`gomoku.runner.GameRunner` generalises this for the HTTP API: each side is
+either brain-driven (`think()` runs its brain) or external
+(`submit_move()` takes the move from the client).
 
 ---
 
@@ -247,20 +276,26 @@ in-depth documentation of the three heaviest brains.
 `alphabeta.py` and `threat.py` were each split along behavioural seams
 (detection helpers, search core, root pre-check, quiescence, move
 ordering).  Module-scope imports inside `gomoku_brain` form a **DAG**;
-there are no load-order tricks:
+there are no load-order tricks.  By layer — each module imports only from
+the layers above it in this table:
 
-```
-threat_detect ◄── threat_search ◄── alphabeta_root ◄── alphabeta ◄── threat
-alphabeta_ordering ◄── alphabeta_quiescence ◄──────────┘              (ThreatBrain)
-alphabeta_ordering ◄── alphabeta_root
-```
+| Layer | Modules |
+|-------|---------|
+| 0 (leaves) | `threat_space`, `line_patterns`, `directions`, `candidates`, `zobrist`, `brain_base`, `grid_utils`, `opening`, `evaluate_jit`, `bitboard_jit` |
+| 1 | `search_state`, `evaluate`, `bitboard`, `opening_book`, `random` |
+| 2 | `threat_detect`, `alphabeta_ordering`, `priors`, `minimax`, `negamax`, `opening_book_gen` |
+| 3 | `threat_search` (VCF, VCT, VCF breakers) |
+| 4 | `pns`, `alphabeta_root`, `alphabeta_quiescence` |
+| 5 | `alphabeta` |
+| 6 | `threat` (ThreatBrain) |
+| 7 | `mcts` (imports `classify_vcf_breakers` / `probe_immediate` via `threat`) |
+| 8 | `__init__` (the registry) |
 
-- `threat_detect` and `alphabeta_ordering` are leaves (detection
-  primitives, move classification, `_scored_moves`).
-- `threat.py` is the top of the graph: it re-exports the detection and
-  search helpers for backward compatibility (`test_module_split.py` and
-  `test_threat_search_split.py` lock in the `is`-identity of those
-  re-exports).
+- `threat_detect` (detection primitives) and `alphabeta_ordering` (move
+  classification, `_scored_moves`) sit just above the leaves.
+- `threat.py` re-exports the detection and search helpers for backward
+  compatibility (`test_module_split.py` and `test_threat_search_split.py`
+  lock in the `is`-identity of those re-exports).
 - Imports inside function bodies are reserved for optional / heavy
   dependencies (numba kernels, `grid_utils`), never to defuse a cycle.
 
@@ -299,8 +334,14 @@ Additional scoring:
 - **Clamped** to ±99,000 so heuristic scores never equal the 100,000 win
   constant.
 
-When Numba is available and `evaluation.use_jit = true`, `evaluate_jit.py`
-provides a JIT-compiled implementation for significantly faster scoring.
+`evaluate_board` dispatches to the bitboard kernels (`bitboard_jit.py`)
+when `[bitboard] enabled = true`, else to the grid kernels
+(`evaluate_jit.py`) when `[evaluation] use_jit = true`, else to Python.
+`test_parity.py` keeps the three in agreement.
+
+The evaluation scores unbroken runs only.  Threat detection for the
+searches — fours including split ones (`XXX_X`), threes — is separate; see
+[THREATS.md](THREATS.md).
 
 ---
 
@@ -323,8 +364,9 @@ Configuration is managed by `pydantic-settings` with a TOML backend.
 
 ### Priority (highest → lowest)
 
-1. CLI flags (`--depth 4`)
-2. Environment variables (`GOMOKU_BRAINS__ALPHABETA__DEPTH=4`)
+1. CLI flags (`--board-size 9`)
+2. Environment variables (`GOMOKU_GAME__BOARD_SIZE=9`; `__` separates
+   nested keys)
 3. `gomoku.toml` file (discovered via `gomoku.settings.find_config_file`)
 4. Field defaults in settings models
 
@@ -360,7 +402,14 @@ depth = 4
 [brains.threat]
 type = "threat"
 vcf_depth = 20
+pns_nodes = 60_000
 # ...
+
+[brains.threat.fallback]        # alpha-beta settings for the fallback
+depth = 5
+
+[brains.threat.threats.own]     # threat spaces: own / opponent / defence / forks
+split_threes = false
 
 [evaluation]
 use_jit = true
@@ -376,6 +425,9 @@ directory = "recordings"
 enabled = false
 directory = "recordings"
 top_candidates = 10
+
+[api]                           # HTTP API: CORS, rate limits, logfire
+rate_limit_compute = "30/minute"
 ```
 
 ### Brain aliases
@@ -390,8 +442,40 @@ type = "alphabeta"
 depth = 6
 ```
 
-The CLI resolves brain names via `settings.brains.resolve(name)` which returns
-`(brain_type, validated_kwargs)`.
+`gomoku_brain.resolve_brain(name, settings.brains)` turns a brain name or
+alias into `(brain_type, validated_kwargs)`; `get_brain_from_settings`
+also instantiates it.  The CLI, the HTTP API and the match workers all go
+through it.
+
+---
+
+## HTTP API
+
+`gomoku-fastapi` serves the engine over HTTP under a versioned prefix
+(`/v1`): stateless moves and evaluation, recording analysis, and stateful
+game sessions built on `GameRunner`.  CPU-bound brain calls run on a thread
+pool.  The version lifecycle (deprecation and sunset headers, `410 Gone`
+after retirement) and a contract test against an OpenAPI snapshot are
+described in [packages/gomoku-fastapi/README.md](../packages/gomoku-fastapi/README.md).
+
+---
+
+## Strength Testing
+
+Two CLI commands measure brain changes; both run each engine in its own
+worker process (`match_worker.py`), optionally from another git revision
+(`brain=threat,rev=master`) or config (`config=other.toml`):
+
+- **`gomoku match`** plays engine A against engine B over generated
+  openings, each opening with colours swapped, and reports the score, Elo
+  difference with a 95% interval, and think time.
+- **`gomoku review`** plays a few games and checks every move with a
+  proof-number search oracle (missed wins, missed blocks, losing moves,
+  unsound proofs), retries each blunder with larger settings to tell
+  tuning issues from bugs, and draws each blunder's position.
+
+CI runs `review` on every pull request that touches the engine and `match`
+on demand (the `match` label); see the main README.
 
 ---
 
@@ -402,9 +486,12 @@ default observability framework.  All brains and the game engine emit
 structured spans and log messages via `logfire.span()` and `logfire.info()`.
 
 Key instrumentation points:
-- `game.play_turn` — one span per move.
-- `brain.<name>` — one span per `get_move()` call with search parameters.
-- Opening book lookups, VCF/VCT results, fallback decisions.
+- `gomoku.game` — one span per game; `gomoku.turn` — one per move.
+- `brain.<name>` — one span per `get_move()` call with search parameters
+  (`brain_base.brain_session`).
+- Opening book lookups, VCF / PNS / VCT results, fallback decisions.
 
-Logfire is configured at CLI startup with `logfire.configure(send_to_logfire=False)`
-for local-only logging by default.
+The CLI configures Logfire at startup with
+`logfire.configure(send_to_logfire=False, inspect_arguments=False)` for
+local-only logging.  The HTTP API instruments FastAPI requests and is
+configured from `[api]` (`logfire_send`, `logfire_console`).

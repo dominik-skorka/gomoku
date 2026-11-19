@@ -41,16 +41,21 @@ uv run gomoku playback recordings/gomoku_20260405_143012.json
 
 ## Architecture
 
-The project is a **uv workspace** with three packages:
+The project is a **uv workspace** with four packages:
 
 ```
-gomoku-cli  ──▶  gomoku-brain  ──▶  gomoku (core)
-   CLI              AI brains         Board, rules, models
+gomoku-cli ─────┐
+  CLI, tooling  ├──▶  gomoku-brain  ──▶  gomoku (core)
+gomoku-fastapi ─┘       AI brains          Board, rules, models
+  HTTP API
 ```
 
 - **gomoku** — Core engine: board, rules, game loop, recording, configuration.
 - **gomoku-brain** — AI move providers: threat search, alpha-beta, MCTS, evaluation.
-- **gomoku-cli** — Terminal interface: game display, keyboard input, playback.
+- **gomoku-cli** — Terminal interface: game display, keyboard input, playback,
+  and the `match` / `review` strength tools.
+- **gomoku-fastapi** — Versioned HTTP API over the engine and brains (see its
+  [README](packages/gomoku-fastapi/README.md)).
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full architecture
 description.
