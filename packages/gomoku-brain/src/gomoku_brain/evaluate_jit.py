@@ -174,6 +174,56 @@ def _fork_score(
 
 
 @njit(cache=True)
+def _fork_lines_at(
+    grid: NDArray,  # type: ignore[type-arg]
+    size: int,
+    row: int,
+    col: int,
+    stone: int,
+    dirs: NDArray,  # type: ignore[type-arg]
+    table: NDArray,  # type: ignore[type-arg]
+    fork_threshold: int,
+) -> int:
+    """Count the lines a fork at (row, col) would threaten on.
+
+    As :func:`_threat_lines_at` (unbroken neighbours scoring a live two or
+    better), plus every line where the move makes a three or a four —
+    split ones included (``XX_X``, ``XXX_X``), which the run table can't
+    see.  Used for fork *cells*; the evaluation's fork bonus keeps
+    :func:`_threat_lines_at`.
+    """
+    line_count = 0
+    for d in range(dirs.shape[0]):
+        dr = dirs[d, 0]
+        dc = dirs[d, 1]
+        consecutive = 0
+        open_ends = 0
+        r = row + dr
+        c = col + dc
+        while 0 <= r < size and 0 <= c < size and grid[r, c] == stone:
+            consecutive += 1
+            r += dr
+            c += dc
+        if 0 <= r < size and 0 <= c < size and grid[r, c] == 0:
+            open_ends += 1
+        r = row - dr
+        c = col - dc
+        while 0 <= r < size and 0 <= c < size and grid[r, c] == stone:
+            consecutive += 1
+            r -= dr
+            c -= dc
+        if 0 <= r < size and 0 <= c < size and grid[r, c] == 0:
+            open_ends += 1
+        if (
+            _pattern_score(consecutive, open_ends, table) >= fork_threshold
+            or _three_defences(grid, size, row, col, stone, dr, dc)[0] > 0
+            or _five_cells_through(grid, size, row, col, stone, dr, dc)[1] > 0
+        ):
+            line_count += 1
+    return line_count
+
+
+@njit(cache=True)
 def find_fork_cells_grid(
     grid: NDArray,  # type: ignore[type-arg]
     size: int,
@@ -182,8 +232,12 @@ def find_fork_cells_grid(
     dirs: NDArray,  # type: ignore[type-arg]
     table: NDArray,  # type: ignore[type-arg]
     fork_threshold: int,
+    split: bool = False,
 ) -> NDArray:  # type: ignore[type-arg]
     """Return empty cells where >= 2 threat-level lines for *stone* converge.
+
+    With *split*, lines are counted by :func:`_fork_lines_at` (split threes
+    and fours count), otherwise by :func:`_threat_lines_at`.
 
     Mirrors ``_fork_score`` but emits coordinates instead of a bonus.
     Returns an int32[K, 2] array of (row, col) pairs in scan order.
@@ -208,7 +262,10 @@ def find_fork_cells_grid(
                 seen[nr, nc] = True
                 if grid[nr, nc] != 0:
                     continue
-                lines = _threat_lines_at(grid, size, nr, nc, stone, dirs, table, fork_threshold)
+                if split:
+                    lines = _fork_lines_at(grid, size, nr, nc, stone, dirs, table, fork_threshold)
+                else:
+                    lines = _threat_lines_at(grid, size, nr, nc, stone, dirs, table, fork_threshold)
                 if lines >= 2:
                     out[out_count, 0] = nr
                     out[out_count, 1] = nc
@@ -685,6 +742,208 @@ def find_winning_move_grid(
 
 
 @njit(cache=True)
+def _five_cells_through(
+    grid: NDArray,  # type: ignore[type-arg]
+    size: int,
+    row: int,
+    col: int,
+    stone: int,
+    dr: int,
+    dc: int,
+) -> tuple[int, int, int, int, int, int]:
+    """Scan the line through an empty (row, col) as if *stone* were placed there.
+
+    Returns ``(run, n, r1, c1, r2, c2)``: ``run`` is the length of the
+    unbroken *stone* run through the cell, and the ``n`` (0-2) cells
+    ``(r1, c1)``, ``(r2, c2)`` are the empty cells that would then complete
+    five or more along this line.  Only the first empty cell past each end
+    of the run can (a five through the placed stone may not contain a
+    second gap), and it does when the run, that cell and the *stone* run
+    beyond it add up to five.  This catches the split fours
+    (``XXX_X``, ``XX_XX``) a run count alone misses.
+    """
+    # Unbroken run on each side of the cell; (pr, pc) / (nr, nc) is the
+    # first cell past it.
+    pos = 0
+    pr = row + dr
+    pc = col + dc
+    while 0 <= pr < size and 0 <= pc < size and grid[pr, pc] == stone:
+        pos += 1
+        pr += dr
+        pc += dc
+    neg = 0
+    nr = row - dr
+    nc = col - dc
+    while 0 <= nr < size and 0 <= nc < size and grid[nr, nc] == stone:
+        neg += 1
+        nr -= dr
+        nc -= dc
+    run = 1 + pos + neg
+    n = 0
+    r1 = -1
+    c1 = -1
+    r2 = -1
+    c2 = -1
+    if run >= 5:
+        return run, n, r1, c1, r2, c2
+    need = 4 - run  # stones needed past the end cell to complete five
+    if 0 <= pr < size and 0 <= pc < size and grid[pr, pc] == 0:
+        beyond = 0
+        rr = pr + dr
+        cc = pc + dc
+        while beyond < need and 0 <= rr < size and 0 <= cc < size and grid[rr, cc] == stone:
+            beyond += 1
+            rr += dr
+            cc += dc
+        if beyond >= need:
+            r1 = pr
+            c1 = pc
+            n = 1
+    if 0 <= nr < size and 0 <= nc < size and grid[nr, nc] == 0:
+        beyond = 0
+        rr = nr - dr
+        cc = nc - dc
+        while beyond < need and 0 <= rr < size and 0 <= cc < size and grid[rr, cc] == stone:
+            beyond += 1
+            rr -= dr
+            cc -= dc
+        if beyond >= need:
+            if n == 0:
+                r1 = nr
+                c1 = nc
+            else:
+                r2 = nr
+                c2 = nc
+            n += 1
+    return run, n, r1, c1, r2, c2
+
+
+@njit(cache=True)
+def _three_defences(
+    grid: NDArray,  # type: ignore[type-arg]
+    size: int,
+    row: int,
+    col: int,
+    stone: int,
+    dr: int,
+    dc: int,
+) -> tuple[int, int, int, int, int, int, int]:
+    """Does placing *stone* at the empty (row, col) make a three on this line?
+
+    A three is a move after which one more stone makes a *live* four
+    (``_XXXX_``, completable at both ends): some window of four cells
+    through the move holds three of *stone* and one empty cell, and the
+    cells on both sides of the window are empty.  That covers the
+    straight three ``_XXX_`` and the split threes ``_XX_X_``, ``_X_XX_``
+    — and leaves out ``O_XXX_O``, which no move turns into a live four.
+
+    Returns ``(n, r1, c1, r2, c2, r3, c3)``: the ``n`` (0-3) cells that
+    stop every such live four (``n == 0``: no three).  For ``_XXX_``
+    those are the two ends; for ``_XX_X_`` the gap and the two ends.
+    """
+    inter = -1  # bit i: offset i - 4 from (row, col), along (dr, dc)
+    union = 0
+    for k in range(-3, 1):
+        ours = 0
+        empty_off = 99
+        ok = True
+        for off in range(k, k + 4):
+            if off == 0:
+                ours += 1
+                continue
+            r = row + off * dr
+            c = col + off * dc
+            if not (0 <= r < size and 0 <= c < size):
+                ok = False
+                break
+            v = grid[r, c]
+            if v == stone:
+                ours += 1
+            elif v == 0 and empty_off == 99:
+                empty_off = off
+            else:
+                ok = False
+                break
+        if not ok or ours != 3 or empty_off == 99:
+            continue
+        # Both cells flanking the window must be empty for a live four.
+        ok = True
+        for off in (k - 1, k + 4):
+            r = row + off * dr
+            c = col + off * dc
+            if not (0 <= r < size and 0 <= c < size) or grid[r, c] != 0:
+                ok = False
+        if not ok:
+            continue
+        mask = (1 << (empty_off + 4)) | (1 << (k - 1 + 4)) | (1 << (k + 4 + 4))
+        inter &= mask
+        union |= mask
+    if union == 0:
+        return 0, -1, -1, -1, -1, -1, -1
+    # A defence must stop every live four; if no single cell does, list
+    # the cells of all of them (more defences is the safe side).
+    bits = inter if inter != 0 else union
+    n = 0
+    r1 = c1 = r2 = c2 = r3 = c3 = -1
+    for i in range(9):
+        if (bits >> i) & 1:
+            r = row + (i - 4) * dr
+            c = col + (i - 4) * dc
+            if n == 0:
+                r1 = r
+                c1 = c
+            elif n == 1:
+                r2 = r
+                c2 = c
+            elif n == 2:
+                r3 = r
+                c3 = c
+            n += 1
+    return min(n, 3), r1, c1, r2, c2, r3, c3
+
+
+@njit(cache=True)
+def _straight_three_defences(
+    grid: NDArray,  # type: ignore[type-arg]
+    size: int,
+    row: int,
+    col: int,
+    stone: int,
+    dr: int,
+    dc: int,
+) -> tuple[int, int, int, int, int, int, int]:
+    """The classic three test: an unbroken run of three with both ends empty.
+
+    Same return shape as :func:`_three_defences`; the defences are the two
+    ends.  Used when split threes are off (``split=False``).
+    """
+    run = 1
+    pr = row + dr
+    pc = col + dc
+    while 0 <= pr < size and 0 <= pc < size and grid[pr, pc] == stone:
+        run += 1
+        pr += dr
+        pc += dc
+    nr = row - dr
+    nc = col - dc
+    while 0 <= nr < size and 0 <= nc < size and grid[nr, nc] == stone:
+        run += 1
+        nr -= dr
+        nc -= dc
+    if (
+        run == 3
+        and 0 <= pr < size
+        and 0 <= pc < size
+        and grid[pr, pc] == 0
+        and 0 <= nr < size
+        and 0 <= nc < size
+        and grid[nr, nc] == 0
+    ):
+        return 2, pr, pc, nr, nc, -1, -1
+    return 0, -1, -1, -1, -1, -1, -1
+
+
+@njit(cache=True)
 def is_four_threat(
     grid: NDArray,  # type: ignore[type-arg]
     size: int,
@@ -695,21 +954,24 @@ def is_four_threat(
 ) -> bool:
     """Return True if placing *stone* at (row, col) creates >= 4 in a row.
 
-    Checks all four directions.  Used for threat ordering, threat extensions,
-    and quiescence threat detection.
+    Checks all four directions.  An alpha-beta heuristic, used for threat
+    ordering, threat extensions and quiescence move generation: it counts
+    unbroken runs only, blocked or not.  Split fours (``XXX_X``,
+    ``XX_XX``) are left out on purpose — quiescence also plays every cell
+    where the opponent would make such a four, and counting split fours
+    there nearly tripled its node count without a measurable gain.  The
+    threat searches (VCF, PNS) use :func:`makes_four_threat` instead.
     """
     for d in range(dirs.shape[0]):
         dr = dirs[d, 0]
         dc = dirs[d, 1]
         count = 1  # the placed stone itself
-        # Positive direction
         r = row + dr
         c = col + dc
         while 0 <= r < size and 0 <= c < size and grid[r, c] == stone:
             count += 1
             r += dr
             c += dc
-        # Negative direction
         r = row - dr
         c = col - dc
         while 0 <= r < size and 0 <= c < size and grid[r, c] == stone:
@@ -717,6 +979,27 @@ def is_four_threat(
             r -= dr
             c -= dc
         if count >= 4:
+            return True
+    return False
+
+
+@njit(cache=True)
+def makes_four_threat(
+    grid: NDArray,  # type: ignore[type-arg]
+    size: int,
+    row: int,
+    col: int,
+    stone: int,
+    dirs: NDArray,  # type: ignore[type-arg]
+) -> bool:
+    """Return True if placing *stone* at (row, col) threatens five next move.
+
+    That is a five already, or a four — straight or split (``XXX_X``,
+    ``XX_XX``) — with an empty completion cell.
+    """
+    for d in range(dirs.shape[0]):
+        run, n_five, _r1, _c1, _r2, _c2 = _five_cells_through(grid, size, row, col, stone, dirs[d, 0], dirs[d, 1])
+        if run >= 5 or n_five > 0:
             return True
     return False
 
@@ -740,7 +1023,7 @@ def has_any_four_threat_grid(
         c = candidates[i, 1]
         if grid[r, c] != 0:
             continue
-        if is_four_threat(grid, size, r, c, stone, dirs):
+        if makes_four_threat(grid, size, r, c, stone, dirs):
             return True
     return False
 
@@ -771,40 +1054,19 @@ def has_unblockable_four_grid(
         c = candidates[i, 1]
         if grid[r, c] != 0:
             continue
-        dead_fours = 0
+        # Distinct cells that would complete five: two or more (a live
+        # four, or fours on two lines) cannot all be blocked.
+        first_r = -1
+        first_c = -1
         for d in range(dirs.shape[0]):
-            dr = dirs[d, 0]
-            dc = dirs[d, 1]
-            count = 0
-            open_ends = 0
-
-            rr = r + dr
-            cc = c + dc
-            while 0 <= rr < size and 0 <= cc < size and grid[rr, cc] == stone:
-                count += 1
-                rr += dr
-                cc += dc
-            if 0 <= rr < size and 0 <= cc < size and grid[rr, cc] == 0:
-                open_ends += 1
-
-            rr = r - dr
-            cc = c - dc
-            while 0 <= rr < size and 0 <= cc < size and grid[rr, cc] == stone:
-                count += 1
-                rr -= dr
-                cc -= dc
-            if 0 <= rr < size and 0 <= cc < size and grid[rr, cc] == 0:
-                open_ends += 1
-
-            total = count + 1
-            if total >= 5:
+            run, n_five, r1, c1, _r2, _c2 = _five_cells_through(grid, size, r, c, stone, dirs[d, 0], dirs[d, 1])
+            if run >= 5 or n_five == 2:
                 return True
-            if total == 4 and open_ends == 2:
-                return True
-            if total == 4 and open_ends == 1:
-                dead_fours += 1
-        if dead_fours >= 2:
-            return True
+            if n_five == 1:
+                if first_r >= 0 and (first_r != r1 or first_c != c1):
+                    return True
+                first_r = r1
+                first_c = c1
     return False
 
 
@@ -816,8 +1078,9 @@ def count_distinct_three_cells_grid(
     stone: int,
     dirs: NDArray,  # type: ignore[type-arg]
     cap: int,
+    split: bool = False,
 ) -> int:
-    """Count distinct candidate cells that form a live-three for *stone*.
+    """Count distinct candidate cells that form a three for *stone* (split ones with *split*).
 
     Mirrors the unique-attacker-cell count used by
     ``ThreatBrain._check_opponent_vct``'s early-reject heuristic.  Stops
@@ -832,28 +1095,11 @@ def count_distinct_three_cells_grid(
         if grid[r, c] != 0:
             continue
         for d in range(dirs.shape[0]):
-            dr = dirs[d, 0]
-            dc = dirs[d, 1]
-            consec = 0
-            pos_open = False
-            neg_open = False
-            rr = r + dr
-            cc = c + dc
-            while 0 <= rr < size and 0 <= cc < size and grid[rr, cc] == stone:
-                consec += 1
-                rr += dr
-                cc += dc
-            if 0 <= rr < size and 0 <= cc < size and grid[rr, cc] == 0:
-                pos_open = True
-            rr = r - dr
-            cc = c - dc
-            while 0 <= rr < size and 0 <= cc < size and grid[rr, cc] == stone:
-                consec += 1
-                rr -= dr
-                cc -= dc
-            if 0 <= rr < size and 0 <= cc < size and grid[rr, cc] == 0:
-                neg_open = True
-            if consec + 1 == 3 and pos_open and neg_open:
+            if split:
+                found = _three_defences(grid, size, r, c, stone, dirs[d, 0], dirs[d, 1])[0] > 0
+            else:
+                found = _straight_three_defences(grid, size, r, c, stone, dirs[d, 0], dirs[d, 1])[0] > 0
+            if found:
                 count += 1
                 if count >= cap:
                     return count
@@ -924,58 +1170,16 @@ def find_four_threats_grid(
         if grid[r, c] != 0:
             continue
         for d in range(dirs.shape[0]):
-            dr = dirs[d, 0]
-            dc = dirs[d, 1]
-            count = 0
-            pos_end_r = -1
-            pos_end_c = -1
-            neg_end_r = -1
-            neg_end_c = -1
-
-            # Positive direction
-            rr = r + dr
-            cc = c + dc
-            while 0 <= rr < size and 0 <= cc < size and grid[rr, cc] == stone:
-                count += 1
-                rr += dr
-                cc += dc
-            if 0 <= rr < size and 0 <= cc < size and grid[rr, cc] == 0:
-                pos_end_r = rr
-                pos_end_c = cc
-
-            # Negative direction
-            rr = r - dr
-            cc = c - dc
-            while 0 <= rr < size and 0 <= cc < size and grid[rr, cc] == stone:
-                count += 1
-                rr -= dr
-                cc -= dc
-            if 0 <= rr < size and 0 <= cc < size and grid[rr, cc] == 0:
-                neg_end_r = rr
-                neg_end_c = cc
-
-            open_ends = 0
-            if pos_end_r >= 0:
-                open_ends += 1
-            if neg_end_r >= 0:
-                open_ends += 1
-
-            total = count + 1
-
+            run, n_five, r1, c1, _r2, _c2 = _five_cells_through(grid, size, r, c, stone, dirs[d, 0], dirs[d, 1])
             # >= 5 (not == 5): freestyle counts overlines as wins, so a
-            # move completing six-or-more is just as unblockable.
-            if total >= 5 or (total == 4 and open_ends == 2):
+            # move completing six-or-more is just as unblockable.  Two
+            # completion cells on one line is a live four.
+            if run >= 5 or n_five == 2:
                 unblockable[r, c] = True
-            elif total == 4 and open_ends == 1:
-                if pos_end_r >= 0:
-                    dr_end = pos_end_r
-                    dc_end = pos_end_c
-                else:
-                    dr_end = neg_end_r
-                    dc_end = neg_end_c
+            elif n_five == 1:
                 def_count[r, c] += 1
-                def_r[r, c] = dr_end
-                def_c[r, c] = dc_end
+                def_r[r, c] = r1
+                def_c[r, c] = c1
 
     # Emit one row per candidate that produced any threat.  Iterate the
     # candidate list in order to preserve the caller's expected ordering.
@@ -1006,14 +1210,22 @@ def find_three_threats_grid(
     candidates: NDArray,  # type: ignore[type-arg]
     stone: int,
     dirs: NDArray,  # type: ignore[type-arg]
+    split: bool = False,
 ) -> NDArray:  # type: ignore[type-arg]
-    """Find live-three threats for *stone* across *candidates*.
+    """Find three-threats for *stone* across *candidates*.
 
-    Returns an int32[K, 6] array; each row is
-    ``(atk_r, atk_c, def1_r, def1_c, def2_r, def2_c)`` — the two open-end
-    defence cells of the live three.
+    With *split*, split threes (``_XX_X_``) count and a three is any move
+    after which one stone makes a live four (:func:`_three_defences`);
+    otherwise only unbroken runs of three with both ends empty
+    (:func:`_straight_three_defences`).
 
-    One entry per ``(candidate, direction)`` pair that forms a live three.
+    Returns an int32[K, 8] array; each row is
+    ``(atk_r, atk_c, d1_r, d1_c, d2_r, d2_c, d3_r, d3_c)`` — the cells that
+    stop the three (see :func:`_three_defences`), unused ones ``-1``: the
+    two ends of a straight three, or the gap and both ends of a split
+    three.
+
+    One entry per ``(candidate, direction)`` pair that forms a three.
     The same candidate may appear multiple times for different directions,
     matching the pure-Python implementation.
 
@@ -1022,7 +1234,7 @@ def find_three_threats_grid(
     """
     n = candidates.shape[0]
     # Upper bound: n candidates × 4 directions.
-    out = np.empty((n * 4, 6), dtype=np.int32)
+    out = np.empty((n * 4, 8), dtype=np.int32)
     out_count = 0
 
     for i in range(n):
@@ -1031,53 +1243,23 @@ def find_three_threats_grid(
         if grid[r, c] != 0:
             continue
         for d in range(dirs.shape[0]):
-            dr = dirs[d, 0]
-            dc = dirs[d, 1]
-            count = 0
-            pos_end_r = -1
-            pos_end_c = -1
-            neg_end_r = -1
-            neg_end_c = -1
-
-            # Positive direction
-            rr = r + dr
-            cc = c + dc
-            while 0 <= rr < size and 0 <= cc < size and grid[rr, cc] == stone:
-                count += 1
-                rr += dr
-                cc += dc
-            if 0 <= rr < size and 0 <= cc < size and grid[rr, cc] == 0:
-                pos_end_r = rr
-                pos_end_c = cc
-
-            # Negative direction
-            rr = r - dr
-            cc = c - dc
-            while 0 <= rr < size and 0 <= cc < size and grid[rr, cc] == stone:
-                count += 1
-                rr -= dr
-                cc -= dc
-            if 0 <= rr < size and 0 <= cc < size and grid[rr, cc] == 0:
-                neg_end_r = rr
-                neg_end_c = cc
-
-            open_ends = 0
-            if pos_end_r >= 0:
-                open_ends += 1
-            if neg_end_r >= 0:
-                open_ends += 1
-
-            total = count + 1
-            if total == 3 and open_ends == 2:
-                out[out_count, 0] = r
-                out[out_count, 1] = c
-                # Match the Python order: positive-sign end first, then
-                # negative-sign end.
-                out[out_count, 2] = pos_end_r
-                out[out_count, 3] = pos_end_c
-                out[out_count, 4] = neg_end_r
-                out[out_count, 5] = neg_end_c
-                out_count += 1
+            if split:
+                n_def, r1, c1, r2, c2, r3, c3 = _three_defences(grid, size, r, c, stone, dirs[d, 0], dirs[d, 1])
+            else:
+                n_def, r1, c1, r2, c2, r3, c3 = _straight_three_defences(
+                    grid, size, r, c, stone, dirs[d, 0], dirs[d, 1]
+                )
+            if n_def == 0:
+                continue
+            out[out_count, 0] = r
+            out[out_count, 1] = c
+            out[out_count, 2] = r1
+            out[out_count, 3] = c1
+            out[out_count, 4] = r2
+            out[out_count, 5] = c2
+            out[out_count, 6] = r3
+            out[out_count, 7] = c3
+            out_count += 1
 
     return out[:out_count].copy()
 

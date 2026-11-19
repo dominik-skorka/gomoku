@@ -108,8 +108,14 @@ class ThreatBrain:
         pns_nodes: int = 10_000,
         pns_time_s: float = 5.0,
         fallback: dict[str, object] | None = None,
+        split_threes: bool = False,
+        split_forks: bool = False,
     ) -> None:
         self.depth = depth
+        # Split threes (_XX_X_) as threats in PNS / VCT, and split threes
+        # and fours when looking for the opponent's fork cells.
+        self.split_threes = split_threes
+        self.split_forks = split_forks
         self.vcf_depth = vcf_depth
         self.vct_depth = vct_depth
         self.threat_search = threat_search
@@ -204,7 +210,9 @@ class ThreatBrain:
 
             # 3) Try broader threat search (PNS or VCT)
             if self.threat_search == "pns":
-                move = pns_threat_search(state, stone, max_nodes=self.pns_nodes, max_time_s=self.pns_time_s)
+                move = pns_threat_search(
+                    state, stone, max_nodes=self.pns_nodes, max_time_s=self.pns_time_s, split_threes=self.split_threes
+                )
                 if move is not None:
                     logfire.info("PNS found winning move: {move}", move=str(move))
                     if diag is not None:
@@ -212,7 +220,7 @@ class ThreatBrain:
                         diag.chosen_move = move
                     return move
             else:
-                move = _vct(state, stone, self.vct_depth, vcf_cache=vcf_cache)
+                move = _vct(state, stone, self.vct_depth, vcf_cache=vcf_cache, split_threes=self.split_threes)
                 if move is not None:
                     logfire.info("VCT found winning move: {move}", move=str(move))
                     if diag is not None:
@@ -293,7 +301,10 @@ class ThreatBrain:
         # threat lists just to ask "any?" / "≥ 2?" used to dominate the
         # quiet-position cost of every threat-brain ``get_move``.
         ctx = _scan_context(state)
-        if not _has_any_four_threat(state, opp, ctx) and _count_distinct_three_cells(state, opp, 2, ctx) < 2:
+        if (
+            not _has_any_four_threat(state, opp, ctx)
+            and _count_distinct_three_cells(state, opp, 2, ctx, self.split_threes) < 2
+        ):
             return None
 
         if self.threat_search == "pns":
@@ -302,9 +313,10 @@ class ThreatBrain:
                 opp,
                 max_nodes=self.pns_nodes,
                 max_time_s=self.pns_time_s,
+                split_threes=self.split_threes,
             )
         else:
-            opp_threat = _vct(opp_state, opp, self.vct_depth, vcf_cache=vcf_cache)
+            opp_threat = _vct(opp_state, opp, self.vct_depth, vcf_cache=vcf_cache, split_threes=self.split_threes)
 
         if opp_threat is None:
             return None
@@ -395,6 +407,7 @@ class ThreatBrain:
                         opp,
                         max_nodes=int(self.pns_nodes * _OPP_PNS_NODE_FRACTION),
                         max_time_s=min(self.pns_time_s * _OPP_PNS_TIME_FRACTION, remaining),
+                        split_threes=self.split_threes,
                     )
                     if status is PNSStatus.PROVED:
                         continue
@@ -402,7 +415,17 @@ class ThreatBrain:
                         if unproven is None:
                             unproven = move
                         continue
-                elif _vct_state(state, opp, self.vct_depth, vct_cache=vct_probe_cache, vcf_cache=vcf_cache) is not None:
+                elif (
+                    _vct_state(
+                        state,
+                        opp,
+                        self.vct_depth,
+                        vct_cache=vct_probe_cache,
+                        vcf_cache=vcf_cache,
+                        split_threes=self.split_threes,
+                    )
+                    is not None
+                ):
                     continue
                 logfire.info(
                     "{label}: first durable breaker {move} (eval={score:.0f}) after {n} probes",
@@ -432,7 +455,7 @@ class ThreatBrain:
         multiple fork cells, pick the one that scores best for us.
         """
         opp = stone.opponent()
-        forks = find_fork_cells(state, opp)
+        forks = find_fork_cells(state, opp, split=self.split_forks)
 
         if not forks:
             return None

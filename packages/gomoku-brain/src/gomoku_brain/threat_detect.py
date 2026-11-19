@@ -18,6 +18,7 @@ from gomoku.models import Move, Stone
 
 from gomoku_brain.candidates import get_candidate_moves
 from gomoku_brain.directions import DIRECTIONS as _DIRECTIONS
+from gomoku_brain.line_patterns import five_cells_through, three_defences
 from gomoku_brain.search_state import SearchState
 
 # Shared JIT scan context: ``(grid, size, candidates, dirs)``.
@@ -81,9 +82,7 @@ def _scan_context(board: Board) -> _ScanCtx | None:
         cached = board._ctx_candidates[ply]
         if cached is not None and board._ctx_zobrist[ply] == board.zobrist:
             return board.grid, board.size, cached, dirs
-        candidates = get_candidates_grid(
-            board.grid, board.size, board._occ_arr[: board.occ_count], 2
-        )
+        candidates = get_candidates_grid(board.grid, board.size, board._occ_arr[: board.occ_count], 2)
         board._ctx_zobrist[ply] = board.zobrist
         board._ctx_candidates[ply] = candidates
         board._ctx_moves[ply] = None
@@ -139,18 +138,20 @@ def _find_four_threats_python(board: Board, stone: Stone) -> list[tuple[Move, Mo
 
     for move in candidates:
         r, c = move.row, move.col
+        if board.at(r, c) is not Stone.EMPTY:
+            continue
         for dr, dc in _DIRECTIONS:
-            count, open_ends, end_cells = _line_cells(board, r, c, dr, dc, stone)
-            total = count + 1  # +1 for the placed stone itself
+            # Cells that would complete five through the move, split fours
+            # (XXX_X, XX_XX) included.
+            run, completions = five_cells_through(board, r, c, dr, dc, stone)
 
             defence: Move | None
             # >= 5 (not == 5): freestyle counts overlines as wins, so a
             # move completing six-or-more is just as unblockable.
-            if total >= 5 or (total == 4 and open_ends == 2):
+            if run >= 5 or len(completions) == 2:
                 defence = None
-            elif total == 4 and open_ends == 1 and end_cells:
-                dr2, dc2 = end_cells[0]
-                defence = Move(row=dr2, col=dc2)
+            elif len(completions) == 1:
+                defence = Move(row=completions[0][0], col=completions[0][1])
             else:
                 continue
 
@@ -168,9 +169,7 @@ def _find_four_threats_python(board: Board, stone: Stone) -> list[tuple[Move, Mo
     return threats
 
 
-def _find_four_threats(
-    board: Board, stone: Stone, ctx: _ScanCtx | None = None
-) -> list[tuple[Move, Move | None]]:
+def _find_four_threats(board: Board, stone: Stone, ctx: _ScanCtx | None = None) -> list[tuple[Move, Move | None]]:
     """Find all moves that create a four-in-a-row for ``stone``.
 
     Returns a list of ``(attack_move, defence_move | None)`` sorted by
@@ -180,10 +179,14 @@ def _find_four_threats(
     counter-threat scan) therefore hit wins and refutations earliest,
     maximising VCF / alpha-beta early termination.
 
-    Detects:
+    A four-threat is a move after which one empty cell (its defence)
+    would complete five or more through it; two such cells (a live four,
+    or fours on two lines) make it unblockable.  Detects:
     - Straight fours: placing a stone extends three-in-a-row to four.
-    - Gap fours: placing a stone fills a gap inside a would-be five
-      (e.g. XX_XX pattern).
+    - Split fours: the move leaves ``XXX_X`` or ``XX_XX``, whose gap
+      completes five (from ``XX__X``, ``X_X_X`` and the like).
+    - Fives: placing a stone fills a gap inside a would-be five
+      (e.g. ``XX_XX``) or extends a four.
 
     Dispatches to a Numba JIT kernel when available; pure-Python fallback
     is kept for the JIT-disabled path.  ``_line_cells`` scans outward from
@@ -218,7 +221,7 @@ def _find_four_threats(
     return threats
 
 
-def _find_three_threats_python(board: Board, stone: Stone) -> list[tuple[Move, list[Move]]]:
+def _find_three_threats_python(board: Board, stone: Stone, split: bool = False) -> list[tuple[Move, list[Move]]]:
     """Pure-Python fallback for :func:`_find_three_threats`."""
     threats: list[tuple[Move, list[Move]]] = []
     candidates = get_candidate_moves(board, radius=2)
@@ -226,18 +229,24 @@ def _find_three_threats_python(board: Board, stone: Stone) -> list[tuple[Move, l
     for move in candidates:
         r, c = move.row, move.col
         for dr, dc in _DIRECTIONS:
-            count, open_ends, end_cells = _line_cells(board, r, c, dr, dc, stone)
-            total = count + 1
-            if total == 3 and open_ends == 2:
-                defence = [Move(row=er, col=ec) for er, ec in end_cells]
-                threats.append((move, defence))
+            if split:
+                cells = three_defences(board, r, c, dr, dc, stone)
+            else:
+                count, open_ends, cells = _line_cells(board, r, c, dr, dc, stone)
+                if count + 1 != 3 or open_ends != 2:
+                    cells = []
+            if cells:
+                threats.append((move, [Move(row=er, col=ec) for er, ec in cells]))
     return threats
 
 
 def _find_three_threats(
-    board: Board, stone: Stone, ctx: _ScanCtx | None = None
+    board: Board, stone: Stone, ctx: _ScanCtx | None = None, split: bool = False
 ) -> list[tuple[Move, list[Move]]]:
     """Find moves that create a *live* three (open at both ends).
+
+    With *split*, split threes (``_XX_X_``) count too, defended at the gap
+    or either end; see :func:`gomoku_brain.evaluate_jit._three_defences`.
 
     Returns ``(attack_move, defence_moves)`` — ``defence_moves`` are the
     two open-end cells of the threat.  (The full defence expansion,
@@ -258,17 +267,14 @@ def _find_three_threats(
         from gomoku_brain.evaluate_jit import find_three_threats_grid
 
         grid, size, candidates, dirs = ctx
-        result = find_three_threats_grid(grid, size, candidates, int(stone), dirs)
+        result = find_three_threats_grid(grid, size, candidates, int(stone), dirs, split)
         threats: list[tuple[Move, list[Move]]] = []
         for i in range(result.shape[0]):
             atk = Move(row=int(result[i, 0]), col=int(result[i, 1]))
-            defence = [
-                Move(row=int(result[i, 2]), col=int(result[i, 3])),
-                Move(row=int(result[i, 4]), col=int(result[i, 5])),
-            ]
+            defence = [Move(row=int(result[i, j]), col=int(result[i, j + 1])) for j in (2, 4, 6) if result[i, j] >= 0]
             threats.append((atk, defence))
     else:
-        threats = _find_three_threats_python(board, stone)
+        threats = _find_three_threats_python(board, stone, split)
 
     # Stable sort: attacks with higher fork degree (more directions
     # producing a live-three) first.
@@ -360,7 +366,7 @@ def _has_unblockable_four(board: Board, stone: Stone, ctx: _ScanCtx | None = Non
 
 
 def _count_distinct_three_cells(
-    board: Board, stone: Stone, cap: int, ctx: _ScanCtx | None = None
+    board: Board, stone: Stone, cap: int, ctx: _ScanCtx | None = None, split: bool = False
 ) -> int:
     """Count distinct cells that create a live-three for *stone*, up to *cap*.
 
@@ -373,10 +379,10 @@ def _count_distinct_three_cells(
         from gomoku_brain.evaluate_jit import count_distinct_three_cells_grid
 
         grid, size, candidates, dirs = ctx
-        return int(count_distinct_three_cells_grid(grid, size, candidates, int(stone), dirs, cap))
+        return int(count_distinct_three_cells_grid(grid, size, candidates, int(stone), dirs, cap, split))
 
     distinct: set[tuple[int, int]] = set()
-    for atk, _ in _find_three_threats_python(board, stone):
+    for atk, _ in _find_three_threats_python(board, stone, split):
         distinct.add((atk.row, atk.col))
         if len(distinct) >= cap:
             return len(distinct)

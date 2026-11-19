@@ -67,6 +67,9 @@ CLAIMED_WIN_PATHS = frozenset({"vcf_win", "pns_win", "vct_win", "vcf_precheck"})
 # Decision paths that play a win (claimed or immediate).
 WIN_PATHS = CLAIMED_WIN_PATHS | {"immediate_win", "instant_win"}
 
+# --oracle-rev value that runs the oracle from the working tree.
+WORKTREE = "worktree"
+
 KINDS = ("missed_win", "missed_block", "losing_move", "unsound_proof")
 _KIND_TEXT = {
     "missed_win": "missed win",
@@ -108,7 +111,7 @@ class Blunder:
     path: str | None
     ms: float
     attempts: list[Attempt] = field(default_factory=list)
-    verdict: str = "bug"  # "tuning" or "bug"
+    verdict: str = "bug"  # "tuning", "bug" or "disputed"
     remedy: str = ""
 
 
@@ -300,8 +303,15 @@ def review_game(
     *,
     escalate: bool = True,
     escalate_timeout_s: float = 300.0,
+    second_oracle: _Oracle | None = None,
 ) -> GameReview:
-    """Find the blunders in *record* and classify each one."""
+    """Find the blunders in *record* and classify each one.
+
+    With *second_oracle*, each blunder is re-judged by it (the candidate's
+    own search); one the two oracles disagree on is ``disputed``: listed,
+    not escalated, and left out of the bug count.  It catches an oracle
+    that cannot see a threat the candidate now uses.
+    """
     moves = record.moves
     won = record.reason == "five in a row"
     statuses: list[tuple[str, Cell | None] | None] = []
@@ -342,7 +352,39 @@ def review_game(
             )
         )
 
+    if second_oracle is not None:
+        second: dict[int, tuple[str, Cell | None] | None] = {}
+
+        def second_at(ply: int) -> tuple[str, Cell | None] | None:
+            if ply not in second:
+                over = won and ply == len(moves)
+                second[ply] = None if over or ply > len(moves) else second_oracle.status(moves[:ply])
+            return second[ply]
+
+        for blunder in blunders:
+            ply = blunder.ply
+            path = record.paths[ply - opening_len] if ply - opening_len < len(record.paths) else None
+            again = _classify(
+                ply,
+                moves,
+                second_at(ply),
+                lambda p: (lambda r: None if r is None else r[0])(second_at(p)),
+                second_oracle,
+                size,
+                path,
+                won,
+            )
+            if again is None or again[0] != blunder.kind:
+                view = "no blunder" if again is None else _KIND_TEXT[again[0]]
+                blunder.verdict = "disputed"
+                blunder.remedy = (
+                    f"the second oracle (the candidate's own search) sees {view} here; "
+                    "check by hand which search is wrong"
+                )
+
     for blunder in blunders:
+        if blunder.verdict == "disputed":
+            continue
         if blunder.kind == "unsound_proof":
             blunder.verdict, blunder.remedy = "bug", "a proof search is unsound; fix it before tuning anything"
         elif escalate:
@@ -489,19 +531,28 @@ def run_review(
     quiet_openings: bool = True,
     oracle_rev: str | None = None,
     oracle: OracleConfig | None = None,
+    second_oracle: bool = True,
     escalate: bool = True,
     escalate_timeout_s: float = 300.0,
     on_game: Callable[[GameReview], None] | None = None,
 ) -> list[GameReview]:
-    """Play *games* games (rounded up to an even number) and review every move."""
+    """Play *games* games (rounded up to an even number) and review every move.
+
+    With *second_oracle* (the default), blunders are re-judged by B's own
+    search when it comes from a different source tree than the oracle.
+    """
     oracle = oracle or OracleConfig()
     pairs = (games + 1) // 2
     openings = generate_openings(pairs, seed, size, opening_stones, opening_spread, quiet_openings)
     repo = find_repo()
     source_a = resolve_source(spec_a, repo)
     source_b = resolve_source(spec_b, repo)
-    oracle_spec = EngineSpec("random", rev=oracle_rev if oracle_rev is not None else spec_a.rev)
+    if oracle_rev == WORKTREE:
+        oracle_spec = EngineSpec("random")
+    else:
+        oracle_spec = EngineSpec("random", rev=oracle_rev if oracle_rev is not None else spec_a.rev)
     source_oracle = resolve_source(oracle_spec, repo)
+    use_second = second_oracle and source_b != source_oracle
 
     schedule = [(i, a_black) for i in range(pairs) for a_black in (True, False)]
     local = threading.local()
@@ -535,6 +586,7 @@ def run_review(
             size,
             escalate=escalate,
             escalate_timeout_s=escalate_timeout_s,
+            second_oracle=_Oracle(slot_b.engine, oracle) if use_second else None,
         )
         if on_game is not None:
             with lock:
@@ -560,6 +612,7 @@ class EngineTally:
     blunders: int = 0
     tuning: int = 0
     bugs: int = 0
+    disputed: int = 0
     by_kind: dict[str, int] = field(default_factory=lambda: dict.fromkeys(KINDS, 0))
 
 
@@ -576,6 +629,8 @@ def tally(reviews: list[GameReview]) -> dict[str, EngineTally]:
                 t.bugs += 1
             elif blunder.verdict == "tuning":
                 t.tuning += 1
+            elif blunder.verdict == "disputed":
+                t.disputed += 1
     return totals
 
 
@@ -585,6 +640,8 @@ def verdict(totals: dict[str, EngineTally]) -> tuple[str, str]:
     if b.bugs > a.bugs:
         reason = f"B has {b.bugs} blunder(s) needing a fix in the brain's code, A has {a.bugs}"
         return "FAIL", f"{reason}; fix them before a long match"
+    if b.disputed:
+        return "WARN", f"the oracles disagree on {b.disputed} of B's blunder(s); check them by hand"
     if b.blunders:
         return "WARN", f"B has {b.blunders} blunder(s), A has {a.blunders}; no more of them need a code fix than A's"
     return "PASS", "no blunders by B"
@@ -604,7 +661,7 @@ def format_blunder(blunder: Blunder, labels: dict[str, str]) -> str:
             took = "timeout" if a.ms is None else f"{a.ms / 1000:.1f} s"
             tried.append(f"{a.variant} {mark} {cell_name(a.move)} ({took})")
         lines.append("    retried: " + " | ".join(tried))
-    label = {"tuning": "TUNING", "bug": "BUG", "unclassified": "?"}[blunder.verdict]
+    label = {"tuning": "TUNING", "bug": "BUG", "disputed": "DISPUTED", "unclassified": "?"}[blunder.verdict]
     lines.append(f"    => {label}: {blunder.remedy}")
     return "\n".join(lines)
 
@@ -620,6 +677,7 @@ def format_report(spec_a: EngineSpec, spec_b: EngineSpec, reviews: list[GameRevi
         lines.append(
             f"{key.upper()} ({labels[key]}): {t.blunders} blunder(s) in {t.moves} moves ({kinds}); "
             f"{t.tuning} fixable by tuning the brain's settings, {t.bugs} need a fix in the brain's code"
+            + (f", {t.disputed} disputed by the second oracle" if t.disputed else "")
         )
     if blunders:
         lines.append("")
