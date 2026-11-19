@@ -399,12 +399,10 @@ def _expand(
                     _update_ancestors(node)
                     return created
 
-                # The defender wins first — this attack is not playable.
-                if _find_winning_move(state, defender, ctx) is not None:
-                    continue
-
-                # The check above is all ``_evaluate_leaf`` would do for
-                # an AND child, so a new node keeps its 1/1 defaults.
+                # The defender cannot win first: this node has no defender
+                # five (``def_win`` above), and an attacker's stone cannot
+                # make one.  That check is all ``_evaluate_leaf`` would do
+                # for an AND child, so a new node keeps its 1/1 defaults.
                 child, is_new = _child_at(state, _NodeType.AND, table)
                 created += is_new
                 _link(node, child, attack)
