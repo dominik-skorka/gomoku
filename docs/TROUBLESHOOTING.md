@@ -257,7 +257,7 @@ For each identified issue, match it to a root cause:
 |---------|-------------|
 | Alpha-beta fallback missed tactical shot | `depth` too low; increase or use threat brain |
 | Brain doesn't pursue live-threes | VCT/PNS not searching three-threats deeply enough |
-| Ignored opponent build-up | Defensive weight (0.8×) too low for this position |
+| Ignored opponent build-up | Blocking is under-ranked: move priors weigh the opponent's lines 0.8× (the evaluation itself 1.0×) |
 
 ### Inefficiency root causes
 
@@ -288,7 +288,7 @@ For each identified issue, match it to a root cause:
 
 | Issue | Fix |
 |-------|-----|
-| Defensive weight too low | Adjust the 0.8× enemy-weight in `evaluate.py` |
+| Defensive weight too low | Raise the 0.8× opponent weight of the move priors (`priors.py` and `compute_priors_grid` in `evaluate_jit.py`); the evaluation itself weighs both sides 1.0× |
 | Fork detection misses complex forks | Lower `_FORK_THRESHOLD` or increase `_FORK_BONUS` |
 | Candidate radius misses distant threats | Increase radius from 2 to 3 (expensive) |
 | Counter-threats not caught | Verify `_vct_defence_moves()` covers the pattern |

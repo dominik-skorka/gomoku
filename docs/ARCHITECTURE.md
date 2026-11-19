@@ -291,8 +291,11 @@ Additional scoring:
 - **Fork detection** — cells where ≥ 2 threat lines converge receive a
   `_FORK_BONUS` (3,000 per extra line).
 - **Open-three bonus** — each live-three earns an extra 1,500 points.
-- **Defensive weighting** — opponent patterns scored at 0.8× (blocking is
-  valuable but slightly less important than building your own threats).
+- **Symmetric weighting** — the opponent's patterns are subtracted at the
+  same weight (1.0×).  The *move priors* (`priors.py`, used by MCTS and to
+  rank alpha-beta candidates) weigh the line a move blocks at 0.8× of the
+  line it extends: blocking is valuable but slightly less important than
+  building your own threats.
 - **Clamped** to ±99,000 so heuristic scores never equal the 100,000 win
   constant.
 
