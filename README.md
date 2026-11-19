@@ -232,9 +232,11 @@ to bypass discovery and use an explicit file.
 Brain aliases allow multiple configurations of the same engine:
 
 ```toml
-[brains.threat]
+[brains.threat_fast]
 type = "threat"
-vcf_depth = 20
+pns_nodes = 10_000      # a third of the shipped threat brain's PNS budget
+
+[brains.threat_fast.fallback]
 depth = 4
 
 [brains.alphabeta_deep]

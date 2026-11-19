@@ -277,7 +277,7 @@ For each identified issue, match it to a root cause:
 |-------|-----|
 | VCF too shallow → missed forced win | Increase `vcf_depth` (e.g., 20 → 30) |
 | VCT too shallow → missed threat chain | Increase `vct_depth` (e.g., 12 → 16) |
-| PNS gives up too early | Increase `pns_nodes` (e.g., 10k → 50k) or `pns_time_s` |
+| PNS gives up too early | Increase `pns_nodes` (the shipped 30k measured best; 100k gained nothing more) or `pns_time_s` |
 | Alpha-beta too weak positionally | Increase `depth` (e.g., 4 → 5) |
 | Opening phase wastes time | Add an opening book (`opening_book = "..."`) |
 | Moves too slow | Set `time_limit_s` or reduce depths |
@@ -342,7 +342,7 @@ almost-empty board where most moves are equivalent.
 ### Pattern 4: "The PNS timeout"
 
 ```
-Move 25: think_time_ms=5100, decision_path="alphabeta", notes=["PNS: budget exhausted"]
+Move 25: think_time_ms=5100, decision_path="alphabeta", notes=["No forced win found (VCF/PNS/VCT)", ...]
 ```
 
 **Cause:** PNS ran for its full time budget (5s) without proving or disproving
@@ -479,13 +479,19 @@ were in that row (dead-three = 100 points).
 ### Step 5: Fix
 
 Increase `_OPEN_THREE_BONUS` from 1,500 to 2,000 in `evaluate.py`, or
-increase alpha-beta fallback `depth` from 4 to 5 so the brain sees the
-row-7 threat materializing earlier.  Alternatively, configure a custom alias:
+deepen the alpha-beta fallback (`[brains.threat.fallback] depth`, 5 in the
+shipped config) so the brain sees the row-7 threat materializing earlier.
+Alternatively, configure a custom alias:
 
 ```toml
 [brains.threat_deep]
 type = "threat"
-depth = 5          # deeper alpha-beta fallback
-vcf_depth = 24     # deeper VCF
-pns_nodes = 20000  # larger PNS budget
+vcf_depth = 24       # deeper VCF
+pns_nodes = 100_000  # larger PNS budget
+
+[brains.threat_deep.fallback]
+depth = 6            # deeper alpha-beta fallback
 ```
+
+Measure such a change with `gomoku review` and `gomoku match` (see the
+main README) before adopting it.

@@ -257,11 +257,15 @@ full story).
 
 ### VCF-aware positional defence
 
-When the opponent has a VCF (forced win through fours), the Threat Brain's
-Phase 3 tries every candidate move and re-checks whether the opponent's VCF
-still exists on the resulting board.  Moves that break the VCF are called
-**VCF-breakers**.  Among breakers, the one with the best positional evaluation
-is chosen — combining tactical safety with strategic value.
+When the opponent has a VCF (forced win through fours), the Threat Brain
+tries every candidate move and re-checks whether the opponent's VCF still
+exists on the resulting board.  Moves that break the VCF are called
+**VCF-breakers**; those that stay breakers after any forced reply are
+*durable* and preferred.  The breakers are then probed, best positional
+evaluation first, for any other forced win of the opponent's (one that
+uses threes too).  The first one that leaves the opponent no forced win is
+played, which combines tactical safety with strategic value.  The same
+probing answers an opponent's PNS/VCT win.
 
 ---
 
@@ -269,7 +273,7 @@ is chosen — combining tactical safety with strategic value.
 
 | Brain | Threat usage |
 |-------|-------------|
-| **ThreatBrain** | Entire decision pipeline is threat-driven (VCF → PNS/VCT → VCF-defence → AB fallback) |
+| **ThreatBrain** | Entire decision pipeline is threat-driven (own VCF → own PNS/VCT → defend opponent VCF → defend opponent PNS/VCT → block forks → AB fallback) |
 | **AlphaBetaBrain** | Root VCF pre-check; threat-ordered moves; quiescence extends four-threats; threat extensions add depth on forcing lines |
 | **MCTSBrain** | VCF safety gate restricts root moves when opponent has VCF; heuristic priors score threat patterns |
 | **Evaluation** | All brains use pattern scores + fork detection for positional assessment |
