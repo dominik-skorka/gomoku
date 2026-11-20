@@ -228,8 +228,31 @@ and fails on `FAIL`.  Adding the `match` label to a pull request runs the
 review and then a 300-game match against the base
 (`.github/workflows/match.yml`; remove and re-add the label to run it
 again, or start it by hand).  The match fails only when the pull request
-is significantly weaker (`gomoku match --fail-if-weaker`).  Results are
-in the run summary and as `review.json` / `match.json` artifacts.
+is significantly weaker (`gomoku match --fail-if-weaker`).  The speed
+benchmark below runs on the same pull requests (`.github/workflows/perf.yml`).
+Results are in the run summary and as `review.json` / `match.json` /
+`bench-*.json` artifacts.
+
+### `bench` — Catch speed regressions
+
+```bash
+uv run gomoku bench --a brain=threat,rev=master --b brain=threat --profile 25
+```
+
+Times engine B (the candidate) against engine A (the baseline) on a fixed
+set of 48 positions from self-play games (16 each from the opening, middle
+and endgame; `--positions` takes another set).  The two engines alternate
+on every position and each time is the median of `--repeat` runs (3), so
+a noisy machine affects both alike.  The report gives total and per-phase
+time, B / A, the largest slowdowns, and the positions where B plays a
+**different move** — a change of behaviour, not only of speed (on a busy
+machine a time limit such as `pns_time_s` can also change a move or two).
+`--profile N` adds B's top N functions by self time (cProfile).
+
+The verdict is `FAIL` (exit status 1) when B thinks more than 25% slower
+(`--fail-slower`), `WARN` above 10% (`--warn-slower`), `PASS` otherwise.
+In CI every pull request that touches the engine benchmarks the `threat`
+and `alphabeta` brains against its base.
 
 ---
 

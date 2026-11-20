@@ -670,5 +670,83 @@ def review(
         raise SystemExit(1)
 
 
+@cli.command()
+@click.option("--a", "spec_a", required=True, help="Baseline engine: brain=NAME[,rev=GIT_REV][,config=PATH].")
+@click.option("--b", "spec_b", required=True, help="Candidate engine, same format. Without rev= the working tree.")
+@click.option(
+    "--positions",
+    "positions_path",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=None,
+    help="Positions JSON (default: the bundled 48-position set).",
+)
+@click.option("--repeat", type=click.IntRange(1, 20), default=3, show_default=True, help="Runs per position (median).")
+@click.option(
+    "--fail-slower", type=float, default=1.25, show_default=True, help="FAIL (exit 1) when B/A time is above this."
+)
+@click.option("--warn-slower", type=float, default=1.10, show_default=True, help="WARN when B/A time is above this.")
+@click.option(
+    "--profile",
+    "profile_top",
+    type=click.IntRange(0, 200),
+    default=0,
+    show_default=True,
+    help="Profile B and show its top N functions by self time (0: off).",
+)
+@click.option(
+    "--move-timeout", type=float, default=600.0, show_default=True, help="Seconds before an engine is failed."
+)
+@click.option("--out", "out_path", type=click.Path(path_type=Path), default=None, help="Write the timings as JSON.")
+def bench(
+    spec_a: str,
+    spec_b: str,
+    positions_path: Path | None,
+    repeat: int,
+    fail_slower: float,
+    warn_slower: float,
+    profile_top: int,
+    move_timeout: float,
+    out_path: Path | None,
+) -> None:
+    """Time engine B against engine A on fixed positions and flag slowdowns.
+
+    Both engines run side by side (A and B alternate on every position,
+    median of --repeat runs), so a noisy machine affects both alike.  Also
+    reports positions where B plays a different move than A:
+
+      gomoku bench --a brain=threat,rev=master --b brain=threat --profile 25
+    """
+    from gomoku_cli.bench import default_positions, format_report, load_positions, run_bench, save_bench, verdict
+    from gomoku_cli.match import EngineError, EngineSpec
+
+    try:
+        engine_a = EngineSpec.parse(spec_a)
+        engine_b = EngineSpec.parse(spec_b)
+    except ValueError as exc:
+        raise click.BadParameter(str(exc)) from exc
+    positions = load_positions(positions_path) if positions_path else default_positions()
+
+    _echo_engines(engine_a, engine_b)
+    try:
+        result = run_bench(
+            engine_a, engine_b, positions, repeat=repeat, move_timeout_s=move_timeout, profile_top=profile_top
+        )
+    except (EngineError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    click.echo()
+    click.echo(format_report(engine_a, engine_b, result, fail_slower=fail_slower, warn_slower=warn_slower))
+    if result.profile:
+        click.echo()
+        click.echo(f"Profile of B ({engine_b.label}), top functions by self time:")
+        click.echo(result.profile)
+    status, _ = verdict(result, fail_slower=fail_slower, warn_slower=warn_slower)
+    if out_path is not None:
+        save_bench(out_path, engine_a, engine_b, result, status)
+        click.echo(f"Timings written to {out_path}")
+    if status == "FAIL":
+        raise SystemExit(1)
+
+
 if __name__ == "__main__":
     cli()
