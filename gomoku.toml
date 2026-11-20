@@ -71,6 +71,20 @@ vcf_breaker_pns_nodes = 10_000
 # Default: 2.0 | Valid range: 0.1–60.0
 vcf_breaker_time_s = 2.0
 
+# Threads that probe candidate moves in parallel for the opponent's forced
+# win (the VCF breaker probes above).  The move chosen is the one a single thread
+# would choose from the same probe results (the first safe candidate in
+# evaluation order, not the first to finish), but more threads probe more
+# candidates before the time cap (vcf_breaker_time_s) runs out.
+# - Pays off only on a free-threaded Python (python3.14t), where the probes
+#   really run at once; with the GIL they take turns: no speed-up, a little
+#   overhead.  Values above the number of CPU cores only add overhead.
+# - Matches played with `gomoku match --jobs N` already keep N cores busy:
+#   give the brains threads only with spare cores, or the comparison is
+#   skewed.
+# Default: 1 | Valid range: 1–64
+probe_threads = 1
+
 # VCF depth limit inside quiescence search (at frontier nodes).
 # Default: 0 (disabled) | Valid range: 0–40 | Typical: 12
 qs_vcf_depth = 12
@@ -244,6 +258,20 @@ pns_nodes = 120_000
 # Max wall-clock seconds for PNS search.
 # Default: 5.0 | Valid range: 0.1–60.0
 pns_time_s = 5.0
+
+# Threads that probe candidate moves in parallel for the opponent's forced
+# win (breaker probes after a VCT / VCF threat).  The move chosen is the one a single thread
+# would choose from the same probe results (the first safe candidate in
+# evaluation order, not the first to finish), but more threads probe more
+# candidates before the time cap (pns_time_s) runs out.
+# - Pays off only on a free-threaded Python (python3.14t), where the probes
+#   really run at once; with the GIL they take turns: no speed-up, a little
+#   overhead.  Values above the number of CPU cores only add overhead.
+# - Matches played with `gomoku match --jobs N` already keep N cores busy:
+#   give the brains threads only with spare cores, or the comparison is
+#   skewed.
+# Default: 1 | Valid range: 1–64
+probe_threads = 1
 
 # Alpha-beta tuning for the fallback used when no forced win is found
 # (same keys as [brains.alphabeta]; keys left out take their defaults,

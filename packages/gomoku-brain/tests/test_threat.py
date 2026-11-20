@@ -419,7 +419,7 @@ class TestVctAwareBreakerChoice:
     """A probe that ran out of budget must not count as a proven breaker."""
 
     @staticmethod
-    def _setup(monkeypatch, proven: set[tuple[int, int]]):
+    def _setup(monkeypatch, proven: set[tuple[int, int]], threads: int = 1):
         import gomoku_brain.threat as threat_mod
         from gomoku_brain.alphabeta_ordering import _scored_moves
         from gomoku_brain.candidates import get_candidate_moves
@@ -430,25 +430,27 @@ class TestVctAwareBreakerChoice:
         b = _place(b, [(7, 8), (6, 6), (9, 9)], Stone.WHITE)
         state = SearchState.from_board(b, Stone.BLACK)
 
-        def fake_status(st, _opp, max_nodes, max_time_s, space=None):
+        def fake_status(st, _opp, max_nodes, max_time_s, space=None, stop=None):
             row, col, _ = st.last_move()
             return (PNSStatus.DISPROVED if (row, col) in proven else PNSStatus.UNKNOWN), None
 
         monkeypatch.setattr(threat_mod, "pns_threat_status", fake_status)
         monkeypatch.setattr(threat_mod, "_vcf_state", lambda *a, **k: None)
         order = [m for _, m in _scored_moves(state, get_candidate_moves(state, radius=2), Stone.BLACK)]
-        brain = ThreatBrain(pns_time_s=30.0)
+        brain = ThreatBrain(pns_time_s=30.0, probe_threads=threads)
         return brain, b, state, order
 
-    def test_prefers_a_proven_breaker_over_better_unproven_ones(self, monkeypatch):
+    @pytest.mark.parametrize("threads", [1, 4])
+    def test_prefers_a_proven_breaker_over_better_unproven_ones(self, monkeypatch, threads):
         brain, b, state, order = self._setup(monkeypatch, proven=set())
         target = order[3]
-        brain, b, state, order = self._setup(monkeypatch, proven={(target.row, target.col)})
+        brain, b, state, order = self._setup(monkeypatch, proven={(target.row, target.col)}, threads=threads)
         move = brain._vct_aware_search(b, state, Stone.BLACK, Move(row=0, col=0), {})
         assert move == target
 
-    def test_falls_back_to_best_unproven_candidate(self, monkeypatch):
-        brain, b, state, order = self._setup(monkeypatch, proven=set())
+    @pytest.mark.parametrize("threads", [1, 4])
+    def test_falls_back_to_best_unproven_candidate(self, monkeypatch, threads):
+        brain, b, state, order = self._setup(monkeypatch, proven=set(), threads=threads)
         move = brain._vct_aware_search(b, state, Stone.BLACK, Move(row=0, col=0), {})
         assert move == order[0]
 

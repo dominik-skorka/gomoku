@@ -24,6 +24,7 @@ disproved, or left unknown when the budget ran out.
 
 from __future__ import annotations
 
+import threading
 import time
 from enum import Enum, auto
 
@@ -569,6 +570,7 @@ def pns_threat_status(
     max_nodes: int = 10_000,
     max_time_s: float = 5.0,
     space: ThreatSpace = DEFAULT_THREAT_SPACE,
+    stop: threading.Event | None = None,
 ) -> tuple[PNSStatus, Move | None]:
     """Run Proof-Number Search in threat-space and report how it ended.
 
@@ -581,6 +583,9 @@ def pns_threat_status(
     *space* chooses the attacker's threats and the defender's replies (see
     :class:`gomoku_brain.threat_space.ThreatSpace`); the default is the
     brain's measured configuration.
+
+    Setting *stop* (from another thread) ends the search like a spent
+    budget: it returns ``UNKNOWN`` unless it has already finished.
 
     ``max_nodes`` counts distinct positions.  Accepts an existing
     :class:`SearchState` to skip the per-call Pydantic→bitboard
@@ -608,7 +613,7 @@ def pns_threat_status(
 
     while root.proof != 0 and root.disproof != 0 and nodes_created < max_nodes and iterations_left > 0:
         iterations_left -= 1
-        if time.monotonic() > deadline:
+        if time.monotonic() > deadline or (stop is not None and stop.is_set()):
             break
 
         # 1) Select the most-proving node.

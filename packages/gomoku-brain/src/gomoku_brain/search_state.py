@@ -161,6 +161,22 @@ class SearchState:
         occ_count = len(board.occupied)
         return cls(size=size, black=black, white=white, zobrist=zobrist, occ_count=occ_count)
 
+    def fork(self) -> SearchState:
+        """A new state holding the current position, with its own arrays.
+
+        For searching the same position on another thread: the copy shares
+        nothing with this state, so each can make and unmake freely.  Its
+        undo history starts empty (``ply`` 0).
+        """
+        return SearchState(
+            size=self.size,
+            black=self.black.copy(),
+            white=self.white.copy(),
+            zobrist=self.zobrist,
+            occ_count=self.occ_count,
+            grid=self.grid.copy(),
+        )
+
     @classmethod
     def from_bitboards(
         cls,

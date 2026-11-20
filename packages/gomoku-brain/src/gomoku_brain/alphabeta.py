@@ -87,12 +87,15 @@ class AlphaBetaBrain:
         opening_book: str = "",
         vcf_breaker_pns_nodes: int = 0,
         vcf_breaker_time_s: float = 2.0,
+        probe_threads: int = 1,
     ) -> None:
         self.depth = depth
         # PNS budget for checking that a root VCF breaker leaves the
         # opponent no other forced win (0: pick by evaluation only).
         self.vcf_breaker_pns_nodes = vcf_breaker_pns_nodes
         self.vcf_breaker_time_s = vcf_breaker_time_s
+        # Threads probing those breakers in parallel (gomoku_brain.probe).
+        self.probe_threads = probe_threads
         self.vcf_depth = vcf_depth
         self.qs_vcf_depth = qs_vcf_depth
         self.threat_ordering = threat_ordering
@@ -163,7 +166,12 @@ class AlphaBetaBrain:
             # -- Root-level VCF pre-check ------------------------------------
             if self.vcf_depth > 0:
                 vcf_move = root_vcf(
-                    board, stone, self.vcf_depth, self.vcf_breaker_pns_nodes, self.vcf_breaker_time_s
+                    board,
+                    stone,
+                    self.vcf_depth,
+                    self.vcf_breaker_pns_nodes,
+                    self.vcf_breaker_time_s,
+                    self.probe_threads,
                 )
                 if vcf_move is not None:
                     if diag is not None:
