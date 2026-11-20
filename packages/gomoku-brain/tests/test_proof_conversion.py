@@ -1,8 +1,9 @@
 """Claimed PNS wins must be converted when played out.
 
 "PNS found winning move" promises a forced win.  These positions, from
-self-play games of the threat brain, are ones where it claims one
-(pns_win).  Each is played out against a defender brain to the end:
+self-play games of the threat brain, are ones where it claimed one
+with PNS (pns_win; a later, stronger VCF may claim it first, which is
+just as binding).  Each is played out against a defender brain to the end:
 the attacker must complete five, and every attacker move on the way must
 be a win (a claimed win or the five itself) or a forced block of the
 defender's five (a counter-four the proof allows for).  A claim that
@@ -25,7 +26,8 @@ from gomoku_brain import BRAINS, resolve_brain
 from gomoku_brain.threat_detect import _find_winning_move
 
 _CONFIG = Path(__file__).resolve().parents[3] / "gomoku.toml"
-_WIN_PATHS = {"pns_win", "vcf_win", "vct_win", "immediate_win", "instant_win"}
+_CLAIMS = {"pns_win", "vcf_win", "vct_win"}
+_WIN_PATHS = _CLAIMS | {"immediate_win", "instant_win"}
 _MAX_MOVES = 40  # per side; the proofs here finish in far fewer
 
 # Move lists in move-name notation (column letter, row number), Black first;
@@ -105,7 +107,8 @@ def test_claimed_pns_win_is_converted(brains, moves, defender):
     attacker = stone
 
     move, path = _think(brains["threat"], board, attacker)
-    assert path == "pns_win", f"the position no longer starts with a PNS claim ({path})"
+    # Found as pns_win in self-play; a stronger VCF may now claim it first.
+    assert path in _CLAIMS, f"the position no longer starts with a claimed win ({path})"
 
     trail = []
     for _ in range(2 * _MAX_MOVES):
