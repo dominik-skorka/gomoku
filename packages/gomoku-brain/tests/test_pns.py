@@ -402,8 +402,13 @@ class TestPnsStatus:
         assert Move(row=7, col=6) in [Move(row=row, col=col) for row, col in root.moves]  # G8
 
     @pytest.mark.parametrize("white_move", ["I7", "J9"])
-    def test_quiet_move_that_establishes_vct_is_proved_at_root(self, white_move):
-        """G8 is quiet after I7/J9, but immediately establishes Black's VCT."""
+    def test_quiet_move_that_establishes_vct_is_searched_at_root(self, white_move):
+        """G8 is quiet after I7/J9, but immediately establishes Black's VCT.
+
+        It joins the root's children, but only *threatens* the VCT: White
+        moves next, so its node is not proved up front; it is searched with
+        every legal White reply instead.
+        """
         from gomoku_brain.pns import _expand, _NodeType, _PNSNode
         from gomoku_brain.search_state import SearchState
 
@@ -433,8 +438,40 @@ class TestPnsStatus:
         )
 
         g8 = (7, 6)
-        index = root.moves.index(g8)
-        assert root.children[index].proof == 0
+        child = root.children[root.moves.index(g8)]
+        assert child.full_width
+        assert child.proof != 0  # not claimed before White has replied
+
+    @pytest.mark.parametrize("white_move", ["I7", "J9"])
+    def test_quiet_setup_means_the_position_is_not_safe(self, white_move):
+        """With G8 searched, I7 and J9 no longer look like safe breakers.
+
+        After I7 or J9 Black's quiet G8 leaves White without a defence (an
+        exhaustive check over White's replies with a larger budget); the
+        probe must not report the position as DISPROVED.
+        """
+        from gomoku_brain.pns import PNSStatus, pns_threat_status
+
+        board = Board(size=15)
+        for name, stone in (
+            ("H8", Stone.BLACK),
+            ("G7", Stone.WHITE),
+            ("I9", Stone.BLACK),
+            ("G6", Stone.WHITE),
+            ("H9", Stone.BLACK),
+            (white_move, Stone.WHITE),
+        ):
+            board = board.place_stone(Move(row=int(name[1:]) - 1, col=ord(name[0]) - ord("A")), stone)
+        status, _ = pns_threat_status(
+            board,
+            Stone.BLACK,
+            max_nodes=60_000,
+            max_time_s=60.0,
+            vcf_depth=20,
+            quiet_vct_depth=12,
+            check_root_counterattacks=True,
+        )
+        assert status is not PNSStatus.DISPROVED
 
     def test_quiet_setup_scan_does_not_ignore_defenders_existing_vct(self):
         """H7 gives White a VCT, so Black's arbitrary quiet moves are not safe."""

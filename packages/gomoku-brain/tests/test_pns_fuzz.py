@@ -75,15 +75,26 @@ def _positions(seed: int, count: int):
         yield size, cells, to_move
 
 
+# The breaker probe's root extensions (incoming-VCF breakers and quiet VCT
+# setups) add root moves outside the threat space; they must stay sound.
+_ROOT_CHECKS = {"check_root_counterattacks": True, "vcf_depth": 20, "quiet_vct_depth": 12}
+
+
+@pytest.mark.parametrize(
+    ("options", "count"),
+    # 3000 with the root checks: the quiet-setup bug showed up 4 times there.
+    [({}, 200), (_ROOT_CHECKS, 3000)],
+    ids=["plain", "root-checks"],
+)
 @pytest.mark.parametrize("use_jit", [True, False])
-def test_every_pns_proof_is_a_real_win(use_jit, monkeypatch):
+def test_every_pns_proof_is_a_real_win(use_jit, options, count, monkeypatch):
     monkeypatch.setattr(evaluate, "_use_jit", use_jit)
     monkeypatch.setattr(threat_detect, "_SCAN_KIT", None)
     proofs = 0
     false_proofs = []
-    for size, cells, to_move in _positions(seed=7, count=200):
+    for size, cells, to_move in _positions(seed=7, count=count):
         board = Board(size=size, grid=[[Stone(cells[r * size + c]) for c in range(size)] for r in range(size)])
-        status, move = pns_threat_status(board, Stone(to_move), max_nodes=20_000, max_time_s=10.0)
+        status, move = pns_threat_status(board, Stone(to_move), max_nodes=20_000, max_time_s=10.0, **options)
         if status is not PNSStatus.PROVED:
             continue
         proofs += 1
@@ -95,3 +106,26 @@ def test_every_pns_proof_is_a_real_win(use_jit, monkeypatch):
             false_proofs.append((rows, "XO"[to_move - 1], (move.row, move.col)))
     assert proofs >= 30  # the sample must exercise proofs, not only disproofs
     assert not false_proofs, f"{len(false_proofs)} false proofs of {proofs}, e.g. {false_proofs[:3]}"
+
+
+# Positions where a quiet root move that only threatens a VCT was once
+# taken as a proved win (the defender, to move next, holds): rows top to
+# bottom, X black, O white, then the side to move.
+QUIET_SETUP_TRAPS = [
+    ((".O.O.", "..OOX", "XX.XO", "XO.XX", ".XOOX"), 2),
+    (("..XXO", "X.OOO", "X...X", "XOXO.", ".OXXO"), 2),
+    ((".OXOX", "XX.X.", "OO.XX", "OOO..", "O.XOX"), 1),
+    (("XO.OXO", "OXXXXO", "XX.XOX", "OOXOXO", "...OO.", "OX.XOX"), 2),
+]
+
+
+@pytest.mark.parametrize(("rows", "to_move"), QUIET_SETUP_TRAPS)
+def test_quiet_setup_is_not_a_proof(rows, to_move):
+    size = len(rows)
+    cells = tuple({"X": 1, "O": 2, ".": 0}[ch] for row in rows for ch in row)
+    board = Board(size=size, grid=[[Stone(cells[r * size + c]) for c in range(size)] for r in range(size)])
+    status, move = pns_threat_status(board, Stone(to_move), max_nodes=20_000, max_time_s=10.0, **_ROOT_CHECKS)
+    if status is PNSStatus.PROVED:
+        i = move.row * size + move.col
+        after = (*cells[:i], to_move, *cells[i + 1 :])
+        assert _five_at(after, size, move.row, move.col, to_move) or _value(after, size, 3 - to_move) == -1

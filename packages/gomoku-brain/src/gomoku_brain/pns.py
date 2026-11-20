@@ -87,6 +87,7 @@ def _defender_vcf_space(space: ThreatSpace) -> ThreatSpace:
         split_threes=False,
     )
 
+
 # Position table for one search: zobrist hash -> the node for that
 # position.  A position reached through a different move order links to
 # the node that already exists, so the search runs on a DAG instead of
@@ -128,6 +129,7 @@ class _PNSNode:
         "children",
         "disproof",
         "expanded",
+        "full_width",
         "moves",
         "node_type",
         "proof",
@@ -136,6 +138,9 @@ class _PNSNode:
     def __init__(self, node_type: _NodeType) -> None:
         self.node_type = node_type
         self.expanded = False
+        # AND node after a quiet attacker move: the defender may answer
+        # with any legal move (see _expand).
+        self.full_width = False
         self.children: list[_PNSNode] = []
         self.moves: list[Cell] = []
         # Initial proof/disproof: 1/1 for unknown nodes
@@ -459,9 +464,12 @@ def _quiet_vct_setup_cells(
 
     This is deliberately a one-ply bridge into the regular threat space, not
     unrestricted move generation.  Only the strongest cells that create new
-    threat continuations are searched.  If the defender already has a VCT,
-    the position is a tactical race and arbitrary quiet moves cannot be
-    assumed to answer it, so this extension stays disabled.
+    threat continuations are searched.  They only *threaten* a VCT: the
+    defender replies next, so each one's node is searched with every legal
+    reply (``full_width``), never taken as proved.  If the defender already
+    has a VCT, a quiet move that does not stop it loses to it, so the scan
+    is skipped: those children would be refuted anyway, and searching them
+    full-width would spend the budget for nothing.
     """
     if depth <= 0:
         return []
@@ -509,6 +517,23 @@ def _quiet_vct_setup_cells(
         finally:
             state.unmake()
     return setups
+
+
+def _all_replies(state: SearchState, tactical: list[Cell]) -> list[Cell]:
+    """Every empty cell: the tactical defences first, then the rest by
+    distance from the last move (the quiet threat), nearest first.
+
+    PNS disproves an AND node as soon as one reply holds, so cells likely
+    to refute the threat go first.
+    """
+    last = state.last_move()
+    lr, lc = (last[0], last[1]) if last is not None else (state.size // 2, state.size // 2)
+    first = set(tactical)
+    rest = [
+        (r, c) for r in range(state.size) for c in range(state.size) if state.is_empty(r, c) and (r, c) not in first
+    ]
+    rest.sort(key=lambda cell: (max(abs(cell[0] - lr), abs(cell[1] - lc)), cell))
+    return [*tactical, *rest]
 
 
 def _expand(
@@ -609,7 +634,7 @@ def _expand(
                     state.unmake()
             ranked_breakers.sort()
             attack_cells = [cell for _priority, cell in ranked_breakers]
-            proved_setup_cells: set[Cell] = set()
+            quiet_setup_cells: set[Cell] = set()
         else:
             # Four-threats first (stronger), then live-three threats.
             attack_cells = _attack_cells(state, attacker, ctx, space)
@@ -618,7 +643,7 @@ def _expand(
                 if check_root_counterattacks
                 else []
             )
-            proved_setup_cells = set(setups)
+            quiet_setup_cells = set(setups)
             attack_cells = setups + attack_cells
 
         # A cell that occurs through several patterns is tried once.
@@ -645,10 +670,12 @@ def _expand(
                 # for an AND child, so a new node keeps its 1/1 defaults.
                 child, is_new = _child_at(state, _NodeType.AND, table)
                 created += is_new
-                if attack in proved_setup_cells:
-                    # The bounded one-ply probe already established a VCT
-                    # from this child position.
-                    _mark(child, True)
+                if attack in quiet_setup_cells:
+                    # A quiet move only *threatens* a VCT: the defender moves
+                    # next and may defuse it anywhere, so its node gets
+                    # every legal reply rather than the tactical defence set
+                    # (marking it proved here let PNS claim false wins).
+                    child.full_width = True
                 _link(node, child, attack)
             finally:
                 state.unmake()
@@ -688,7 +715,12 @@ def _expand(
 
         defences = _pns_defence_cells(state, attacker, ctx, space)
 
-        if not defences:
+        if node.full_width:
+            defences = _all_replies(state, defences)
+            if not defences:
+                _mark(node, False)  # Full board without five: draw.
+                return 0
+        elif not defences:
             # A quiet reply can still refute the attack. With no tactical
             # candidates, try every legal reply before claiming a proof.
             defences = [(r, c) for r in range(state.size) for c in range(state.size) if state.is_empty(r, c)]
