@@ -97,6 +97,13 @@ class TestDefaultLimitTrips:
             assert tight_default_client.get("/healthz").status_code == 200
         assert tight_default_client.get("/healthz").status_code == 429
 
+    def test_versioned_endpoint_under_tight_default_limit(self, tight_default_client):
+        """The default limit must reach routes nested in included routers
+        (v1 includes a router per resource), not only top-level ones."""
+        for _ in range(2):
+            assert tight_default_client.get("/v1/brains").status_code == 200
+        assert tight_default_client.get("/v1/brains").status_code == 429
+
 
 class TestPermissiveByDefault:
     def test_many_calls_succeed_when_limits_disabled(self, client):
