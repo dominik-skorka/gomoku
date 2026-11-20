@@ -9,11 +9,13 @@ not interleaved with pattern scanners.
 from __future__ import annotations
 
 import time
+from typing import Any, override
 
 import logfire
 import numpy as np
 from gomoku.board import Board
 from gomoku.models import Move, Stone
+from gomoku.settings import AlphaBetaBrainSettings
 
 from gomoku_brain.alphabeta_ordering import (
     _check_win,
@@ -22,7 +24,8 @@ from gomoku_brain.alphabeta_ordering import (
 )
 from gomoku_brain.alphabeta_quiescence import EvalCache, QuiesceCtx, quiesce
 from gomoku_brain.alphabeta_root import root_vcf
-from gomoku_brain.brain_base import brain_session
+from gomoku_brain.base import Brain
+from gomoku_brain.brain_base import BrainSession
 from gomoku_brain.candidates import get_candidate_moves
 from gomoku_brain.evaluate import evaluate_board
 from gomoku_brain.opening import deduplicate_by_symmetry, lookup_opening_book
@@ -59,64 +62,40 @@ class _SearchTimeout(Exception):
 _FUTILITY_MARGIN = 1500
 
 
-class AlphaBetaBrain:
+class AlphaBetaBrain(Brain[AlphaBetaBrainSettings], name="alphabeta"):
     """Player using alpha-beta pruning on top of negamax."""
 
-    def __init__(
-        self,
-        depth: int = 4,
-        vcf_depth: int = 0,
-        qs_vcf_depth: int = 0,
-        *,
-        threat_ordering: bool = True,
-        threat_extensions: int = 0,
-        null_move_pruning: bool = False,
-        null_move_reduction: int = 2,
-        lmr: bool = False,
-        lmr_threshold: int = 3,
-        lmr_min_depth: int = 3,
-        early_game_radius: int = 1,
-        early_game_threshold: int = 6,
-        early_game_max_candidates: int = 10,
-        early_game_lmr_threshold: int = 2,
-        early_game_futility_margin: int = 800,
-        max_candidates: int = _MAX_CANDIDATES,
-        futility_margin: int = _FUTILITY_MARGIN,
-        eval_ordering_depth: int = 3,
-        time_limit_s: float = 0.0,
-        opening_book: str = "",
-        vcf_breaker_pns_nodes: int = 0,
-        vcf_breaker_time_s: float = 2.0,
-        probe_threads: int = 1,
-    ) -> None:
-        self.depth = depth
+    def __init__(self, settings: AlphaBetaBrainSettings | None = None, /, **overrides: Any) -> None:
+        super().__init__(settings, **overrides)
+        s = self.settings
+        self.depth = s.depth
         # PNS budget for checking that a root VCF breaker leaves the
         # opponent no other forced win (0: pick by evaluation only).
-        self.vcf_breaker_pns_nodes = vcf_breaker_pns_nodes
-        self.vcf_breaker_time_s = vcf_breaker_time_s
+        self.vcf_breaker_pns_nodes = s.vcf_breaker_pns_nodes
+        self.vcf_breaker_time_s = s.vcf_breaker_time_s
         # Threads probing those breakers in parallel (gomoku_brain.probe).
-        self.probe_threads = probe_threads
-        self.vcf_depth = vcf_depth
-        self.qs_vcf_depth = qs_vcf_depth
-        self.threat_ordering = threat_ordering
-        self.threat_extensions = threat_extensions
-        self.null_move_pruning = null_move_pruning
-        self.null_move_reduction = null_move_reduction
-        self.lmr = lmr
-        self.lmr_threshold = lmr_threshold
-        self.lmr_min_depth = lmr_min_depth
-        self.early_game_radius = early_game_radius
-        self.early_game_threshold = early_game_threshold
-        self.early_game_max_candidates = early_game_max_candidates
-        self.early_game_lmr_threshold = early_game_lmr_threshold
-        self.early_game_futility_margin = early_game_futility_margin
+        self.probe_threads = s.probe_threads
+        self.vcf_depth = s.vcf_depth
+        self.qs_vcf_depth = s.qs_vcf_depth
+        self.threat_ordering = s.threat_ordering
+        self.threat_extensions = s.threat_extensions
+        self.null_move_pruning = s.null_move_pruning
+        self.null_move_reduction = s.null_move_reduction
+        self.lmr = s.lmr
+        self.lmr_threshold = s.lmr_threshold
+        self.lmr_min_depth = s.lmr_min_depth
+        self.early_game_radius = s.early_game_radius
+        self.early_game_threshold = s.early_game_threshold
+        self.early_game_max_candidates = s.early_game_max_candidates
+        self.early_game_lmr_threshold = s.early_game_lmr_threshold
+        self.early_game_futility_margin = s.early_game_futility_margin
         # Branching cap and futility margin after the early game.
-        self.max_candidates = max_candidates
-        self.futility_margin = futility_margin
+        self.max_candidates = s.max_candidates
+        self.futility_margin = s.futility_margin
         # Nodes at least this deep rank candidates by a full evaluation
         # of each move; shallower nodes use the one-kernel pattern prior.
-        self.eval_ordering_depth = eval_ordering_depth
-        self.time_limit_s = time_limit_s
+        self.eval_ordering_depth = s.eval_ordering_depth
+        self.time_limit_s = s.time_limit_s
         # Benchmark instrumentation — reset on each get_move, updated inside
         # _alphabeta / _quiesce.  Read by bench_alphabeta.py.  Zero overhead
         # when ignored (one int increment per node).
@@ -126,132 +105,114 @@ class AlphaBetaBrain:
         # leaf entry points don't allocate a fresh ctx each call.
         self._qs_ctx: QuiesceCtx | None = None
         self._file_book = None
-        if opening_book:
+        if s.opening_book:
             from pathlib import Path
 
             from gomoku_brain.opening_book import OpeningBookFile
 
-            book_path = Path(opening_book)
+            book_path = Path(s.opening_book)
             if book_path.exists():
                 self._file_book = OpeningBookFile.load(book_path)
                 logfire.info(
                     "Loaded opening book: {path} ({n} positions)", path=str(book_path), n=len(self._file_book.positions)
                 )
 
-    @property
-    def name(self) -> str:
-        return "alphabeta"
+    @override
+    def choose_move(self, board: Board, stone: Stone, session: BrainSession) -> Move:
+        diag = session.diag
 
-    def get_move(self, board: Board, stone: Stone) -> Move:
-        with brain_session("alphabeta", depth=self.depth, vcf_depth=self.vcf_depth, stone=str(stone)) as session:
-            diag = session.diag
+        # -- Opening book (file-based, then hardcoded) -------------------
+        book_move = None
+        if self._file_book is not None:
+            from gomoku_brain.opening_book import lookup_file_book
 
-            # -- Opening book (file-based, then hardcoded) -------------------
-            book_move = None
-            if self._file_book is not None:
-                from gomoku_brain.opening_book import lookup_file_book
-
-                book_move = lookup_file_book(self._file_book, board, stone)
-                if book_move is not None:
-                    logfire.info("File opening book: {move}", move=str(book_move))
-            if book_move is None:
-                book_move = lookup_opening_book(board, stone)
+            book_move = lookup_file_book(self._file_book, board, stone)
             if book_move is not None:
-                logfire.info("Opening book: {move}", move=str(book_move))
-                if diag is not None:
-                    diag.decision_path = "opening_book"
-                    diag.chosen_move = book_move
-                return book_move
-
-            # -- Root-level VCF pre-check ------------------------------------
-            if self.vcf_depth > 0:
-                vcf_move = root_vcf(
-                    board,
-                    stone,
-                    self.vcf_depth,
-                    self.vcf_breaker_pns_nodes,
-                    self.vcf_breaker_time_s,
-                    self.probe_threads,
-                )
-                if vcf_move is not None:
-                    if diag is not None:
-                        # root_vcf names the case (instant_win, vcf_win,
-                        # vcf_breaker, vcf_block_no_breaker); keep it.
-                        diag.decision_path = diag.decision_path or "vcf_precheck"
-                        diag.chosen_move = vcf_move
-                        diag.notes.append(f"VCF found at depth {self.vcf_depth}")
-                    return vcf_move
-
-            # -- Build the mutable SearchState used throughout the search ---
-            # make/unmake on this single object replaces per-node Board /
-            # _GridBoard allocations.  All helpers duck-type it via
-            # ``grid_utils``.
-            state = SearchState.from_board(board, stone)
-
-            tt = TranspositionTable()
-            best_move: Move | None = None
-            # Reset per-move node counters for benchmarks / diagnostics.
-            self.node_count = 0
-            self.qs_node_count = 0
-            # History table shared across all ID iterations so it accumulates.
-            history: HistoryTable = {}
-            eval_cache: EvalCache = {}
-            self._qs_ctx = QuiesceCtx(qs_vcf_depth=self.qs_vcf_depth, eval_cache=eval_cache)
-            prev_score: float | None = None
-            aspiration_resets = 0
-
-            # Time management: 0 means unlimited.  Deadline is independent
-            # of the brain_session timer because it gates the search itself
-            # (not just diagnostics reporting).
-            deadline = (time.monotonic() + self.time_limit_s) if self.time_limit_s > 0 else 0.0
-
-            # Static eval before the move (for diagnostics).
+                logfire.info("File opening book: {move}", move=str(book_move))
+        if book_move is None:
+            book_move = lookup_opening_book(board, stone)
+        if book_move is not None:
+            logfire.info("Opening book: {move}", move=str(book_move))
             if diag is not None:
-                diag.eval_before = evaluate_board(board, stone)
+                diag.decision_path = "opening_book"
+                diag.chosen_move = book_move
+            return book_move
 
-            # Iterative deepening: search at increasing depths so that each
-            # pass seeds the TT with best-move info for the next, deeper pass.
-            depth_reached = 0
-            for d in range(1, self.depth + 1):
-                # Fresh killers each iteration — they are depth-relative.
-                killers: dict[int, list[Move]] = {}
+        # -- Root-level VCF pre-check ------------------------------------
+        if self.vcf_depth > 0:
+            vcf_move = root_vcf(
+                board,
+                stone,
+                self.vcf_depth,
+                self.vcf_breaker_pns_nodes,
+                self.vcf_breaker_time_s,
+                self.probe_threads,
+            )
+            if vcf_move is not None:
+                if diag is not None:
+                    # root_vcf names the case (instant_win, vcf_win,
+                    # vcf_breaker, vcf_block_no_breaker); keep it.
+                    diag.decision_path = diag.decision_path or "vcf_precheck"
+                    diag.chosen_move = vcf_move
+                    diag.notes.append(f"VCF found at depth {self.vcf_depth}")
+                return vcf_move
 
-                try:
-                    # Aspiration window: after the first iteration, search with a
-                    # narrow window around the previous score.  Widen on failure.
-                    if prev_score is not None and abs(prev_score) < 90_000:
-                        a = prev_score - _ASPIRATION_WINDOW
-                        b = prev_score + _ASPIRATION_WINDOW
-                        score, move = self._alphabeta(
-                            state,
-                            d,
-                            a,
-                            b,
-                            stone,
-                            killers,
-                            tt,
-                            history,
-                            eval_cache,
-                            self.threat_extensions,
-                            deadline=deadline,
-                        )
-                        # Re-search on fail-low or fail-high.
-                        if score <= a or score >= b:
-                            aspiration_resets += 1
-                            score, move = self._alphabeta(
-                                state,
-                                d,
-                                float("-inf"),
-                                float("inf"),
-                                stone,
-                                killers,
-                                tt,
-                                history,
-                                eval_cache,
-                                self.threat_extensions,
-                                deadline=deadline,
-                            )
-                    else:
+        # -- Build the mutable SearchState used throughout the search ---
+        # make/unmake on this single object replaces per-node Board /
+        # _GridBoard allocations.  All helpers duck-type it via
+        # ``grid_utils``.
+        state = SearchState.from_board(board, stone)
+
+        tt = TranspositionTable()
+        best_move: Move | None = None
+        # Reset per-move node counters for benchmarks / diagnostics.
+        self.node_count = 0
+        self.qs_node_count = 0
+        # History table shared across all ID iterations so it accumulates.
+        history: HistoryTable = {}
+        eval_cache: EvalCache = {}
+        self._qs_ctx = QuiesceCtx(qs_vcf_depth=self.qs_vcf_depth, eval_cache=eval_cache)
+        prev_score: float | None = None
+        aspiration_resets = 0
+
+        # Time management: 0 means unlimited.  Deadline is independent
+        # of the brain_session timer because it gates the search itself
+        # (not just diagnostics reporting).
+        deadline = (time.monotonic() + self.time_limit_s) if self.time_limit_s > 0 else 0.0
+
+        # Static eval before the move (for diagnostics).
+        if diag is not None:
+            diag.eval_before = evaluate_board(board, stone)
+
+        # Iterative deepening: search at increasing depths so that each
+        # pass seeds the TT with best-move info for the next, deeper pass.
+        depth_reached = 0
+        for d in range(1, self.depth + 1):
+            # Fresh killers each iteration — they are depth-relative.
+            killers: dict[int, list[Move]] = {}
+
+            try:
+                # Aspiration window: after the first iteration, search with a
+                # narrow window around the previous score.  Widen on failure.
+                if prev_score is not None and abs(prev_score) < 90_000:
+                    a = prev_score - _ASPIRATION_WINDOW
+                    b = prev_score + _ASPIRATION_WINDOW
+                    score, move = self._alphabeta(
+                        state,
+                        d,
+                        a,
+                        b,
+                        stone,
+                        killers,
+                        tt,
+                        history,
+                        eval_cache,
+                        self.threat_extensions,
+                        deadline=deadline,
+                    )
+                    # Re-search on fail-low or fail-high.
+                    if score <= a or score >= b:
+                        aspiration_resets += 1
                         score, move = self._alphabeta(
                             state,
                             d,
@@ -265,90 +226,102 @@ class AlphaBetaBrain:
                             self.threat_extensions,
                             deadline=deadline,
                         )
-                except _SearchTimeout:
-                    logfire.info(
-                        "ID depth {d}/{max_d}: time limit reached, using best from depth {prev_d}",
-                        d=d,
-                        max_d=self.depth,
-                        prev_d=d - 1,
+                else:
+                    score, move = self._alphabeta(
+                        state,
+                        d,
+                        float("-inf"),
+                        float("inf"),
+                        stone,
+                        killers,
+                        tt,
+                        history,
+                        eval_cache,
+                        self.threat_extensions,
+                        deadline=deadline,
                     )
-                    break
-
-                prev_score = score
-                depth_reached = d
-                if move is not None:
-                    best_move = move
-                if diag is not None:
-                    diag.notes.append(f"ID d={d}/{self.depth}: score={score}, move={move}, tt={len(tt)}")
+            except _SearchTimeout:
                 logfire.info(
-                    "ID depth {d}/{max_d}: score={score}, move={move}, tt_size={tt_size}",
+                    "ID depth {d}/{max_d}: time limit reached, using best from depth {prev_d}",
                     d=d,
                     max_d=self.depth,
-                    score=score,
-                    move=str(move),
-                    tt_size=len(tt),
+                    prev_d=d - 1,
                 )
-                # Early exit on proven win.
-                if score >= 100_000:
-                    break
+                break
 
-            self.qs_node_count = self._qs_ctx.nodes
-            assert best_move is not None
-
+            prev_score = score
+            depth_reached = d
+            if move is not None:
+                best_move = move
             if diag is not None:
-                from gomoku.diagnostics import CandidateInfo, SearchStats, ThreatInfo
+                diag.notes.append(f"ID d={d}/{self.depth}: score={score}, move={move}, tt={len(tt)}")
+            logfire.info(
+                "ID depth {d}/{max_d}: score={score}, move={move}, tt_size={tt_size}",
+                d=d,
+                max_d=self.depth,
+                score=score,
+                move=str(move),
+                tt_size=len(tt),
+            )
+            # Early exit on proven win.
+            if score >= 100_000:
+                break
 
-                from gomoku_brain.threat_detect import _find_four_threats, _find_three_threats
+        self.qs_node_count = self._qs_ctx.nodes
+        assert best_move is not None
 
-                search_ms = session.elapsed_ms()
-                diag.decision_path = diag.decision_path or "alphabeta"
-                diag.chosen_move = best_move
-                diag.search_stats = SearchStats(
-                    depth_reached=depth_reached,
-                    nodes_searched=self.node_count,
-                    qs_nodes_searched=self.qs_node_count,
-                    tt_size=len(tt),
-                    tt_hits=tt.hits,
-                    tt_probes=tt.probes,
-                    time_ms=search_ms,
-                    aspiration_resets=aspiration_resets,
+        if diag is not None:
+            from gomoku.diagnostics import CandidateInfo, SearchStats, ThreatInfo
+
+            from gomoku_brain.threat_detect import _find_four_threats, _find_three_threats
+
+            search_ms = session.elapsed_ms()
+            diag.decision_path = diag.decision_path or "alphabeta"
+            diag.chosen_move = best_move
+            diag.search_stats = SearchStats(
+                depth_reached=depth_reached,
+                nodes_searched=self.node_count,
+                qs_nodes_searched=self.qs_node_count,
+                tt_size=len(tt),
+                tt_hits=tt.hits,
+                tt_probes=tt.probes,
+                time_ms=search_ms,
+                aspiration_resets=aspiration_resets,
+            )
+            # Collect top candidates from TT root entry and eval scores.
+            root_candidates = get_candidate_moves(board, radius=2)
+            if len(root_candidates) > 8 and len(board.occupied) <= 8:
+                root_candidates = deduplicate_by_symmetry(board, root_candidates)
+            scored_cands: list[tuple[float, Move]] = []
+            for m in root_candidates[:20]:
+                trial = board.place_stone(m, stone)
+                sc = evaluate_board(trial, stone)
+                scored_cands.append((sc, m))
+            scored_cands.sort(key=lambda x: x[0], reverse=True)
+            diag.top_candidates = [CandidateInfo(move=m, score=sc, score_type="eval") for sc, m in scored_cands[:10]]
+            # Alternative-best: the top-ranked candidate when it differs
+            # from the move we actually chose.  Analyzers flag this as a
+            # potential blunder when the gap is large.
+            if diag.top_candidates and diag.top_candidates[0].move != best_move:
+                diag.alternative_best = diag.top_candidates[0]
+            # Threat landscape before the move — populate only when a
+            # downstream layer (threat.py) didn't already.
+            opp = Stone.BLACK if stone is Stone.WHITE else Stone.WHITE
+            if diag.our_threats == ThreatInfo():
+                diag.our_threats = ThreatInfo(
+                    four_threats=len(_find_four_threats(board, stone)),
+                    three_threats=len(_find_three_threats(board, stone)),
                 )
-                # Collect top candidates from TT root entry and eval scores.
-                root_candidates = get_candidate_moves(board, radius=2)
-                if len(root_candidates) > 8 and len(board.occupied) <= 8:
-                    root_candidates = deduplicate_by_symmetry(board, root_candidates)
-                scored_cands: list[tuple[float, Move]] = []
-                for m in root_candidates[:20]:
-                    trial = board.place_stone(m, stone)
-                    sc = evaluate_board(trial, stone)
-                    scored_cands.append((sc, m))
-                scored_cands.sort(key=lambda x: x[0], reverse=True)
-                diag.top_candidates = [
-                    CandidateInfo(move=m, score=sc, score_type="eval") for sc, m in scored_cands[:10]
-                ]
-                # Alternative-best: the top-ranked candidate when it differs
-                # from the move we actually chose.  Analyzers flag this as a
-                # potential blunder when the gap is large.
-                if diag.top_candidates and diag.top_candidates[0].move != best_move:
-                    diag.alternative_best = diag.top_candidates[0]
-                # Threat landscape before the move — populate only when a
-                # downstream layer (threat.py) didn't already.
-                opp = Stone.BLACK if stone is Stone.WHITE else Stone.WHITE
-                if diag.our_threats == ThreatInfo():
-                    diag.our_threats = ThreatInfo(
-                        four_threats=len(_find_four_threats(board, stone)),
-                        three_threats=len(_find_three_threats(board, stone)),
-                    )
-                if diag.opp_threats == ThreatInfo():
-                    diag.opp_threats = ThreatInfo(
-                        four_threats=len(_find_four_threats(board, opp)),
-                        three_threats=len(_find_three_threats(board, opp)),
-                    )
-                # Eval after the chosen move.
-                after_board = board.place_stone(best_move, stone)
-                diag.eval_after = evaluate_board(after_board, stone)
+            if diag.opp_threats == ThreatInfo():
+                diag.opp_threats = ThreatInfo(
+                    four_threats=len(_find_four_threats(board, opp)),
+                    three_threats=len(_find_three_threats(board, opp)),
+                )
+            # Eval after the chosen move.
+            after_board = board.place_stone(best_move, stone)
+            diag.eval_after = evaluate_board(after_board, stone)
 
-            return best_move
+        return best_move
 
     # -- Instant-win / forced-block pre-check --------------------------------
 

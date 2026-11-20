@@ -106,6 +106,10 @@ deepening, principal variation search, quiescence search, aspiration windows,
 futility pruning, late move reduction, null-move pruning, and threat
 extensions.
 
+**Writing a brain:** subclass `gomoku_brain.base.Brain[YourSettings]` with
+`name="yours"` and implement `choose_move`; declaring the class registers it.
+See [ARCHITECTURE.md](docs/ARCHITECTURE.md#ai-brains).
+
 ---
 
 ## CLI Commands
