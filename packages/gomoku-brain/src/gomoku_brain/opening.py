@@ -7,11 +7,8 @@ from typing import TYPE_CHECKING
 from gomoku.models import Move, Stone
 
 if TYPE_CHECKING:
-    from gomoku.board import Board
+    from gomoku.interfaces import BoardView
 
-    from gomoku_brain.grid_utils import _GridBoard
-
-    AnyBoard = Board | _GridBoard
 
 # ---------------------------------------------------------------------------
 # 8-fold symmetry of the square board
@@ -53,7 +50,7 @@ def _transform(r: int, c: int, s: int, t: int) -> tuple[int, int]:
 _INVERSE: list[int] = [0, 3, 2, 1, 4, 5, 6, 7]
 
 
-def _board_symmetry_group(board: AnyBoard) -> list[int]:
+def _board_symmetry_group(board: BoardView) -> list[int]:
     """Return transform indices that leave *board* invariant."""
     size = board.size
     occupied = board.occupied
@@ -72,7 +69,7 @@ def _board_symmetry_group(board: AnyBoard) -> list[int]:
     return group
 
 
-def deduplicate_by_symmetry(board: AnyBoard, candidates: list[Move]) -> list[Move]:
+def deduplicate_by_symmetry(board: BoardView, candidates: list[Move]) -> list[Move]:
     """Remove symmetry-equivalent candidates, keeping one per equivalence class.
 
     Returns *candidates* unchanged when the board has no non-trivial symmetry.
@@ -145,7 +142,7 @@ _add_book([(1, 7, 7), (2, 6, 6)], (8, 8))
 _add_book([(1, 7, 7), (2, 6, 7)], (8, 7))
 
 
-def lookup_opening_book(board: AnyBoard, stone: Stone) -> Move | None:
+def lookup_opening_book(board: BoardView, stone: Stone) -> Move | None:
     """Return a book move for *board* + *stone* to play, or ``None``."""
     if board.size != 15:
         return None

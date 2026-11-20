@@ -95,7 +95,7 @@ _CANDIDATE_RADIUS = 2
 
 
 class ThreatBrain:
-    """MoveProvider using VCF / VCT or PNS with alpha-beta fallback.
+    """Player using VCF / VCT or PNS with alpha-beta fallback.
 
     *threat_search* selects the algorithm used after VCF:
     - ``"pns"`` (default): Proof-Number Search — sound, covers all defender moves.

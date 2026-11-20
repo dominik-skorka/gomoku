@@ -1,6 +1,6 @@
 """Stateful game runner — supports external players, brains, or a mix.
 
-:class:`gomoku.game.Game` requires a ``MoveProvider`` for both colours
+:class:`gomoku.game.Game` requires a ``Player`` for both colours
 and drives them itself.  That's the right shape for the CLI's ``play``
 command (two configured brains taking turns) but doesn't fit the API:
 a stateful session may have a *human* player on one side whose moves
@@ -32,8 +32,8 @@ from gomoku.diagnostics import (
     set_move_diagnostics,
 )
 from gomoku.game import InvalidMoveError
+from gomoku.interfaces import Player
 from gomoku.models import GameConfig, GameResult, Move, Stone
-from gomoku.protocol import MoveProvider
 from gomoku.rules import get_game_status
 
 
@@ -79,14 +79,14 @@ class GameRunner:
         self,
         config: GameConfig,
         *,
-        black: MoveProvider | None = None,
-        white: MoveProvider | None = None,
+        black: Player | None = None,
+        white: Player | None = None,
         diagnostics_recorder: DiagnosticsRecorder | None = None,
         on_move: Callable[[Stone, Move], None] | None = None,
     ) -> None:
         self.config = config
         self.board = Board(size=config.board_size)
-        self.brains: dict[Stone, MoveProvider | None] = {Stone.BLACK: black, Stone.WHITE: white}
+        self.brains: dict[Stone, Player | None] = {Stone.BLACK: black, Stone.WHITE: white}
         self.current_stone: Stone = Stone.BLACK
         self.move_history: list[tuple[Stone, Move]] = []
         self.result: GameResult | None = None

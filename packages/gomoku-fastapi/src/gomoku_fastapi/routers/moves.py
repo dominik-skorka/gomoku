@@ -13,12 +13,14 @@ from __future__ import annotations
 
 import anyio
 from fastapi import APIRouter, HTTPException, Request, status
+from gomoku.board import Board
 from gomoku.diagnostics import (
     MoveDiagnostics,
     current_move_diagnostics,
     set_move_diagnostics,
 )
-from gomoku.models import Stone
+from gomoku.interfaces import Player
+from gomoku.models import Move, Stone
 
 from gomoku_fastapi.deps import SettingsDep, build_brain
 from gomoku_fastapi.limits import compute_shared_limit
@@ -27,7 +29,9 @@ from gomoku_fastapi.schemas import MoveRequest, MoveResponse
 router = APIRouter(tags=["moves"])
 
 
-def _run_brain_with_diagnostics(brain, board, stone, capture: bool) -> tuple[object, MoveDiagnostics | None]:
+def _run_brain_with_diagnostics(
+    brain: Player, board: Board, stone: Stone, capture: bool
+) -> tuple[Move, MoveDiagnostics | None]:
     """Run ``brain.get_move`` and optionally capture diagnostics.
 
     Lives at module level (not inside the endpoint coroutine) so the

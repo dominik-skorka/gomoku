@@ -155,7 +155,7 @@ class _Node:
 
 
 class MCTSBrain:
-    """MoveProvider using Monte Carlo Tree Search with PUCT."""
+    """Player using Monte Carlo Tree Search with PUCT."""
 
     def __init__(
         self,
@@ -201,7 +201,7 @@ class MCTSBrain:
             shortcut_move, shortcut_tag = probe_immediate(state, stone)
             if shortcut_move is not None:
                 if diag is not None:
-                    diag.decision_path = shortcut_tag
+                    diag.decision_path = shortcut_tag or ""
                     diag.chosen_move = shortcut_move
                 return shortcut_move
 
@@ -306,6 +306,7 @@ class MCTSBrain:
                         score_type="winrate",
                     )
                     for c in children_sorted[:10]
+                    if c.move is not None  # every child has one; only the root has none
                 ]
                 if diag.top_candidates and diag.top_candidates[0].move != chosen:
                     diag.alternative_best = diag.top_candidates[0]

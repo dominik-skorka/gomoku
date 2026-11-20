@@ -60,7 +60,7 @@ _FUTILITY_MARGIN = 1500
 
 
 class AlphaBetaBrain:
-    """MoveProvider using alpha-beta pruning on top of negamax."""
+    """Player using alpha-beta pruning on top of negamax."""
 
     def __init__(
         self,

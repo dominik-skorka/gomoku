@@ -7,13 +7,13 @@ from collections.abc import Callable
 import logfire
 
 from gomoku.board import Board
+from gomoku.interfaces import Player
 from gomoku.models import GameConfig, GameResult, Move, Stone
-from gomoku.protocol import MoveProvider
 from gomoku.rules import get_game_status
 
 
 class InvalidMoveError(Exception):
-    """Raised when a MoveProvider returns an illegal move."""
+    """Raised when a Player returns an illegal move."""
 
     def __init__(self, move: Move, reason: str) -> None:
         self.move = move
@@ -22,18 +22,18 @@ class InvalidMoveError(Exception):
 
 
 class Game:
-    """Runs a Gomoku game between two MoveProviders."""
+    """Runs a Gomoku game between two Players."""
 
     def __init__(
         self,
         config: GameConfig,
-        black: MoveProvider,
-        white: MoveProvider,
+        black: Player,
+        white: Player,
         on_move: Callable[[Stone, Move], None] | None = None,
     ) -> None:
         self.config = config
         self.board = Board(size=config.board_size)
-        self.players: dict[Stone, MoveProvider] = {Stone.BLACK: black, Stone.WHITE: white}
+        self.players: dict[Stone, Player] = {Stone.BLACK: black, Stone.WHITE: white}
         self.current_stone: Stone = Stone.BLACK
         self.move_history: list[tuple[Stone, Move]] = []
         self._on_move = on_move

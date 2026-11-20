@@ -12,7 +12,7 @@ from gomoku_brain.evaluate import evaluate_board
 
 
 class NegamaxBrain:
-    """MoveProvider using negamax search."""
+    """Player using negamax search."""
 
     def __init__(self, depth: int = 3) -> None:
         self.depth = depth

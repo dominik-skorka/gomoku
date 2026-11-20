@@ -11,7 +11,7 @@ relationships of the Gomoku workspace.
 2. [Package Overview](#package-overview)
 3. [Dependency Graph](#dependency-graph)
 4. [Core Data Models](#core-data-models)
-5. [MoveProvider Protocol](#moveprovider-protocol)
+5. [Interfaces](#interfaces)
 6. [Game Engine](#game-engine)
 7. [AI Brains](#ai-brains)
 8. [Board Evaluation](#board-evaluation)
@@ -39,7 +39,8 @@ gomoku/
 │   │   │   ├── rules.py      ← Win detection
 │   │   │   ├── game.py       ← Game: both sides brain-driven
 │   │   │   ├── runner.py     ← GameRunner: each side brain-driven or external
-│   │   │   ├── protocol.py   ← MoveProvider protocol
+│   │   │   ├── interfaces.py ← BoardView, SearchBoard, Player
+│   │   │   ├── protocol.py   ← MoveProvider (old name of Player)
 │   │   │   ├── recorder.py   ← Game recording & playback data
 │   │   │   ├── diagnostics.py← Per-move diagnostics capture
 │   │   │   ├── analyze.py    ← Post-game diagnostics analysis
@@ -123,9 +124,9 @@ gomoku-fastapi ─┘       └── gomoku (core)
 ```
 
 - **gomoku** has zero internal package dependencies — it defines the models,
-  rules, and protocol that everything else builds on.
+  rules, and interfaces that everything else builds on.
 - **gomoku-brain** depends on **gomoku** for `Board`, `Stone`, `Move`, and the
-  `MoveProvider` protocol.
+  interfaces in `gomoku.interfaces`.
 - **gomoku-cli** and **gomoku-fastapi** depend on both and wire them
   together: one in the terminal, the other over HTTP.
 
@@ -197,19 +198,44 @@ hash (which encodes the side to move).
 
 ---
 
-## MoveProvider Protocol
+## Interfaces
+
+`gomoku.interfaces` holds the structural types (`typing.Protocol`) the
+packages depend on.  A class implements one by having its members, not by
+inheriting; pyright checks this in CI (`uv run pyright`).
 
 ```python
+class BoardView(Protocol):          # a position to read
+    @property
+    def size(self) -> int: ...
+    @property
+    def occupied(self) -> Collection[Cell]: ...
+    def at(self, row: int, col: int) -> Stone: ...
+
+class SearchBoard(BoardView, Protocol):   # changed in place by a search
+    def make(self, row: int, col: int, stone: Stone) -> None: ...
+    def unmake(self) -> None: ...
+
 @runtime_checkable
-class MoveProvider(Protocol):
+class Player(Protocol):             # chooses moves for one side
     @property
     def name(self) -> str: ...
-
     def get_move(self, board: Board, stone: Stone) -> Move: ...
 ```
 
-Every brain (AI or human) implements this protocol.  The game engine calls
-`get_move()` each turn and expects a valid `Move` back.
+- `Board` (immutable, for games) and `SearchState` (mutable, for searches)
+  are both a `BoardView`; `SearchState` is also a `SearchBoard`.
+  Evaluation, candidate generation and threat detection take a `BoardView`,
+  so they work on either.  Each class carries a `TYPE_CHECKING`-only
+  function returning itself as the interface, so a change that breaks
+  conformance fails the type check.
+- Every brain, and the keyboard input, is a `Player`.  The game engine calls
+  `get_move()` each turn and expects a valid `Move` back.  The registry
+  (`BrainSpec.brain_cls: type[Player]`) is checked against it.
+  `MoveProvider` is the old name, kept as an alias.
+- Overriding methods are marked `@typing.override`; pyright reports one
+  that is not (`reportImplicitOverride`), so renaming a base method cannot
+  leave a subclass silently defining a new one.
 
 ---
 

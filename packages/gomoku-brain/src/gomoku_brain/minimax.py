@@ -12,7 +12,7 @@ from gomoku_brain.evaluate import evaluate_board
 
 
 class MinimaxBrain:
-    """MoveProvider using classic minimax search."""
+    """Player using classic minimax search."""
 
     def __init__(self, depth: int = 3) -> None:
         self.depth = depth

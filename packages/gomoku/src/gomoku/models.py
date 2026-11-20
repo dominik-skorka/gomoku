@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from enum import IntEnum
+from typing import override
 
 from pydantic import BaseModel, Field, computed_field, model_validator
 
@@ -22,6 +23,7 @@ class Stone(IntEnum):
         msg = "EMPTY has no opponent"
         raise ValueError(msg)
 
+    @override
     def __str__(self) -> str:
         return self.name.capitalize()
 
@@ -40,6 +42,7 @@ class Move(BaseModel, frozen=True):
         row_label = self.row + 1
         return f"{col_label}{row_label}"
 
+    @override
     def __str__(self) -> str:
         return self.position
 

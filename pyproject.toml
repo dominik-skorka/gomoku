@@ -49,9 +49,22 @@ markers = [
 ]
 addopts = "-m 'not bench'"
 
+[tool.pyright]
+# Static type checking in CI.  The interfaces in gomoku.interfaces (and the
+# brain base class) only mean something if a checker enforces them.
+include = ["packages/gomoku/src", "packages/gomoku-brain/src", "packages/gomoku-cli/src", "packages/gomoku-fastapi/src"]
+pythonVersion = "3.14"
+typeCheckingMode = "basic"
+# An overriding method must say so with @typing.override, so renaming or
+# misspelling the base method is an error instead of a silent new method.
+reportImplicitOverride = "error"
+venvPath = "."
+venv = ".venv"
+
 [dependency-groups]
 dev = [
     "pytest>=9.2.0",
     "ruff>=0.17.6",
     "httpx2>=2.16.2",
+    "pyright[nodejs]>=1.1.414",
 ]

@@ -21,7 +21,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from gomoku.protocol import MoveProvider
+from gomoku.interfaces import Player
 from gomoku.settings import (
     AlphaBetaBrainSettings,
     BrainSettings,
@@ -51,7 +51,7 @@ class BrainSpec:
     """
 
     name: str
-    brain_cls: type
+    brain_cls: type[Player]
     settings_cls: type[BaseModel]
 
 
@@ -71,7 +71,7 @@ BRAINS: dict[str, BrainSpec] = {
 # at startup via :func:`register_brain`.
 
 
-def register_brain(name: str, brain_cls: type, settings_cls: type[BaseModel]) -> None:
+def register_brain(name: str, brain_cls: type[Player], settings_cls: type[BaseModel]) -> None:
     """Add or overwrite a registry entry.
 
     Used by :mod:`gomoku_cli.main` to wire :class:`KeyboardProvider`
@@ -81,7 +81,7 @@ def register_brain(name: str, brain_cls: type, settings_cls: type[BaseModel]) ->
     BRAINS[name] = BrainSpec(name, brain_cls, settings_cls)
 
 
-def get_brain(name: str, **kwargs: object) -> MoveProvider:
+def get_brain(name: str, **kwargs: object) -> Player:
     """Instantiate a brain by name with explicit kwargs."""
     if name not in BRAINS:
         available = ", ".join(sorted(BRAINS))
@@ -134,7 +134,7 @@ def available_brains(brain_settings: BrainSettings | None = None) -> list[str]:
     return sorted(names)
 
 
-def get_brain_from_settings(name: str, brain_settings: BrainSettings | None = None) -> MoveProvider:
+def get_brain_from_settings(name: str, brain_settings: BrainSettings | None = None) -> Player:
     """Instantiate a brain by resolving *name* through *brain_settings*."""
     if brain_settings is None:
         brain_settings = BrainSettings()

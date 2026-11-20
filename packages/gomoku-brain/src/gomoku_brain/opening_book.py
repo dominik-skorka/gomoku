@@ -17,11 +17,7 @@ from pydantic import BaseModel, Field
 from gomoku_brain.opening import _INVERSE, _canonicalize, _transform
 
 if TYPE_CHECKING:
-    from gomoku.board import Board
-
-    from gomoku_brain.grid_utils import _GridBoard
-
-    AnyBoard = Board | _GridBoard
+    from gomoku.interfaces import BoardView
 
 
 class BookEntry(BaseModel):
@@ -62,7 +58,7 @@ class OpeningBookFile(BaseModel):
         return cls.model_validate(data)
 
 
-def _stones_from_board(board: AnyBoard) -> set[tuple[int, int, int]]:
+def _stones_from_board(board: BoardView) -> set[tuple[int, int, int]]:
     """Extract ``{(stone_int, row, col), …}`` from any board type."""
     stones: set[tuple[int, int, int]] = set()
     for r, c in board.occupied:
@@ -78,7 +74,7 @@ def _canonical_key(stones: set[tuple[int, int, int]], size: int) -> str:
 
 def lookup_file_book(
     book: OpeningBookFile,
-    board: AnyBoard,
+    board: BoardView,
     stone: Stone,  # kept for API consistency
 ) -> Move | None:
     """Look up the current position in *book* and return the book move, or ``None``."""

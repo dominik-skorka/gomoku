@@ -1,19 +1,13 @@
-"""MoveProvider protocol — the plugin interface for brains and keyboard input."""
+"""Former home of the player interface; see :mod:`gomoku.interfaces`.
+
+``MoveProvider`` is the old name of :class:`gomoku.interfaces.Player` and
+stays as an alias so existing imports keep working.
+"""
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from gomoku.interfaces import Player
 
-if TYPE_CHECKING:
-    from gomoku.board import Board
-    from gomoku.models import Move, Stone
+MoveProvider = Player
 
-
-@runtime_checkable
-class MoveProvider(Protocol):
-    """Any object that can provide a move given the current board state."""
-
-    @property
-    def name(self) -> str: ...
-
-    def get_move(self, board: Board, stone: Stone) -> Move: ...
+__all__ = ["MoveProvider", "Player"]

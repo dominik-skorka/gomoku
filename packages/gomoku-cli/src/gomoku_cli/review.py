@@ -342,9 +342,8 @@ def review_game(
 
     def status_at(ply: int) -> str | None:
         k = ply - opening_len
-        if k < 0 or k >= len(statuses) or statuses[k] is None:
-            return None
-        return statuses[k][0]
+        entry = statuses[k] if 0 <= k < len(statuses) else None
+        return None if entry is None else entry[0]
 
     blunders = []
     for ply in range(opening_len, len(moves)):
@@ -485,7 +484,8 @@ def _unconverted_wins(
         if any(b.engine == engine and claim <= b.ply <= breaks for b in found):
             continue
         k = breaks - opening_len
-        status, oracle_move = statuses[k] if 0 <= k < len(statuses) and statuses[k] is not None else ("UNKNOWN", None)
+        entry = statuses[k] if 0 <= k < len(statuses) else None
+        status, oracle_move = entry if entry is not None else ("UNKNOWN", None)
         ms_list = record.a_ms if engine == "a" else record.b_ms
         own_index = k // 2
         blunder = Blunder(
@@ -813,16 +813,17 @@ def format_blunder(blunder: Blunder, labels: dict[str, str], moves: list[Cell] |
     label = {"tuning": "TUNING", "bug": "BUG", "disputed": "DISPUTED", "unclassified": "?"}[blunder.verdict]
     lines.append(f"    => {label}: {blunder.remedy}")
     if moves is not None:
-        marks = {tuple(blunder.played): "!"}
+        marks: dict[Cell, str] = {(blunder.played[0], blunder.played[1]): "!"}
         if blunder.better is not None:
-            marks[tuple(blunder.better)] = "*"
+            marks[(blunder.better[0], blunder.better[1])] = "*"
         if blunder.claim_ply is not None and blunder.claim_ply != blunder.ply:
             claim = blunder.claim_ply
             lines.append(f"    when the win was claimed (move {claim + 1}, ! played):")
-            claimed = [tuple(m) for m in moves[:claim]]
-            lines.append(render_board(claimed, {tuple(moves[claim]): "!"}, size, indent="    "))
+            claimed: list[Cell] = [(m[0], m[1]) for m in moves[:claim]]
+            claim_mark: dict[Cell, str] = {(moves[claim][0], moves[claim][1]): "!"}
+            lines.append(render_board(claimed, claim_mark, size, indent="    "))
             lines.append(f"    where the claim broke (move {blunder.ply + 1}):")
-        history = [tuple(m) for m in moves[: blunder.ply]]
+        history: list[Cell] = [(m[0], m[1]) for m in moves[: blunder.ply]]
         lines.append(render_board(history, marks, size, indent="    "))
     return "\n".join(lines)
 

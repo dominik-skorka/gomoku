@@ -2,8 +2,8 @@
 
 from gomoku.board import Board
 from gomoku.game import Game, InvalidMoveError
+from gomoku.interfaces import Player
 from gomoku.models import GameConfig, GameResult, Move, Stone
-from gomoku.protocol import MoveProvider
 from gomoku.recorder import GameRecord, GameRecorder, PlayerInfo, RecordedMove, load_record, save_record
 
 __all__ = [
@@ -15,7 +15,7 @@ __all__ = [
     "GameResult",
     "InvalidMoveError",
     "Move",
-    "MoveProvider",
+    "Player",
     "PlayerInfo",
     "RecordedMove",
     "Stone",

@@ -1,6 +1,6 @@
 """REST API for the Gomoku engine.
 
-The package exposes ``MoveProvider`` brains and the static evaluator over
+The package exposes ``Player`` brains and the static evaluator over
 HTTP.  The app is constructed by :func:`gomoku_fastapi.main.create_app`;
 deployments use the ``gomoku-api`` console script (see
 :func:`gomoku_fastapi.main.run`).

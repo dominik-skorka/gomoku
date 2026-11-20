@@ -367,6 +367,9 @@ uv run pytest
 # Lint and format
 uv run ruff check .
 uv run ruff format .
+
+# Type check (also in CI): the interfaces in gomoku.interfaces are enforced here
+uv run pyright
 ```
 
 ### Project layout

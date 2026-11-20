@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 from gomoku.board import Board
+from gomoku.interfaces import BoardView
 from gomoku.models import Move, Stone
 from numpy.typing import NDArray
 
@@ -46,8 +47,8 @@ class _GridBoard:
         return int(np.count_nonzero(self.grid)) == self.size * self.size
 
 
-def board_to_grid(board: Board | _GridBoard) -> NDArray[np.int8]:
-    """Convert a Board (or _GridBoard) to a numpy int8 2-D array (size x size)."""
+def board_to_grid(board: BoardView) -> NDArray[np.int8]:
+    """Convert any board to a numpy int8 2-D array (size x size)."""
     from gomoku_brain.bitboard import BitboardState
     from gomoku_brain.search_state import SearchState
 
@@ -55,10 +56,15 @@ def board_to_grid(board: Board | _GridBoard) -> NDArray[np.int8]:
         return board.grid
     if isinstance(board, _GridBoard):
         return board.grid
-    return np.array(board.grid, dtype=np.int8)
+    if isinstance(board, Board):
+        return np.array(board.grid, dtype=np.int8)
+    grid = np.zeros((board.size, board.size), dtype=np.int8)
+    for row, col in board.occupied:
+        grid[row, col] = int(board.at(row, col))
+    return grid
 
 
-def occupied_coords(board: Board | _GridBoard) -> NDArray[np.int32]:
+def occupied_coords(board: BoardView) -> NDArray[np.int32]:
     """Return occupied cell coordinates as an (N, 2) int32 array.
 
     Each row is ``[row, col]``.  Returns an empty ``(0, 2)`` array when the
@@ -87,7 +93,7 @@ def occupied_coords(board: Board | _GridBoard) -> NDArray[np.int32]:
     return occ
 
 
-def board_to_bitboard(board: Board | _GridBoard) -> tuple[NDArray[np.uint32], NDArray[np.uint32], int]:
+def board_to_bitboard(board: BoardView) -> tuple[NDArray[np.uint32], NDArray[np.uint32], int]:
     """Convert any board type to bitboard arrays ``(black, white, size)``."""
     from gomoku_brain.bitboard import BitboardState
     from gomoku_brain.bitboard_jit import grid_to_bitboard

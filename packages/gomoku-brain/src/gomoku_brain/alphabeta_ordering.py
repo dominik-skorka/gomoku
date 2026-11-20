@@ -13,7 +13,7 @@ mutate state.
 
 from __future__ import annotations
 
-from gomoku.board import Board
+from gomoku.interfaces import BoardView
 from gomoku.models import Move, Stone
 from gomoku.rules import check_winner
 
@@ -22,7 +22,7 @@ from gomoku_brain.evaluate import evaluate_board
 from gomoku_brain.search_state import SearchState
 
 
-def _check_win(board: Board, move: Move) -> bool:
+def _check_win(board: BoardView, move: Move) -> bool:
     """Return True if *move* creates a winning line on *board*.
 
     Dispatches to JIT ``check_winner_grid`` when *board* is a ``_GridBoard``
@@ -38,7 +38,7 @@ def _check_win(board: Board, move: Move) -> bool:
     return check_winner(board, move) is not None
 
 
-def _count_open_threes_at(board: Board, row: int, col: int, stone: Stone) -> int:
+def _count_open_threes_at(board: BoardView, row: int, col: int, stone: Stone) -> int:
     """Count open-three lines through (row, col) if *stone* were placed there.
 
     An open-three is exactly 3 consecutive stones (including the hypothetical
@@ -68,7 +68,7 @@ def _count_open_threes_at(board: Board, row: int, col: int, stone: Stone) -> int
 
 
 def _split_threats(
-    board: Board,
+    board: BoardView,
     moves: list[Move],
     stone: Stone,
     *,
@@ -147,7 +147,7 @@ def _split_threats(
 
 
 def _is_four_threat_move(
-    board: Board,
+    board: BoardView,
     move: Move,
     stone: Stone,
 ) -> bool:
