@@ -4,7 +4,10 @@ Run by :mod:`gomoku_cli.match` with ``PYTHONPATH`` pointing at the source
 tree of the revision under test, so every import below resolves to that
 revision's code.  Protocol, one JSON object per line:
 
-* start-up: the worker prints ``{"ready": true, "brain": NAME}``
+* start-up: the worker prints ``{"ready": true, "brain": NAME}``, or
+  ``{"error": MESSAGE}`` and exits when ``--overrides`` (brain settings
+  as JSON, see :mod:`gomoku_cli.brain_spec`) name an unknown setting or
+  an invalid value
 * ``{"moves": [[row, col], ...]}`` asks for a move; optional keys
   ``"overrides"`` (settings merged into the brain's own, nested tables
   included) and ``"diagnostics": true`` (also return ``"path"``, the
@@ -50,6 +53,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--brain", required=True)
     parser.add_argument("--size", type=int, default=15)
+    parser.add_argument("--overrides", default="{}", help="brain settings to change, as a JSON object")
     args = parser.parse_args()
 
     # Keep the protocol on the real stdout and send everything else a
@@ -63,7 +67,14 @@ def main() -> None:
     from gomoku.settings import GomokuSettings
     from gomoku_brain import BRAINS, resolve_brain
 
-    brain_type, base_settings = resolve_brain(args.brain, GomokuSettings().brains)
+    from gomoku_cli.brain_spec import apply_overrides
+
+    try:
+        brain_type, base_settings = resolve_brain(args.brain, GomokuSettings().brains)
+        base_settings = apply_overrides(BRAINS[brain_type].settings_cls, base_settings, json.loads(args.overrides))
+    except ValueError as exc:
+        pipe.write(json.dumps({"error": f"{type(exc).__name__}: {exc}"}) + "\n")
+        return
     brains: dict[str, Any] = {}
 
     def brain_for(overrides: dict[str, Any]) -> Any:

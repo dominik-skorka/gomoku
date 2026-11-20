@@ -118,8 +118,8 @@ uv run gomoku play [OPTIONS]
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--black NAME` | `keyboard` | Black player (brain name or alias) |
-| `--white NAME` | `random` | White player (brain name or alias) |
+| `--black NAME[,KEY=VALUE...]` | `keyboard` | Black player (brain name or alias, optionally with settings changed) |
+| `--white NAME[,KEY=VALUE...]` | `random` | White player (same form) |
 | `--board-size N` | from config | Board size (5–25) |
 | `--config PATH` | `gomoku.toml` | Configuration file |
 | `--record / --no-record` | from config | Enable game recording |
@@ -127,6 +127,24 @@ uv run gomoku play [OPTIONS]
 | `--diagnostics / --no-diagnostics` | from config | Enable per-move diagnostics |
 | `--diagnostics-dir PATH` | from config | Diagnostics directory |
 | `--opening-book PATH` | — | Opening book JSON file |
+
+Brain settings can be changed for one game after the brain's name,
+on top of its settings in `gomoku.toml`:
+
+```bash
+uv run gomoku play --black threat,depth=8,fallback.depth=8 --white alphabeta,depth=8
+```
+
+- A dotted key reaches into a nested table: `fallback.depth=8`,
+  `threats.own.split_threes=true`.
+- Values are TOML values (`8`, `2.5`, `true`, `"text"`); a plain word is a
+  string (`threat_search=vct`).
+- Keys are checked against the brain's settings, nested tables included:
+  a misspelt key (`dpeth=8`) is an error that lists the valid keys, not
+  silently ignored.
+
+The same `KEY=VALUE` parts work in the engines of `match`, `review` and
+`bench`, and in `generate-book --brain`.
 
 ### `playback` — Replay a recorded game
 
@@ -170,13 +188,17 @@ uv run gomoku match --a brain=threat,rev=master --b brain=threat --games 40 --jo
 
 # Two settings of the same brain
 uv run gomoku match --a brain=threat --b brain=threat,config=other.toml --games 40
+
+# The same, with the settings on the command line
+uv run gomoku match --a brain=threat --b brain=threat,pns_nodes=60000,fallback.depth=4 --games 40
 ```
 
 Plays engine A against engine B over generated openings, each opening
 twice with colours swapped, and reports wins, score with a 95% interval
 (computed per opening pair, which cancels colour bias), the implied Elo
 difference and think time per move.  An engine is
-`brain=NAME[,rev=GIT_REV][,config=PATH]`: without `rev` it runs the
+`brain=NAME[,rev=GIT_REV][,config=PATH][,KEY=VALUE...]` (`KEY=VALUE`
+changes a brain setting, as in `play`): without `rev` it runs the
 working tree, with `rev` that commit is exported to a per-commit cache
 under the system temp directory (the first start of a revision compiles
 its kernels).  Openings where either colour already has a forced win are

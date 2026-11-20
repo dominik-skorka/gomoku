@@ -33,10 +33,13 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+from typing import Any
 
 from gomoku.board import Board
 from gomoku.models import Move, Stone
 from gomoku.rules import check_winner
+
+from gomoku_cli.brain_spec import describe, parse_overrides, split_parts
 
 _WORKER = Path(__file__).with_name("match_worker.py")
 _SOURCE_PACKAGES = ("gomoku", "gomoku-brain")
@@ -49,15 +52,19 @@ _SOURCE_PACKAGES = ("gomoku", "gomoku-brain")
 
 @dataclass(frozen=True)
 class EngineSpec:
-    """Which brain to run, from which code, with which config."""
+    """Which brain to run, from which code, with which config and settings."""
 
     brain: str
     rev: str | None = None
     config: Path | None = None
+    #: Brain settings changed on top of the config (``KEY=VALUE`` parts).
+    overrides: dict[str, Any] = field(default_factory=dict, hash=False)
 
     @property
     def label(self) -> str:
         parts = [self.brain]
+        if self.overrides:
+            parts.append(f"({describe(self.overrides)})")
         if self.rev:
             parts.append(f"@{self.rev}")
         if self.config:
@@ -66,17 +73,30 @@ class EngineSpec:
 
     @classmethod
     def parse(cls, text: str) -> EngineSpec:
-        """Parse ``brain=NAME[,rev=REV][,config=PATH]`` (a bare name is a brain)."""
+        """Parse ``brain=NAME[,rev=REV][,config=PATH][,KEY=VALUE...]`` (a bare name is a brain).
+
+        Other ``KEY=VALUE`` parts change brain settings, as in ``gomoku play``
+        (see :mod:`gomoku_cli.brain_spec`); the worker checks the keys.
+        """
         fields: dict[str, str] = {}
-        for part in text.split(","):
+        settings: list[str] = []
+        for i, part in enumerate(split_parts(text)):
             key, sep, value = part.partition("=")
-            if not sep:
-                key, value = "brain", part
+            if not sep and i == 0:
+                key, value = "brain", part  # a bare first part names the brain
             key = key.strip()
-            if key not in {"brain", "rev", "config"} or not value.strip():
-                msg = f"Invalid engine spec {text!r}: expected brain=NAME[,rev=REV][,config=PATH]"
+            if (not sep and i > 0) or not value.strip() or key in fields:
+                msg = f"Invalid engine spec {text!r}: expected brain=NAME[,rev=REV][,config=PATH][,KEY=VALUE...]"
                 raise ValueError(msg)
-            fields[key] = value.strip()
+            if key in {"brain", "rev", "config"}:
+                fields[key] = value.strip()
+            else:
+                settings.append(part)
+        try:
+            overrides = parse_overrides(settings)
+        except ValueError as exc:
+            msg = f"Invalid engine spec {text!r}: {exc}"
+            raise ValueError(msg) from exc
         if "brain" not in fields:
             msg = f"Invalid engine spec {text!r}: no brain given"
             raise ValueError(msg)
@@ -85,7 +105,7 @@ class EngineSpec:
             # The settings loader would quietly fall back to another config.
             msg = f"Invalid engine spec {text!r}: config file {str(config)!r} does not exist"
             raise ValueError(msg)
-        return cls(brain=fields["brain"], rev=fields.get("rev"), config=config)
+        return cls(brain=fields["brain"], rev=fields.get("rev"), config=config, overrides=overrides)
 
 
 # ---------------------------------------------------------------------------
@@ -191,8 +211,11 @@ class Engine:
         if spec.config is not None:
             env["GOMOKU_CONFIG"] = str(spec.config.resolve())
         # -P keeps the worker's own directory (this package) off sys.path.
+        command = [sys.executable, "-P", str(_WORKER), "--brain", spec.brain, "--size", str(size)]
+        if spec.overrides:
+            command += ["--overrides", json.dumps(spec.overrides)]
         self._proc = subprocess.Popen(
-            [sys.executable, "-P", str(_WORKER), "--brain", spec.brain, "--size", str(size)],
+            command,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
@@ -201,7 +224,11 @@ class Engine:
             text=True,
             bufsize=1,
         )
-        self._read(timeout_s=600.0)  # start-up includes JIT compilation
+        ready = self._read(timeout_s=600.0)  # start-up includes JIT compilation
+        if "error" in ready:
+            self.close()
+            msg = f"Engine {spec.label}: {ready['error']}"
+            raise EngineError(msg)
 
     def ask(self, moves: list[tuple[int, int]]) -> tuple[tuple[int, int], float]:
         """Return ``((row, col), think_ms)`` for the position after *moves*."""
