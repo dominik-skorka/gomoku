@@ -266,10 +266,42 @@ either brain-driven (`think()` runs its brain) or external
 
 ## AI Brains
 
-All brains live in the single registry `gomoku_brain.BRAINS`, a
-`dict[str, BrainSpec]` that pairs each brain class with its pydantic
-settings model.  Adding a new brain means appending one `BrainSpec`
-entry — there is no parallel dict in `gomoku.settings` to keep in sync.
+Every brain subclasses `gomoku_brain.base.Brain[S]`, generic over its
+settings model `S` (a `gomoku.settings.BaseBrainSettings`):
+
+```python
+class GreedySettings(BaseBrainSettings):
+    radius: int = Field(default=2, ge=1, le=4)
+
+class GreedyBrain(Brain[GreedySettings], name="greedy"):
+    @override
+    def choose_move(self, board: Board, stone: Stone, session: BrainSession) -> Move:
+        ...  # self.settings.radius: validated and typed
+```
+
+That is the whole contract:
+
+- **`choose_move`** is the one abstract method: the decision, for a board
+  that is not full and the side to move.  `session.diag` is the per-move
+  diagnostics record (`None` when off).  A class without it is a type
+  error, and instantiating it raises `TypeError`.
+- **`get_move`** (the `Player` method) is `@final` in the base: it opens
+  the brain's tracing span and diagnostics session (`brain_session`) and
+  calls `choose_move`, so every brain is traced the same way.
+- **Settings** are the model's: `GreedyBrain()`, `GreedyBrain(radius=3)` or
+  `GreedyBrain(GreedySettings(radius=3))`.  `BaseBrainSettings` forbids
+  unknown keys, so a misspelt setting is an error everywhere: in code, on
+  the command line and in `gomoku.toml`.  `settings_type` is read from the
+  class statement (`types.get_original_bases`).
+- **Registration** is the class statement: `name="greedy"` puts it in the
+  registry, so it can be played, aliased in `gomoku.toml` and matched like
+  a built-in brain.  Built-in brains are imported by `gomoku_brain` so they
+  register on import.
+
+`gomoku_brain.BRAINS` is a live mapping from name to `BrainSpec` (brain
+class + settings model) over those registrations, plus players added with
+`register_brain` (the CLI's keyboard input, a `Player` that is not a
+`Brain`).
 
 Public surface:
 
@@ -278,8 +310,9 @@ Public surface:
   alias into a validated `(type, kwargs)` pair without instantiating.
 - `get_brain_from_settings(name, brain_settings)` — `resolve_brain` +
   instantiate.
-- `register_brain(name, brain_cls, settings_cls)` — extend the registry
-  at runtime (used by the CLI to register the keyboard provider).
+- `register_brain(name, player_cls, settings_cls)` — add a `Player` class
+  that is not a `Brain` (used by the CLI for the keyboard provider);
+  `unregister_brain(name)` removes an entry.
 - `available_brains(brain_settings)` — sorted list of all resolvable
   names (built-ins + TOML aliases).
 

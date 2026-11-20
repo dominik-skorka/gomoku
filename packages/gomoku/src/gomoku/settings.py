@@ -83,27 +83,42 @@ _PROBE_THREADS_DOC = (
 )
 
 
-class KeyboardBrainSettings(BaseModel):
+class BaseBrainSettings(BaseModel):
+    """Base of every brain's settings model (and of its nested tables).
+
+    Unknown keys are errors: a misspelt setting in ``gomoku.toml``, on the
+    command line or in code stops with a message naming it, instead of
+    being silently ignored.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class NoBrainSettings(BaseBrainSettings):
+    """Settings of a brain that has none."""
+
+
+class KeyboardBrainSettings(BaseBrainSettings):
     """Settings for the keyboard (human) provider (no tunables)."""
 
 
-class RandomBrainSettings(BaseModel):
+class RandomBrainSettings(BaseBrainSettings):
     """Settings for the random brain (no tunables)."""
 
 
-class MinimaxBrainSettings(BaseModel):
+class MinimaxBrainSettings(BaseBrainSettings):
     """Settings for the minimax brain."""
 
     depth: int = Field(default=3, ge=1, le=10)
 
 
-class NegamaxBrainSettings(BaseModel):
+class NegamaxBrainSettings(BaseBrainSettings):
     """Settings for the negamax brain."""
 
     depth: int = Field(default=3, ge=1, le=10)
 
 
-class AlphaBetaBrainSettings(BaseModel):
+class AlphaBetaBrainSettings(BaseBrainSettings):
     """Settings for the alpha-beta brain."""
 
     depth: int = Field(default=4, ge=1, le=10)
@@ -146,7 +161,7 @@ class AlphaBetaBrainSettings(BaseModel):
     probe_threads: int = Field(default=1, ge=1, le=64, description=_PROBE_THREADS_DOC)
 
 
-class ThreatAttackSettings(BaseModel):
+class ThreatAttackSettings(BaseBrainSettings):
     """Threats an attacker may force with in VCF / PNS / VCT.
 
     Fewer only make the search less complete (fewer wins found, never false
@@ -161,7 +176,7 @@ class ThreatAttackSettings(BaseModel):
     )
 
 
-class ThreatDefenceSettings(BaseModel):
+class ThreatDefenceSettings(BaseBrainSettings):
     """Replies the defender gets inside the searches.
 
     Turning one off makes proofs unsound: the search can prove wins that
@@ -179,13 +194,13 @@ class ThreatDefenceSettings(BaseModel):
     )
 
 
-class ThreatForkSettings(BaseModel):
+class ThreatForkSettings(BaseBrainSettings):
     """How the threat brain finds the opponent's fork cells to block."""
 
     split: bool = Field(default=False, description="Count split threes and fours (XX_X, XXX_X) as fork lines.")
 
 
-class ThreatSearchSettings(BaseModel):
+class ThreatSearchSettings(BaseBrainSettings):
     """[brains.<alias>.threats]: the threat spaces of the threat brain's searches."""
 
     own: ThreatAttackSettings = Field(default_factory=ThreatAttackSettings)
@@ -194,7 +209,7 @@ class ThreatSearchSettings(BaseModel):
     forks: ThreatForkSettings = Field(default_factory=ThreatForkSettings)
 
 
-class ThreatBrainSettings(BaseModel):
+class ThreatBrainSettings(BaseBrainSettings):
     """Settings for the threat brain."""
 
     depth: int = Field(default=4, ge=1, le=10)
@@ -222,10 +237,10 @@ class ThreatBrainSettings(BaseModel):
     )
 
 
-class MCTSBrainSettings(BaseModel):
+class MCTSBrainSettings(BaseBrainSettings):
     """Settings for the MCTS brain."""
 
-    iterations: int = Field(default=10_000, ge=100, le=1_000_000)
+    iterations: int = Field(default=10_000, ge=1, le=1_000_000)
     exploration: float = Field(default=2.0, ge=0.1, le=5.0)
     dirichlet_alpha: float = Field(default=0.03, ge=0.0, le=1.0)
     dirichlet_weight: float = Field(default=0.25, ge=0.0, le=1.0)

@@ -23,6 +23,7 @@ from gomoku_brain import (
     get_brain_from_settings,
     register_brain,
     resolve_brain,
+    unregister_brain,
 )
 from gomoku_brain.alphabeta import AlphaBetaBrain
 from gomoku_brain.mcts import MCTSBrain
@@ -63,7 +64,7 @@ class TestGetBrain:
     def test_get_brain_with_kwargs(self):
         brain = get_brain("minimax", depth=2)
         assert isinstance(brain, MinimaxBrain)
-        assert brain.depth == 2
+        assert brain.settings.depth == 2
 
     def test_get_brain_unknown(self):
         with pytest.raises(ValueError, match="Unknown brain"):
@@ -112,7 +113,7 @@ class TestGetBrainFromSettings:
         bs = BrainSettings.model_validate({"deep_mm": {"type": "minimax", "depth": 1}})
         brain = get_brain_from_settings("deep_mm", bs)
         assert isinstance(brain, MinimaxBrain)
-        assert brain.depth == 1
+        assert brain.settings.depth == 1
 
 
 class TestRegisterBrain:
@@ -127,7 +128,7 @@ class TestRegisterBrain:
             # And it resolves like any other built-in.
             assert resolve_brain("custom_alias", BrainSettings()) == ("custom_alias", {})
         finally:
-            BRAINS.pop("custom_alias", None)
+            unregister_brain("custom_alias")
 
 
 class TestThreatFallbackTuning:

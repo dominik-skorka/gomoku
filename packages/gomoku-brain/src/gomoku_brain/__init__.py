@@ -1,9 +1,11 @@
 """Gomoku AI brains — pluggable move providers.
 
-This module is the **single source of truth** for the brain registry.
-Each entry in :data:`BRAINS` is a :class:`BrainSpec` pairing a brain
-class with its pydantic settings model — adding a new brain means
-appending exactly one entry here.
+Every brain subclasses :class:`~gomoku_brain.base.Brain` and registers
+itself by declaring its name (``class XBrain(Brain[XSettings], name="x")``);
+see :mod:`gomoku_brain.base` for how to write one.  :data:`BRAINS` maps each
+name to a :class:`BrainSpec` pairing the brain class with its settings
+model.  Only brain modules imported here (or by the program) are
+registered, so a new built-in brain is also imported below.
 
 External consumers:
 
@@ -18,22 +20,16 @@ External consumers:
 
 from __future__ import annotations
 
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, override
 
 from gomoku.interfaces import Player
-from gomoku.settings import (
-    AlphaBetaBrainSettings,
-    BrainSettings,
-    MCTSBrainSettings,
-    MinimaxBrainSettings,
-    NegamaxBrainSettings,
-    RandomBrainSettings,
-    ThreatBrainSettings,
-)
+from gomoku.settings import BaseBrainSettings, BrainSettings
 from pydantic import BaseModel
 
 from gomoku_brain.alphabeta import AlphaBetaBrain
+from gomoku_brain.base import REGISTRY, Brain
 from gomoku_brain.mcts import MCTSBrain
 from gomoku_brain.minimax import MinimaxBrain
 from gomoku_brain.negamax import NegamaxBrain
@@ -55,30 +51,63 @@ class BrainSpec:
     settings_cls: type[BaseModel]
 
 
-BRAINS: dict[str, BrainSpec] = {
-    spec.name: spec
-    for spec in (
-        BrainSpec("random", RandomBrain, RandomBrainSettings),
-        BrainSpec("minimax", MinimaxBrain, MinimaxBrainSettings),
-        BrainSpec("negamax", NegamaxBrain, NegamaxBrainSettings),
-        BrainSpec("alphabeta", AlphaBetaBrain, AlphaBetaBrainSettings),
-        BrainSpec("threat", ThreatBrain, ThreatBrainSettings),
-        BrainSpec("mcts", MCTSBrain, MCTSBrainSettings),
-    )
-}
-# ``KeyboardBrainSettings`` is defined in :mod:`gomoku.settings` for symmetry,
-# but ``KeyboardProvider`` only exists in the CLI package — it is registered
-# at startup via :func:`register_brain`.
+class _Registry(Mapping[str, BrainSpec]):
+    """The brain registry: every :class:`~gomoku_brain.base.Brain` subclass
+    declared with a ``name=`` (they register themselves), plus players
+    added with :func:`register_brain`.  A live view, so a brain defined
+    after this module is imported (a plug-in, a test) shows up too.
+    """
+
+    def __init__(self) -> None:
+        self._extra: dict[str, BrainSpec] = {}
+
+    def _specs(self) -> dict[str, BrainSpec]:
+        specs = {name: BrainSpec(name, cls, cls.settings_type) for name, cls in REGISTRY.items()}
+        return {**specs, **self._extra}
+
+    @override
+    def __getitem__(self, name: str) -> BrainSpec:
+        if name in self._extra:
+            return self._extra[name]
+        cls = REGISTRY[name]
+        return BrainSpec(name, cls, cls.settings_type)
+
+    @override
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._specs())
+
+    @override
+    def __len__(self) -> int:
+        return len(self._specs())
+
+    def add(self, spec: BrainSpec) -> None:
+        self._extra[spec.name] = spec
+
+    def remove(self, name: str) -> None:
+        self._extra.pop(name, None)
+        REGISTRY.pop(name, None)
+
+
+#: name -> :class:`BrainSpec` for every registered brain and player.
+BRAINS = _Registry()
+# Built-in brains register themselves when their modules are imported above.
+# ``KeyboardProvider`` only exists in the CLI package; it is a Player but not
+# a Brain, and is added at startup via :func:`register_brain`.
 
 
 def register_brain(name: str, brain_cls: type[Player], settings_cls: type[BaseModel]) -> None:
-    """Add or overwrite a registry entry.
+    """Add or overwrite a registry entry for a :class:`Player` class.
 
-    Used by :mod:`gomoku_cli.main` to wire :class:`KeyboardProvider`
-    into the registry without creating an upward dependency from
-    :mod:`gomoku_brain` on the CLI.
+    Brains (subclasses of :class:`~gomoku_brain.base.Brain`) do not need
+    this: declaring the class with ``name=`` registers it.  Used by
+    :mod:`gomoku_cli.main` for :class:`KeyboardProvider`.
     """
-    BRAINS[name] = BrainSpec(name, brain_cls, settings_cls)
+    BRAINS.add(BrainSpec(name, brain_cls, settings_cls))
+
+
+def unregister_brain(name: str) -> None:
+    """Remove *name* from the registry (a brain or a registered player), if there."""
+    BRAINS.remove(name)
 
 
 def get_brain(name: str, **kwargs: object) -> Player:
@@ -145,6 +174,8 @@ def get_brain_from_settings(name: str, brain_settings: BrainSettings | None = No
 __all__ = [
     "BRAINS",
     "AlphaBetaBrain",
+    "BaseBrainSettings",
+    "Brain",
     "BrainSpec",
     "MCTSBrain",
     "MinimaxBrain",
@@ -156,4 +187,5 @@ __all__ = [
     "get_brain_from_settings",
     "register_brain",
     "resolve_brain",
+    "unregister_brain",
 ]

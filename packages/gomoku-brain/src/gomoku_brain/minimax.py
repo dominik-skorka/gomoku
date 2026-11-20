@@ -2,30 +2,27 @@
 
 from __future__ import annotations
 
-import logfire
+from typing import override
+
 from gomoku.board import Board
 from gomoku.models import Move, Stone
 from gomoku.rules import check_winner
+from gomoku.settings import MinimaxBrainSettings
 
+from gomoku_brain.base import Brain
+from gomoku_brain.brain_base import BrainSession
 from gomoku_brain.candidates import get_candidate_moves
 from gomoku_brain.evaluate import evaluate_board
 
 
-class MinimaxBrain:
+class MinimaxBrain(Brain[MinimaxBrainSettings], name="minimax"):
     """Player using classic minimax search."""
 
-    def __init__(self, depth: int = 3) -> None:
-        self.depth = depth
-
-    @property
-    def name(self) -> str:
-        return "minimax"
-
-    def get_move(self, board: Board, stone: Stone) -> Move:
-        with logfire.span("brain.minimax", depth=self.depth, stone=str(stone)):
-            _, best_move = self._minimax(board, self.depth, stone, stone)
-            assert best_move is not None
-            return best_move
+    @override
+    def choose_move(self, board: Board, stone: Stone, session: BrainSession) -> Move:
+        _, best_move = self._minimax(board, self.settings.depth, stone, stone)
+        assert best_move is not None
+        return best_move
 
     def _minimax(
         self,

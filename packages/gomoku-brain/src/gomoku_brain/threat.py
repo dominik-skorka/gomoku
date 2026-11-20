@@ -16,14 +16,17 @@ from __future__ import annotations
 
 import threading
 import time
+from typing import Any, override
 
 import logfire
 from gomoku.board import Board
 from gomoku.models import Move, Stone
+from gomoku.settings import ThreatBrainSettings
 
 from gomoku_brain.alphabeta import AlphaBetaBrain
 from gomoku_brain.alphabeta_ordering import _scored_moves
-from gomoku_brain.brain_base import brain_session
+from gomoku_brain.base import Brain
+from gomoku_brain.brain_base import BrainSession
 from gomoku_brain.candidates import get_candidate_moves
 from gomoku_brain.evaluate import find_fork_cells
 from gomoku_brain.pns import PNSStatus, pns_threat_search, pns_threat_status
@@ -94,7 +97,7 @@ _CANDIDATE_RADIUS = 2
 # ---------------------------------------------------------------------------
 
 
-class ThreatBrain:
+class ThreatBrain(Brain[ThreatBrainSettings], name="threat"):
     """Player using VCF / VCT or PNS with alpha-beta fallback.
 
     *threat_search* selects the algorithm used after VCF:
@@ -102,35 +105,26 @@ class ThreatBrain:
     - ``"vct"`` : depth-limited VCT — faster but weaker (expanded defence set).
     """
 
-    def __init__(
-        self,
-        depth: int = 4,
-        vcf_depth: int = 20,
-        vct_depth: int = 12,
-        threat_search: str = "pns",
-        pns_nodes: int = 10_000,
-        pns_time_s: float = 5.0,
-        probe_threads: int = 1,
-        fallback: dict[str, object] | None = None,
-        threats: dict[str, dict[str, bool]] | None = None,
-    ) -> None:
-        self.depth = depth
+    def __init__(self, settings: ThreatBrainSettings | None = None, /, **overrides: Any) -> None:
+        super().__init__(settings, **overrides)
+        s = self.settings
+        self.depth = s.depth
         # Threat spaces of our own forced-win search and of the opponent's
         # (``[brains.threat.threats]``): ``own`` / ``opponent`` hold the
         # attacker's threats, ``defence`` the defender's replies in both,
         # ``forks`` the fork-cell rule.  See gomoku_brain.threat_space.
-        threats = threats or {}
+        threats = s.threats.model_dump()
         defence = threats.get("defence") or {}
         self.own_space = ThreatSpace(**{**(threats.get("own") or {}), **defence})
         self.opponent_space = ThreatSpace(**{**(threats.get("opponent") or {}), **defence})
         self.split_forks = bool((threats.get("forks") or {}).get("split", False))
-        self.vcf_depth = vcf_depth
-        self.vct_depth = vct_depth
-        self.threat_search = threat_search
-        self.pns_nodes = pns_nodes
-        self.pns_time_s = pns_time_s
+        self.vcf_depth = s.vcf_depth
+        self.vct_depth = s.vct_depth
+        self.threat_search = s.threat_search
+        self.pns_nodes = s.pns_nodes
+        self.pns_time_s = s.pns_time_s
         # Threads that probe breaker candidates in parallel (gomoku_brain.probe).
-        self.probe_threads = probe_threads
+        self.probe_threads = s.probe_threads
         # ``fallback`` carries AlphaBetaBrain tuning (qs_vcf_depth, LMR,
         # null-move, time limit, ...) for the no-forced-win path —
         # without it the fallback ran with bare defaults while the
@@ -139,143 +133,135 @@ class ThreatBrain:
         # is deliberately not defaulted here: the threat brain has
         # already proven both sides VCF-free before falling back, so a
         # root-VCF precheck in the fallback would be redundant work.
-        self._fallback = AlphaBetaBrain(**{"depth": depth, **(fallback or {})})
+        # Only the fallback keys actually given count (as before, when they
+        # came as a partial dict), so an unset fallback depth stays ``depth``.
+        fallback = s.fallback.model_dump(exclude_unset=True) if s.fallback is not None else {}
+        self._fallback = AlphaBetaBrain(**{"depth": s.depth, **fallback})
 
-    @property
-    def name(self) -> str:
-        return "threat"
+    @override
+    def choose_move(self, board: Board, stone: Stone, session: BrainSession) -> Move:
+        from gomoku.diagnostics import ThreatInfo
 
-    def get_move(self, board: Board, stone: Stone) -> Move:
-        with brain_session(
-            "threat",
-            vcf_depth=self.vcf_depth,
-            vct_depth=self.vct_depth,
-            threat_search=self.threat_search,
-            pns_nodes=self.pns_nodes,
-            stone=str(stone),
-        ) as session:
-            from gomoku.diagnostics import ThreatInfo
+        diag = session.diag
+        opp = stone.opponent()
 
-            diag = session.diag
-            opp = stone.opponent()
+        # One mutable state per perspective for the whole decision —
+        # every detection helper and search worker accepts a
+        # ``SearchState``, so the Pydantic board is converted exactly
+        # twice instead of once per detection call.  Two perspectives
+        # because the VCF/VCT caches key on zobrist hashes that encode
+        # the side to move.
+        state = SearchState.from_board(board, stone)
+        opp_state = SearchState.from_board(board, opp)
 
-            # One mutable state per perspective for the whole decision —
-            # every detection helper and search worker accepts a
-            # ``SearchState``, so the Pydantic board is converted exactly
-            # twice instead of once per detection call.  Two perspectives
-            # because the VCF/VCT caches key on zobrist hashes that encode
-            # the side to move.
-            state = SearchState.from_board(board, stone)
-            opp_state = SearchState.from_board(board, opp)
-
-            # 0/1) Immediate win, else forced block of the opponent's win.
-            # Runs before the diagnostics block so the shortcut paths skip
-            # the four full pattern scans they don't need.
-            probe_move, probe_tag = probe_immediate(state, stone)
-            if probe_move is not None:
-                if probe_tag == "instant_win":
-                    tag = "immediate_win"
-                    logfire.info("Immediate win: {move}", move=str(probe_move))
-                else:
-                    tag = "block_immediate_win"
-                    logfire.info("Blocking opponent immediate win at: {move}", move=str(probe_move))
-                if diag is not None:
-                    diag.decision_path = tag
-                    diag.chosen_move = probe_move
-                return probe_move
-
-            # Collect threat landscape for diagnostics on the search-bound
-            # paths (VCF / PNS / VCT / fork / fallback).  The instant-win
-            # and instant-block shortcuts above return without it.
+        # 0/1) Immediate win, else forced block of the opponent's win.
+        # Runs before the diagnostics block so the shortcut paths skip
+        # the four full pattern scans they don't need.
+        probe_move, probe_tag = probe_immediate(state, stone)
+        if probe_move is not None:
+            if probe_tag == "instant_win":
+                tag = "immediate_win"
+                logfire.info("Immediate win: {move}", move=str(probe_move))
+            else:
+                tag = "block_immediate_win"
+                logfire.info("Blocking opponent immediate win at: {move}", move=str(probe_move))
             if diag is not None:
-                ctx = _scan_context(state)
-                our_fours = _find_four_threats(state, stone, ctx)
-                our_threes = _find_three_threats(state, stone, ctx)
-                opp_fours = _find_four_threats(state, opp, ctx)
-                opp_threes = _find_three_threats(state, opp, ctx)
-                diag.our_threats = ThreatInfo(
-                    four_threats=len(our_fours),
-                    three_threats=len(our_threes),
-                )
-                diag.opp_threats = ThreatInfo(
-                    four_threats=len(opp_fours),
-                    three_threats=len(opp_threes),
-                )
+                diag.decision_path = tag
+                diag.chosen_move = probe_move
+            return probe_move
 
-            # Single VCF transposition cache shared across this decision —
-            # our VCF, opponent VCF, and breaker probes all visit
-            # overlapping sub-positions; reusing proofs cuts redundant
-            # deep search.
-            vcf_cache: _ThreatCache = {}
+        # Collect threat landscape for diagnostics on the search-bound
+        # paths (VCF / PNS / VCT / fork / fallback).  The instant-win
+        # and instant-block shortcuts above return without it.
+        if diag is not None:
+            ctx = _scan_context(state)
+            our_fours = _find_four_threats(state, stone, ctx)
+            our_threes = _find_three_threats(state, stone, ctx)
+            opp_fours = _find_four_threats(state, opp, ctx)
+            opp_threes = _find_three_threats(state, opp, ctx)
+            diag.our_threats = ThreatInfo(
+                four_threats=len(our_fours),
+                three_threats=len(our_threes),
+            )
+            diag.opp_threats = ThreatInfo(
+                four_threats=len(opp_fours),
+                three_threats=len(opp_threes),
+            )
 
-            # 2) Try VCF — very fast, deep search
-            move = _vcf_state(state, stone, self.vcf_depth, cache=vcf_cache, space=self.own_space)
+        # Single VCF transposition cache shared across this decision —
+        # our VCF, opponent VCF, and breaker probes all visit
+        # overlapping sub-positions; reusing proofs cuts redundant
+        # deep search.
+        vcf_cache: _ThreatCache = {}
+
+        # 2) Try VCF — very fast, deep search
+        move = _vcf_state(state, stone, self.vcf_depth, cache=vcf_cache, space=self.own_space)
+        if move is not None:
+            logfire.info("VCF found winning move: {move}", move=str(move))
+            if diag is not None:
+                diag.decision_path = "vcf_win"
+                diag.chosen_move = move
+                diag.our_threats = diag.our_threats.model_copy(update={"vcf_result": "win"})
+            return move
+
+        # 3) Try broader threat search (PNS or VCT)
+        if self.threat_search == "pns":
+            move = pns_threat_search(
+                state, stone, max_nodes=self.pns_nodes, max_time_s=self.pns_time_s, space=self.own_space
+            )
             if move is not None:
-                logfire.info("VCF found winning move: {move}", move=str(move))
+                logfire.info("PNS found winning move: {move}", move=str(move))
                 if diag is not None:
-                    diag.decision_path = "vcf_win"
+                    diag.decision_path = "pns_win"
                     diag.chosen_move = move
-                    diag.our_threats = diag.our_threats.model_copy(update={"vcf_result": "win"})
+                return move
+        else:
+            move = _vct(state, stone, self.vct_depth, vcf_cache=vcf_cache, space=self.own_space)
+            if move is not None:
+                logfire.info("VCT found winning move: {move}", move=str(move))
+                if diag is not None:
+                    diag.decision_path = "vct_win"
+                    diag.chosen_move = move
+                    diag.our_threats = diag.our_threats.model_copy(update={"vct_result": "win"})
                 return move
 
-            # 3) Try broader threat search (PNS or VCT)
-            if self.threat_search == "pns":
-                move = pns_threat_search(
-                    state, stone, max_nodes=self.pns_nodes, max_time_s=self.pns_time_s, space=self.own_space
-                )
-                if move is not None:
-                    logfire.info("PNS found winning move: {move}", move=str(move))
-                    if diag is not None:
-                        diag.decision_path = "pns_win"
-                        diag.chosen_move = move
-                    return move
-            else:
-                move = _vct(state, stone, self.vct_depth, vcf_cache=vcf_cache, space=self.own_space)
-                if move is not None:
-                    logfire.info("VCT found winning move: {move}", move=str(move))
-                    if diag is not None:
-                        diag.decision_path = "vct_win"
-                        diag.chosen_move = move
-                        diag.our_threats = diag.our_threats.model_copy(update={"vct_result": "win"})
-                    return move
+        if diag is not None:
+            diag.notes.append("No forced win found (VCF/PNS/VCT)")
 
+        # 4) Check if opponent has a VCF threat
+        opp_vcf = _vcf_state(opp_state, opp, self.vcf_depth, cache=vcf_cache, space=self.opponent_space)
+        if opp_vcf is not None:
             if diag is not None:
-                diag.notes.append("No forced win found (VCF/PNS/VCT)")
-
-            # 4) Check if opponent has a VCF threat
-            opp_vcf = _vcf_state(opp_state, opp, self.vcf_depth, cache=vcf_cache, space=self.opponent_space)
-            if opp_vcf is not None:
-                if diag is not None:
-                    diag.opp_threats = diag.opp_threats.model_copy(update={"vcf_result": "win"})
-                    diag.notes.append(f"Opponent has VCF at {opp_vcf}")
-                result = self._vcf_aware_search(board, state, stone, opp_vcf, vcf_cache)
-                if diag is not None:
-                    diag.decision_path = diag.decision_path or "vcf_aware_search"
-                    diag.chosen_move = result
-                return result
-
-            # 5) Check if opponent has a VCT / PNS threat
-            opp_vct_move = self._check_opponent_vct(board, state, opp_state, stone, vcf_cache)
-            if opp_vct_move is not None:
-                if diag is not None:
-                    diag.decision_path = "vct_aware_search"
-                    diag.chosen_move = opp_vct_move
-                return opp_vct_move
-
-            # 6) Check for opponent fork points (converging threat lines)
-            fork_move = self._block_fork(state, stone)
-            if fork_move is not None:
-                if diag is not None:
-                    diag.decision_path = "block_fork"
-                    diag.chosen_move = fork_move
-                return fork_move
-
-            # 7) Fallback to alpha-beta
-            logfire.info("No threat sequence found, falling back to alpha-beta")
+                diag.opp_threats = diag.opp_threats.model_copy(update={"vcf_result": "win"})
+                diag.notes.append(f"Opponent has VCF at {opp_vcf}")
+            result = self._vcf_aware_search(board, state, stone, opp_vcf, vcf_cache)
             if diag is not None:
-                diag.notes.append("Falling back to alpha-beta")
-                # Don't set decision_path here — alpha-beta will set its own
-            return self._fallback.get_move(board, stone)
+                diag.decision_path = diag.decision_path or "vcf_aware_search"
+                diag.chosen_move = result
+            return result
+
+        # 5) Check if opponent has a VCT / PNS threat
+        opp_vct_move = self._check_opponent_vct(board, state, opp_state, stone, vcf_cache)
+        if opp_vct_move is not None:
+            if diag is not None:
+                diag.decision_path = "vct_aware_search"
+                diag.chosen_move = opp_vct_move
+            return opp_vct_move
+
+        # 6) Check for opponent fork points (converging threat lines)
+        fork_move = self._block_fork(state, stone)
+        if fork_move is not None:
+            if diag is not None:
+                diag.decision_path = "block_fork"
+                diag.chosen_move = fork_move
+            return fork_move
+
+        # 7) Fallback to alpha-beta
+        logfire.info("No threat sequence found, falling back to alpha-beta")
+        if diag is not None:
+            diag.notes.append("Falling back to alpha-beta")
+            # Don't set decision_path here — alpha-beta will set its own
+        return self._fallback.get_move(board, stone)
 
     # -- Opponent VCT detection ---------------------------------------------
 

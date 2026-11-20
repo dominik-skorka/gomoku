@@ -31,12 +31,15 @@ from __future__ import annotations
 
 import math
 import random as _random
+from typing import Any, override
 
 import logfire
 from gomoku.board import Board
 from gomoku.models import Move, Stone
+from gomoku.settings import MCTSBrainSettings
 
-from gomoku_brain.brain_base import brain_session
+from gomoku_brain.base import Brain
+from gomoku_brain.brain_base import BrainSession
 from gomoku_brain.candidates import get_candidate_moves
 from gomoku_brain.priors import compute_priors as _compute_priors
 from gomoku_brain.search_state import SearchState
@@ -154,170 +157,156 @@ class _Node:
 # ---------------------------------------------------------------------------
 
 
-class MCTSBrain:
+class MCTSBrain(Brain[MCTSBrainSettings], name="mcts"):
     """Player using Monte Carlo Tree Search with PUCT."""
 
-    def __init__(
-        self,
-        iterations: int = 10_000,
-        exploration: float = 2.0,
-        dirichlet_alpha: float = 0.03,
-        dirichlet_weight: float = 0.25,
-        vcf_depth: int = 10,
-    ) -> None:
-        self.iterations = iterations
-        self.exploration = exploration
-        self.dirichlet_alpha = dirichlet_alpha
-        self.dirichlet_weight = dirichlet_weight
-        self.vcf_depth = vcf_depth
-
-    @property
-    def name(self) -> str:
-        return "mcts"
+    def __init__(self, settings: MCTSBrainSettings | None = None, /, **overrides: Any) -> None:
+        super().__init__(settings, **overrides)
+        s = self.settings
+        self.iterations = s.iterations
+        self.exploration = s.exploration
+        self.dirichlet_alpha = s.dirichlet_alpha
+        self.dirichlet_weight = s.dirichlet_weight
+        self.vcf_depth = s.vcf_depth
 
     # -- Public interface ----------------------------------------------------
 
-    def get_move(self, board: Board, stone: Stone) -> Move:
-        with brain_session(
-            "mcts",
-            iterations=self.iterations,
-            exploration=self.exploration,
-            stone=str(stone),
-        ) as session:
-            diag = session.diag
+    @override
+    def choose_move(self, board: Board, stone: Stone, session: BrainSession) -> Move:
+        diag = session.diag
 
-            candidates = get_candidate_moves(board)
-            if len(candidates) == 1:
-                if diag is not None:
-                    diag.decision_path = "single_candidate"
-                    diag.chosen_move = candidates[0]
-                return candidates[0]
-
-            # One shared SearchState for the whole search — make/unmake
-            # threads it through every iteration without copying.
-            state = SearchState.from_board(board, stone)
-
-            # Instant win / instant block shortcut, shared with the other brains.
-            shortcut_move, shortcut_tag = probe_immediate(state, stone)
-            if shortcut_move is not None:
-                if diag is not None:
-                    diag.decision_path = shortcut_tag or ""
-                    diag.chosen_move = shortcut_move
-                return shortcut_move
-
-            # VCF safety gate: if the opponent has a proven forced VCF win,
-            # restrict the root candidate set to *durable* breakers (moves
-            # that don't hand the win back via a counter-threat).  Matches
-            # the semantics enforced in AlphaBeta and ThreatBrain via
-            # :func:`classify_vcf_breakers`.
-            vcf_gated = False
-            if self.vcf_depth > 0:
-                from gomoku_brain.threat import _vcf
-
-                opp_vcf = _vcf(board, stone.opponent(), self.vcf_depth)
-                if opp_vcf is not None:
-                    durable, breakers = classify_vcf_breakers(
-                        board, candidates, stone, self.vcf_depth
-                    )
-                    restricted = durable if durable else breakers
-                    if restricted:
-                        logfire.info(
-                            "VCF safety gate: opponent VCF at {vcf}, restricting to "
-                            "{n} breakers ({durable} durable)",
-                            vcf=str(opp_vcf),
-                            n=len(restricted),
-                            durable=len(durable),
-                        )
-                        candidates = restricted
-                        vcf_gated = True
-                        note = (
-                            f"Opponent VCF at {opp_vcf}, restricted to "
-                            f"{len(restricted)} breakers ({len(durable)} durable)"
-                        )
-                    else:
-                        note = f"Opponent VCF at {opp_vcf}, no breakers found"
-                    if diag is not None:
-                        diag.opp_threats = diag.opp_threats.model_copy(
-                            update={"vcf_result": "win"}
-                        )
-                        diag.notes.append(note)
-
-            stone_val = int(stone)
-            opp_val = int(stone.opponent())
-
-            root_untried = [(m.row, m.col) for m in candidates]
-            root_priors = _compute_priors(state, root_untried, stone_val, opp_val)
-
-            # Dirichlet noise for exploration breadth (AGZ §14.4).  Skipped
-            # on a VCF-gated root — the candidate set is tiny and every move
-            # is a near-mandatory defence, so uniform noise only dilutes the
-            # heuristic signal.
-            if not vcf_gated and self.dirichlet_alpha > 0 and self.dirichlet_weight > 0:
-                root_priors = _apply_dirichlet_noise(
-                    root_priors,
-                    self.dirichlet_alpha,
-                    self.dirichlet_weight,
-                )
-
-            root = _Node(
-                move=None,
-                stone=stone.opponent(),
-                parent=None,
-                untried=root_untried,
-                untried_priors=root_priors,
-            )
-
-            for _ in range(self.iterations):
-                self._run_iteration(root, state, stone)
-
-            best = max(root.children, key=lambda c: c.visits)
-            assert best.move is not None
-            br, bc = best.move
-            logfire.info(
-                "MCTS chose {move} ({visits}/{total} visits, win-rate {wr:.1%})",
-                move=str(Move(row=br, col=bc)),
-                visits=best.visits,
-                total=root.visits,
-                wr=best.wins / best.visits if best.visits else 0,
-            )
-
-            chosen = Move(row=br, col=bc)
-
+        candidates = get_candidate_moves(board)
+        if len(candidates) == 1:
             if diag is not None:
-                from gomoku.diagnostics import CandidateInfo, SearchStats
+                diag.decision_path = "single_candidate"
+                diag.chosen_move = candidates[0]
+            return candidates[0]
 
-                search_ms = session.elapsed_ms()
-                diag.decision_path = diag.decision_path or (
-                    "mcts_vcf_gated" if vcf_gated else "mcts"
+        # One shared SearchState for the whole search — make/unmake
+        # threads it through every iteration without copying.
+        state = SearchState.from_board(board, stone)
+
+        # Instant win / instant block shortcut, shared with the other brains.
+        shortcut_move, shortcut_tag = probe_immediate(state, stone)
+        if shortcut_move is not None:
+            if diag is not None:
+                diag.decision_path = shortcut_tag or ""
+                diag.chosen_move = shortcut_move
+            return shortcut_move
+
+        # VCF safety gate: if the opponent has a proven forced VCF win,
+        # restrict the root candidate set to *durable* breakers (moves
+        # that don't hand the win back via a counter-threat).  Matches
+        # the semantics enforced in AlphaBeta and ThreatBrain via
+        # :func:`classify_vcf_breakers`.
+        vcf_gated = False
+        if self.vcf_depth > 0:
+            from gomoku_brain.threat import _vcf
+
+            opp_vcf = _vcf(board, stone.opponent(), self.vcf_depth)
+            if opp_vcf is not None:
+                durable, breakers = classify_vcf_breakers(
+                    board, candidates, stone, self.vcf_depth
                 )
-                diag.chosen_move = chosen
-                diag.search_stats = SearchStats(
-                    iterations=self.iterations,
-                    nodes_searched=root.visits,
-                    time_ms=search_ms,
-                )
-                children_sorted = sorted(
-                    root.children, key=lambda c: c.visits, reverse=True
-                )
-                diag.top_candidates = [
-                    CandidateInfo(
-                        move=Move(row=c.move[0], col=c.move[1]),
-                        score=round(c.wins / c.visits, 4) if c.visits else 0.0,
-                        score_type="winrate",
+                restricted = durable if durable else breakers
+                if restricted:
+                    logfire.info(
+                        "VCF safety gate: opponent VCF at {vcf}, restricting to "
+                        "{n} breakers ({durable} durable)",
+                        vcf=str(opp_vcf),
+                        n=len(restricted),
+                        durable=len(durable),
                     )
-                    for c in children_sorted[:10]
-                    if c.move is not None  # every child has one; only the root has none
-                ]
-                if diag.top_candidates and diag.top_candidates[0].move != chosen:
-                    diag.alternative_best = diag.top_candidates[0]
-                diag.notes.append(
-                    f"Best: {chosen} visits={best.visits}/{root.visits} "
-                    f"wr={best.wins / best.visits:.1%}"
-                    if best.visits
-                    else f"Best: {chosen} visits=0"
-                )
+                    candidates = restricted
+                    vcf_gated = True
+                    note = (
+                        f"Opponent VCF at {opp_vcf}, restricted to "
+                        f"{len(restricted)} breakers ({len(durable)} durable)"
+                    )
+                else:
+                    note = f"Opponent VCF at {opp_vcf}, no breakers found"
+                if diag is not None:
+                    diag.opp_threats = diag.opp_threats.model_copy(
+                        update={"vcf_result": "win"}
+                    )
+                    diag.notes.append(note)
 
-            return chosen
+        stone_val = int(stone)
+        opp_val = int(stone.opponent())
+
+        root_untried = [(m.row, m.col) for m in candidates]
+        root_priors = _compute_priors(state, root_untried, stone_val, opp_val)
+
+        # Dirichlet noise for exploration breadth (AGZ §14.4).  Skipped
+        # on a VCF-gated root — the candidate set is tiny and every move
+        # is a near-mandatory defence, so uniform noise only dilutes the
+        # heuristic signal.
+        if not vcf_gated and self.dirichlet_alpha > 0 and self.dirichlet_weight > 0:
+            root_priors = _apply_dirichlet_noise(
+                root_priors,
+                self.dirichlet_alpha,
+                self.dirichlet_weight,
+            )
+
+        root = _Node(
+            move=None,
+            stone=stone.opponent(),
+            parent=None,
+            untried=root_untried,
+            untried_priors=root_priors,
+        )
+
+        for _ in range(self.iterations):
+            self._run_iteration(root, state, stone)
+
+        best = max(root.children, key=lambda c: c.visits)
+        assert best.move is not None
+        br, bc = best.move
+        logfire.info(
+            "MCTS chose {move} ({visits}/{total} visits, win-rate {wr:.1%})",
+            move=str(Move(row=br, col=bc)),
+            visits=best.visits,
+            total=root.visits,
+            wr=best.wins / best.visits if best.visits else 0,
+        )
+
+        chosen = Move(row=br, col=bc)
+
+        if diag is not None:
+            from gomoku.diagnostics import CandidateInfo, SearchStats
+
+            search_ms = session.elapsed_ms()
+            diag.decision_path = diag.decision_path or (
+                "mcts_vcf_gated" if vcf_gated else "mcts"
+            )
+            diag.chosen_move = chosen
+            diag.search_stats = SearchStats(
+                iterations=self.iterations,
+                nodes_searched=root.visits,
+                time_ms=search_ms,
+            )
+            children_sorted = sorted(
+                root.children, key=lambda c: c.visits, reverse=True
+            )
+            diag.top_candidates = [
+                CandidateInfo(
+                    move=Move(row=c.move[0], col=c.move[1]),
+                    score=round(c.wins / c.visits, 4) if c.visits else 0.0,
+                    score_type="winrate",
+                )
+                for c in children_sorted[:10]
+                if c.move is not None  # every child has one; only the root has none
+            ]
+            if diag.top_candidates and diag.top_candidates[0].move != chosen:
+                diag.alternative_best = diag.top_candidates[0]
+            diag.notes.append(
+                f"Best: {chosen} visits={best.visits}/{root.visits} "
+                f"wr={best.wins / best.visits:.1%}"
+                if best.visits
+                else f"Best: {chosen} visits=0"
+            )
+
+        return chosen
 
     # -- Core MCTS loop (operates entirely on one SearchState) ---------------
 

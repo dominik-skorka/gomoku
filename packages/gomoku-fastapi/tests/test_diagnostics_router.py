@@ -18,7 +18,7 @@ def _payload_with_diagnostics(*, brain: str = "alphabeta", overrides: dict | Non
         "board": Board(size=9).place_stone(Move(row=4, col=4), Stone.BLACK).model_dump(mode="json"),
         "side_to_move": int(Stone.WHITE),
         "brain": brain,
-        "brain_overrides": overrides or {"depth": 1},
+        "brain_overrides": {"depth": 1} if overrides is None else overrides,
         "diagnostics": True,
     }
 
