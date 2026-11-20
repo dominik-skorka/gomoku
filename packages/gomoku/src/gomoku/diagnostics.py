@@ -9,14 +9,20 @@ per line to a ``.diag.jsonl`` file following the recording naming convention.
 from __future__ import annotations
 
 import json
+import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, Field
 
-from gomoku.models import GameConfig, Move, Stone
+from gomoku.models import GameConfig, GameResult, Move, Stone
+
+if TYPE_CHECKING:
+    from gomoku.interfaces import BoardView
 
 # ── Per-move diagnostics model ──────────────────────────────────────────────
 
@@ -156,6 +162,7 @@ class DiagnosticsRecorder:
             header.model_dump_json() + "\n",
             encoding="utf-8",
         )
+        self._moves_played = 0
 
     @property
     def path(self) -> Path:
@@ -177,8 +184,57 @@ class DiagnosticsRecorder:
         with self._path.open("a", encoding="utf-8") as f:
             f.write(diag.model_dump_json() + "\n")
 
+    # -- GameObserver ---------------------------------------------------------
+
+    def on_move(self, stone: Stone, move: Move) -> None:
+        """Count the moves for the summary (``GameObserver``)."""
+        self._moves_played += 1
+
+    def on_game_end(self, result: GameResult) -> None:
+        """Append the summary line (``GameObserver``): the file's last line."""
+        self.write_summary(
+            {
+                "ended_at": datetime.now(tz=UTC).isoformat(),
+                "total_moves": self._moves_played,
+                "winner": int(result.winner) if result.winner else None,
+                "is_draw": result.is_draw,
+            }
+        )
+
     def write_summary(self, summary: dict[str, Any]) -> None:
         """Append a final summary line (e.g. game result, total stats)."""
         line = json.dumps({"type": "summary", **summary}, default=str)
         with self._path.open("a", encoding="utf-8") as f:
             f.write(line + "\n")
+
+
+@contextmanager
+def move_diagnostics(
+    recorder: DiagnosticsRecorder | None, board: BoardView, stone: Stone, move_number: int
+) -> Iterator[MoveDiagnostics]:
+    """One move's diagnostics, collected around the player's decision.
+
+    The record is active (see :func:`current_move_diagnostics`) inside the
+    block, so a brain fills it in; the block's time becomes
+    ``think_time_ms``.  With a *recorder* the record is also appended to
+    its file when the block ends, whatever happens inside; without one it
+    lives only in memory.  Shared by :class:`~gomoku.game.Game` and
+    :class:`~gomoku.runner.GameRunner`, so both write the same files.
+    """
+    if recorder is not None:
+        board_stones = [
+            f"{'B' if board.at(r, c) is Stone.BLACK else 'W'} {Move(row=r, col=c)}" for r, c in sorted(board.occupied)
+        ]
+        diag = recorder.begin_move(move_number, stone, board_stones)
+    else:
+        diag = MoveDiagnostics(move_number=move_number, stone=stone)
+        set_move_diagnostics(diag)
+    started = time.monotonic()
+    try:
+        yield diag
+    finally:
+        diag.think_time_ms = int((time.monotonic() - started) * 1000)
+        if recorder is not None:
+            recorder.end_move(diag)
+        else:
+            set_move_diagnostics(None)

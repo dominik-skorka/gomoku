@@ -147,7 +147,7 @@ def create_game(
     # absolute path; recorders create files inside it.
     record_dir: str | None = None
     diag_dir: str | None = None
-    on_move = None
+    recorder: GameRecorder | None = None
     diag_recorder: DiagnosticsRecorder | None = None
 
     started_at = datetime.now(tz=UTC)
@@ -158,7 +158,6 @@ def create_game(
             players=[_player_info(Stone.BLACK, req.black), _player_info(Stone.WHITE, req.white)],
             directory=Path(record_dir),
         )
-        on_move = recorder.record_move
     if req.diagnostics:
         diag_dir = mkdtemp(prefix="gomoku-session-diag-")
         diag_recorder = DiagnosticsRecorder(
@@ -176,7 +175,9 @@ def create_game(
         black=black_brain,
         white=white_brain,
         diagnostics_recorder=diag_recorder,
-        on_move=on_move,
+        # The recorder observes the game, so the recording is finished
+        # (result, checksum) when it ends; it used to stay partial.
+        observers=[recorder] if recorder is not None else [],
     )
     session = store.create(
         runner,

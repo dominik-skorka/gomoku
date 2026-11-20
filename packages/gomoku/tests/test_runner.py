@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import pytest
 from gomoku.game import InvalidMoveError
-from gomoku.models import GameConfig, Move, Stone
+from gomoku.models import GameConfig, GameResult, Move, Stone
 from gomoku.protocol import MoveProvider
 from gomoku.runner import (
     GameAlreadyOverError,
@@ -197,21 +197,46 @@ class TestMixed:
 
 
 # ---------------------------------------------------------------------------
-# on_move callback (recorder hook)
+# Game observers (recorder hook)
 # ---------------------------------------------------------------------------
 
 
-class TestOnMoveCallback:
-    def test_called_with_each_move(self):
-        seen: list[tuple[Stone, Move]] = []
-        r = GameRunner(GameConfig(board_size=9, win_length=5), on_move=lambda s, m: seen.append((s, m)))
+class _Log:
+    """A GameObserver that logs what it is told."""
+
+    def __init__(self) -> None:
+        self.moves: list[tuple[Stone, Move]] = []
+        self.ends: list[GameResult] = []
+
+    def on_move(self, stone: Stone, move: Move) -> None:
+        self.moves.append((stone, move))
+
+    def on_game_end(self, result: GameResult) -> None:
+        self.ends.append(result)
+
+
+class TestObservers:
+    def test_told_each_move(self):
+        log = _Log()
+        r = GameRunner(GameConfig(board_size=9, win_length=5), observers=[log])
         r.submit_move(Stone.BLACK, Move(row=4, col=4))
         r.submit_move(Stone.WHITE, Move(row=3, col=3))
-        assert seen == [(Stone.BLACK, Move(row=4, col=4)), (Stone.WHITE, Move(row=3, col=3))]
+        assert log.moves == [(Stone.BLACK, Move(row=4, col=4)), (Stone.WHITE, Move(row=3, col=3))]
+        assert log.ends == []
 
-    def test_not_called_on_rejected_move(self):
-        seen: list[tuple[Stone, Move]] = []
-        r = GameRunner(GameConfig(board_size=9, win_length=5), on_move=lambda s, m: seen.append((s, m)))
+    def test_not_told_a_rejected_move(self):
+        log = _Log()
+        r = GameRunner(GameConfig(board_size=9, win_length=5), observers=[log])
         with pytest.raises(WrongTurnError):
             r.submit_move(Stone.WHITE, Move(row=4, col=4))
-        assert seen == []
+        assert log.moves == []
+
+    def test_told_the_end_once(self):
+        log = _Log()
+        r = GameRunner(GameConfig(board_size=9, win_length=5), observers=[log])
+        for col in range(4):
+            r.submit_move(Stone.BLACK, Move(row=0, col=col))
+            r.submit_move(Stone.WHITE, Move(row=8, col=col))
+        result = r.submit_move(Stone.BLACK, Move(row=0, col=4))
+        assert result is not None and log.ends == [result]
+        assert len(log.moves) == 9

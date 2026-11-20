@@ -132,6 +132,29 @@ class TestDeleteGame:
 # ---------------------------------------------------------------------------
 
 
+class TestRecordingIsFinished:
+    def test_recording_has_the_result_and_checksum_when_the_game_ends(self, client):
+        """The session's recorder observes the game: at the end the recording
+        gets the result and its .md5sum.  (It used to stay partial.)"""
+        from pathlib import Path
+
+        from gomoku.recorder import load_record
+
+        created = _create(client, record=True)
+        url = f"/v1/games/{created['game_id']}/moves"
+        for col in range(4):
+            for stone, row in ((Stone.BLACK, 0), (Stone.WHITE, 8)):
+                response = client.post(url, json={"stone": int(stone), "move": {"row": row, "col": col}})
+                assert response.status_code == 200, response.text
+        response = client.post(url, json={"stone": int(Stone.BLACK), "move": {"row": 0, "col": 4}})
+        assert response.status_code == 200, response.text
+        [path] = Path(created["record_dir"]).glob("*.json")
+        record = load_record(path)
+        assert record.result is not None and record.result.winner is Stone.BLACK
+        assert len(record.moves) == 9
+        assert path.with_suffix(".md5sum").exists()
+
+
 class TestSubmitMove:
     def test_applies_an_external_move(self, client):
         created = _create(client)
