@@ -1,4 +1,4 @@
-"""Common helpers for ``MoveProvider`` implementations.
+"""Common helpers for ``Player`` implementations.
 
 Each non-trivial brain's ``get_move`` opens the same kind of session:
 

@@ -11,7 +11,7 @@ from gomoku_brain.candidates import get_candidate_moves
 
 
 class RandomBrain:
-    """MoveProvider that chooses a random valid move near existing stones."""
+    """Player that chooses a random valid move near existing stones."""
 
     @property
     def name(self) -> str:

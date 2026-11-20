@@ -9,6 +9,7 @@ from pathlib import Path
 import click
 import logfire
 from gomoku.game import Game, InvalidMoveError
+from gomoku.interfaces import Player
 from gomoku.models import GameConfig, Move, Stone
 from gomoku.recorder import GameRecorder, PlayerInfo, load_record
 from gomoku.settings import GomokuSettings, KeyboardBrainSettings
@@ -31,7 +32,7 @@ def _resolve(name: str, overrides: dict, settings: GomokuSettings) -> tuple[str,
     return brain_type, apply_overrides(BRAINS[brain_type].settings_cls, kwargs, overrides)
 
 
-def _make_provider(name: str, overrides: dict, settings: GomokuSettings) -> object:
+def _make_provider(name: str, overrides: dict, settings: GomokuSettings) -> Player:
     brain_type, kwargs = _resolve(name, overrides, settings)
     return BRAINS[brain_type].brain_cls(**kwargs)
 
@@ -139,9 +140,11 @@ def play(
                     alias["opening_book"] = book_str
                 elif name == "alphabeta":
                     # Built-in name without an alias — create one.
-                    if settings.brains.model_extra is None:
-                        object.__setattr__(settings.brains, "__pydantic_extra__", {})
-                    settings.brains.model_extra[name] = {"type": "alphabeta", "opening_book": book_str}
+                    extra = settings.brains.model_extra
+                    if extra is None:
+                        extra = {}
+                        object.__setattr__(settings.brains, "__pydantic_extra__", extra)
+                    extra[name] = {"type": "alphabeta", "opening_book": book_str}
 
     # Validate provider names early.
     available = available_brains(settings.brains)

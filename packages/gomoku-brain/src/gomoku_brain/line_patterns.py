@@ -8,12 +8,12 @@ rules.  Each function looks at one line through an empty cell as if
 
 from __future__ import annotations
 
-from gomoku.board import Board
+from gomoku.interfaces import BoardView
 from gomoku.models import Stone
 
 
 def five_cells_through(
-    board: Board, row: int, col: int, dr: int, dc: int, stone: Stone, split: bool = True
+    board: BoardView, row: int, col: int, dr: int, dc: int, stone: Stone, split: bool = True
 ) -> tuple[int, list]:
     """Return ``(run, cells)``: the unbroken run through the cell, and the
     empty cells (0-2) that would then complete five or more on this line.
@@ -48,7 +48,7 @@ def five_cells_through(
     return run, cells
 
 
-def three_defences(board: Board, row: int, col: int, dr: int, dc: int, stone: Stone) -> list[tuple[int, int]]:
+def three_defences(board: BoardView, row: int, col: int, dr: int, dc: int, stone: Stone) -> list[tuple[int, int]]:
     """The cells that stop the three placing *stone* here makes on this line.
 
     A three is a move after which one more stone makes a *live* four

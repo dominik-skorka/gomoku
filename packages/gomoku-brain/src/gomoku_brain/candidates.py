@@ -6,13 +6,13 @@ restrict candidates to cells within a radius of existing stones.
 
 from __future__ import annotations
 
-from gomoku.board import Board
+from gomoku.interfaces import BoardView
 from gomoku.models import Move
 
 _RADIUS = 2
 
 
-def _get_candidates_python(board: Board, radius: int) -> list[Move]:
+def _get_candidates_python(board: BoardView, radius: int) -> list[Move]:
     """Pure-Python candidate generation."""
     size = board.size
     candidates: set[tuple[int, int]] = set()
@@ -25,7 +25,7 @@ def _get_candidates_python(board: Board, radius: int) -> list[Move]:
     return [Move(row=r, col=c) for r, c in sorted(candidates)]
 
 
-def get_candidate_moves(board: Board, radius: int = _RADIUS) -> list[Move]:
+def get_candidate_moves(board: BoardView, radius: int = _RADIUS) -> list[Move]:
     """Return empty cells within ``radius`` of any placed stone.
 
     On an empty board, returns the center cell.

@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import uuid
 from contextvars import ContextVar
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, override
 
 import logfire
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -67,6 +67,7 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
     HEADER = "X-Request-ID"
     MAX_LEN = 64
 
+    @override
     async def dispatch(
         self,
         request: Request,

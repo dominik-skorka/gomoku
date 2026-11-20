@@ -20,6 +20,7 @@ import heapq
 import json
 import logging
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -32,7 +33,7 @@ from gomoku_brain.opening import _canonicalize, _transform, deduplicate_by_symme
 from gomoku_brain.opening_book import BookEntry, OpeningBookFile, _canonical_key
 
 if TYPE_CHECKING:
-    from gomoku.protocol import MoveProvider
+    from gomoku.interfaces import Player
 
 logger = logging.getLogger(__name__)
 
@@ -135,7 +136,7 @@ def _is_terminal(board: Board, last_move: Move, config: GameConfig) -> bool:
 
 
 def _evaluate_position(
-    brain: MoveProvider,
+    brain: Player,
     board: Board,
     stone: Stone,
 ) -> list[tuple[Move, float]]:
@@ -168,7 +169,7 @@ def _evaluate_position(
 
 
 def _evaluate_with_brain(
-    brain: MoveProvider,
+    brain: Player,
     board: Board,
     stone: Stone,
 ) -> tuple[Move, float]:
@@ -188,21 +189,21 @@ def _evaluate_with_brain(
 
 
 def generate_opening_book(
-    brain: MoveProvider,
+    brain: Player,
     *,
     board_size: int = 15,
     max_positions: int = 100,
     error_threshold: float = 500.0,
     depth_penalty: float = _DEFAULT_DEPTH_PENALTY,
     max_book_ply: int = 10,
-    progress_callback: object | None = None,
+    progress_callback: Callable[[int, int, str], object] | None = None,
 ) -> OpeningBookFile:
     """Generate an opening book using Lincke's DOE algorithm.
 
     Parameters
     ----------
     brain:
-        The MoveProvider (e.g. AlphaBetaBrain) used to evaluate positions.
+        The Player (e.g. AlphaBetaBrain) used to evaluate positions.
     board_size:
         Board side length.
     max_positions:

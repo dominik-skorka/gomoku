@@ -157,7 +157,7 @@ def run_playback(
         elif current > 0:
             current_stone = moves[current - 1].stone.opponent()
 
-        winning_moves = record.result.winning_moves if current == total else None
+        winning_moves = record.result.winning_moves if record.result is not None and current == total else None
         render_board(
             board,
             last_move=last_move,
@@ -176,7 +176,7 @@ def run_playback(
         else:
             print(f"  Start — move 0/{total}")
 
-        if current == total:
+        if current == total and record.result is not None:
             render_result(record.result, total)
 
         print("\n  ← previous  |  → next  |  q quit")

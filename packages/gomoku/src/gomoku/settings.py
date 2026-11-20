@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import override
 
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict, TomlConfigSettingsSource
@@ -387,6 +388,7 @@ class GomokuSettings(BaseSettings):
     diagnostics: DiagnosticsSettings = DiagnosticsSettings()
     api: ApiSettings = ApiSettings()
 
+    @override
     @classmethod
     def settings_customise_sources(
         cls,

@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 from gomoku.board import Board
+from gomoku.interfaces import BoardView
 from gomoku.models import GameResult, Move, Stone
 
 # The four directions to check: horizontal, vertical, diagonal-down, diagonal-up.
 _DIRECTIONS = [(0, 1), (1, 0), (1, 1), (1, -1)]
 
 
-def check_winner(board: Board, last_move: Move, win_length: int = 5) -> GameResult | None:
+def check_winner(board: BoardView, last_move: Move, win_length: int = 5) -> GameResult | None:
     """Check if the last move created a winning line of ``win_length`` or more (freestyle)."""
     stone = board.at(last_move.row, last_move.col)
     if stone is Stone.EMPTY:

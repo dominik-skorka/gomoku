@@ -1,4 +1,4 @@
-"""Keyboard input MoveProvider — reads moves from the terminal."""
+"""Keyboard input Player — reads moves from the terminal."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ console = Console()
 
 
 class KeyboardProvider:
-    """MoveProvider that reads moves from the keyboard using Rich prompts."""
+    """Player that reads moves from the keyboard using Rich prompts."""
 
     @property
     def name(self) -> str:

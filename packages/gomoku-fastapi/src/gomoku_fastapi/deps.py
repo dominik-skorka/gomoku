@@ -17,7 +17,7 @@ from __future__ import annotations
 from typing import Annotated, Any
 
 from fastapi import Depends, HTTPException, status
-from gomoku.protocol import MoveProvider
+from gomoku.interfaces import Player
 from gomoku.settings import GomokuSettings
 from gomoku_brain import (
     BRAINS,
@@ -93,7 +93,7 @@ def build_brain(
     name: str,
     overrides: dict[str, Any] | None,
     settings: GomokuSettings,
-) -> MoveProvider:
+) -> Player:
     """Resolve ``name`` against the registry and instantiate the brain.
 
     *name* is either a built-in brain key (``"alphabeta"``, ``"threat"``,

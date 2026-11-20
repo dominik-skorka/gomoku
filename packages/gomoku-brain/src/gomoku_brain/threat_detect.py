@@ -13,7 +13,9 @@ for backward compatibility, since tests, ``pns.py``, ``mcts.py``, and
 
 from __future__ import annotations
 
-from gomoku.board import Board
+from typing import Literal
+
+from gomoku.interfaces import BoardView
 from gomoku.models import Move, Stone
 
 from gomoku_brain.candidates import get_candidate_moves
@@ -43,10 +45,10 @@ _ScanCtx = tuple
 # resolved, ``False`` = JIT disabled.  ``_scan_context`` runs ~20k times
 # per search; re-importing the kernels and re-checking the JIT setting on
 # every call used to cost more than the (memoised) kernel work itself.
-_SCAN_KIT: tuple | bool | None = None
+_SCAN_KIT: tuple | Literal[False] | None = None
 
 
-def _resolve_scan_kit() -> tuple | bool:
+def _resolve_scan_kit() -> tuple | Literal[False]:
     global _SCAN_KIT
     from gomoku_brain.evaluate import _should_use_jit
 
@@ -59,7 +61,7 @@ def _resolve_scan_kit() -> tuple | bool:
     return _SCAN_KIT
 
 
-def _scan_context(board: Board) -> _ScanCtx | None:
+def _scan_context(board: BoardView) -> _ScanCtx | None:
     """Build the shared JIT scan context for *board*, or ``None`` when JIT is off.
 
     For :class:`SearchState` the derived candidate array is memoised
@@ -97,7 +99,7 @@ def _scan_context(board: Board) -> _ScanCtx | None:
 
 
 def _line_cells(
-    board: Board,
+    board: BoardView,
     row: int,
     col: int,
     dr: int,
@@ -127,7 +129,7 @@ def _line_cells(
     return count, open_ends, end_cells
 
 
-def _find_four_threats_python(board: Board, stone: Stone, split: bool = True) -> list[tuple[Move, Move | None]]:
+def _find_four_threats_python(board: BoardView, stone: Stone, split: bool = True) -> list[tuple[Move, Move | None]]:
     """Pure-Python fallback for :func:`_find_four_threats`.
 
     Kept for boards that aren't routed through the JIT path (tests that
@@ -170,7 +172,7 @@ def _find_four_threats_python(board: Board, stone: Stone, split: bool = True) ->
 
 
 def _find_four_threats(
-    board: Board, stone: Stone, ctx: _ScanCtx | None = None, split: bool = True
+    board: BoardView, stone: Stone, ctx: _ScanCtx | None = None, split: bool = True
 ) -> list[tuple[Move, Move | None]]:
     """Find all moves that create a four-in-a-row for ``stone``.
 
@@ -223,7 +225,7 @@ def _find_four_threats(
     return threats
 
 
-def _find_three_threats_python(board: Board, stone: Stone, split: bool = False) -> list[tuple[Move, list[Move]]]:
+def _find_three_threats_python(board: BoardView, stone: Stone, split: bool = False) -> list[tuple[Move, list[Move]]]:
     """Pure-Python fallback for :func:`_find_three_threats`."""
     threats: list[tuple[Move, list[Move]]] = []
     candidates = get_candidate_moves(board, radius=2)
@@ -243,7 +245,7 @@ def _find_three_threats_python(board: Board, stone: Stone, split: bool = False) 
 
 
 def _find_three_threats(
-    board: Board, stone: Stone, ctx: _ScanCtx | None = None, split: bool = False
+    board: BoardView, stone: Stone, ctx: _ScanCtx | None = None, split: bool = False
 ) -> list[tuple[Move, list[Move]]]:
     """Find moves that create a *live* three (open at both ends).
 
@@ -288,7 +290,7 @@ def _find_three_threats(
     return threats
 
 
-def _find_winning_move(board: Board, stone: Stone, ctx: _ScanCtx | None = None) -> Move | None:
+def _find_winning_move(board: BoardView, stone: Stone, ctx: _ScanCtx | None = None) -> Move | None:
     """Return a move that immediately completes five-in-a-row, or ``None``.
 
     Scans neighbours of each candidate cell in place: no board copies, no
@@ -330,7 +332,7 @@ def _find_winning_move(board: Board, stone: Stone, ctx: _ScanCtx | None = None) 
     return None
 
 
-def _has_any_four_threat(board: Board, stone: Stone, ctx: _ScanCtx | None = None, split: bool = True) -> bool:
+def _has_any_four_threat(board: BoardView, stone: Stone, ctx: _ScanCtx | None = None, split: bool = True) -> bool:
     """Return True if *stone* has any four-threat candidate.
 
     Short-circuits on the first hit — cheaper than enumerating every
@@ -348,7 +350,7 @@ def _has_any_four_threat(board: Board, stone: Stone, ctx: _ScanCtx | None = None
     return bool(_find_four_threats_python(board, stone, split))
 
 
-def _has_unblockable_four(board: Board, stone: Stone, ctx: _ScanCtx | None = None, split: bool = True) -> bool:
+def _has_unblockable_four(board: BoardView, stone: Stone, ctx: _ScanCtx | None = None, split: bool = True) -> bool:
     """Return True if *stone* has an unblockable four-threat.
 
     Unblockable = five-or-more completion, live four, or double-four —
@@ -368,7 +370,7 @@ def _has_unblockable_four(board: Board, stone: Stone, ctx: _ScanCtx | None = Non
 
 
 def _count_distinct_three_cells(
-    board: Board, stone: Stone, cap: int, ctx: _ScanCtx | None = None, split: bool = False
+    board: BoardView, stone: Stone, cap: int, ctx: _ScanCtx | None = None, split: bool = False
 ) -> int:
     """Count distinct cells that create a live-three for *stone*, up to *cap*.
 
@@ -391,7 +393,7 @@ def _count_distinct_three_cells(
     return len(distinct)
 
 
-def probe_immediate(board: Board, stone: Stone) -> tuple[Move | None, str | None]:
+def probe_immediate(board: BoardView, stone: Stone) -> tuple[Move | None, str | None]:
     """Return ``(move, tag)`` for a pre-search tactical shortcut.
 
     * ``(move, "instant_win")`` — ``stone`` has a move completing

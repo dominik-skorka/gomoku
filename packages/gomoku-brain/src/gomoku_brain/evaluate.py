@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from gomoku.board import Board
+from gomoku.interfaces import BoardView
 from gomoku.models import Move, Stone
 
 from gomoku_brain.directions import DIRECTIONS as _DIRECTIONS
@@ -43,7 +43,7 @@ _EVAL_CLAMP = 99_000
 
 
 
-def _score_direction(board: Board, row: int, col: int, dr: int, dc: int, stone: Stone) -> int:
+def _score_direction(board: BoardView, row: int, col: int, dr: int, dc: int, stone: Stone) -> int:
     """Score a single direction from (row, col) for the given stone."""
     size = board.size
     count = 0
@@ -71,7 +71,7 @@ def _score_direction(board: Board, row: int, col: int, dr: int, dc: int, stone: 
     return _PATTERN_SCORES.get((count, open_ends), 0)
 
 
-def _threat_lines_at(board: Board, row: int, col: int, stone: Stone) -> int:
+def _threat_lines_at(board: BoardView, row: int, col: int, stone: Stone) -> int:
     """Count how many distinct threat lines for *stone* pass through (row, col).
 
     A "threat line" is a direction where placing *stone* at (row, col) would
@@ -107,7 +107,7 @@ def _threat_lines_at(board: Board, row: int, col: int, stone: Stone) -> int:
     return count
 
 
-def _fork_lines_at(board: Board, row: int, col: int, stone: Stone) -> int:
+def _fork_lines_at(board: BoardView, row: int, col: int, stone: Stone) -> int:
     """Count the lines a fork at (row, col) would threaten on.
 
     As :func:`_threat_lines_at`, plus every line where the move makes a
@@ -125,7 +125,7 @@ def _fork_lines_at(board: Board, row: int, col: int, stone: Stone) -> int:
     return count
 
 
-def _threat_lines_at_direction(board: Board, row: int, col: int, dr: int, dc: int, stone: Stone) -> bool:
+def _threat_lines_at_direction(board: BoardView, row: int, col: int, dr: int, dc: int, stone: Stone) -> bool:
     """One direction of :func:`_threat_lines_at`."""
     size = board.size
     consecutive = 0
@@ -140,7 +140,7 @@ def _threat_lines_at_direction(board: Board, row: int, col: int, dr: int, dc: in
     return _PATTERN_SCORES.get((consecutive, open_ends), 0) >= _FORK_THRESHOLD
 
 
-def _fork_score(board: Board, stone: Stone) -> float:
+def _fork_score(board: BoardView, stone: Stone) -> float:
     """Score fork potential: cells where multiple threat lines converge.
 
     For each empty candidate cell near occupied stones, count how many
@@ -172,7 +172,7 @@ def _fork_score(board: Board, stone: Stone) -> float:
     return bonus
 
 
-def find_fork_cells(board: Board, stone: Stone, split: bool = False) -> list[Move]:
+def find_fork_cells(board: BoardView, stone: Stone, split: bool = False) -> list[Move]:
     """Return empty cells where >= 2 distinct threat lines for *stone* converge.
 
     With *split*, a line also counts when the move makes a three or a four
@@ -229,7 +229,7 @@ def find_fork_cells(board: Board, stone: Stone, split: bool = False) -> list[Mov
     return forks
 
 
-def _open_three_score(board: Board, stone: Stone) -> float:
+def _open_three_score(board: BoardView, stone: Stone) -> float:
     """Count distinct open-three formations for *stone* and return a bonus.
 
     An open-three is exactly 3 consecutive same-colour stones in a line
@@ -304,7 +304,7 @@ def _should_use_jit() -> bool:
 # ---------------------------------------------------------------------------
 
 
-def _evaluate_board_python(board: Board, stone: Stone) -> float:
+def _evaluate_board_python(board: BoardView, stone: Stone) -> float:
     """Evaluate the board using pure-Python loops."""
     opponent = Stone.WHITE if stone is Stone.BLACK else Stone.BLACK
     score = 0.0
@@ -460,7 +460,7 @@ def _eval_state_black(state) -> float:  # type: ignore[no-untyped-def]
 # ---------------------------------------------------------------------------
 
 
-def evaluate_board(board: Board, stone: Stone) -> float:
+def evaluate_board(board: BoardView, stone: Stone) -> float:
     """Evaluate the board from ``stone``'s perspective. Higher is better.
 
     :class:`SearchState` boards use the incremental per-ply evaluation

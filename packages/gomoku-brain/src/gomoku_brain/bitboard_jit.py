@@ -110,11 +110,11 @@ def _bit_test(rows: NDArray, row: int, col: int) -> bool:  # type: ignore[type-a
 @njit(cache=True)
 def _popcount32(x: int) -> int:
     """Population count for a 32-bit integer (Hamming weight)."""
-    x = np.uint32(x)
-    x = x - ((x >> np.uint32(1)) & np.uint32(0x55555555))
-    x = (x & np.uint32(0x33333333)) + ((x >> np.uint32(2)) & np.uint32(0x33333333))
-    x = (x + (x >> np.uint32(4))) & np.uint32(0x0F0F0F0F)
-    return int((x * np.uint32(0x01010101)) >> np.uint32(24))
+    v = np.uint32(x)
+    v = v - ((v >> np.uint32(1)) & np.uint32(0x55555555))
+    v = (v & np.uint32(0x33333333)) + ((v >> np.uint32(2)) & np.uint32(0x33333333))
+    v = (v + (v >> np.uint32(4))) & np.uint32(0x0F0F0F0F)
+    return int((v * np.uint32(0x01010101)) >> np.uint32(24))
 
 
 # ---------------------------------------------------------------------------

@@ -22,6 +22,8 @@ alongside the bitboards.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import numpy as np
 from gomoku.board import Board
 from gomoku.models import Stone
@@ -301,3 +303,10 @@ class SearchState:
             int(self._undo_col[p]),
             Stone(int(self._undo_stone[p])),
         )
+
+
+if TYPE_CHECKING:
+    from gomoku.interfaces import SearchBoard
+
+    def _is_a_search_board(state: SearchState) -> SearchBoard:
+        return state  # pyright checks that SearchState implements SearchBoard

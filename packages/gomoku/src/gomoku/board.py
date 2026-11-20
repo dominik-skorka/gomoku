@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from pydantic import BaseModel, Field, model_validator
 
 from gomoku.models import Move, Stone
@@ -49,3 +51,10 @@ class Board(BaseModel):
 
     def stone_count(self) -> int:
         return len(self.occupied)
+
+
+if TYPE_CHECKING:
+    from gomoku.interfaces import BoardView
+
+    def _is_a_board_view(board: Board) -> BoardView:
+        return board  # pyright checks that Board implements BoardView

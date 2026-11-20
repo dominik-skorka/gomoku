@@ -27,7 +27,7 @@ rapid request loops without tripping 429s.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, override
 
 from fastapi.routing import iter_route_contexts
 from slowapi import Limiter
@@ -108,7 +108,9 @@ def install(app: FastAPI) -> None:
     Idempotent — safe to call from each ``create_app`` invocation.
     """
     app.state.limiter = limiter
-    app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
+    # Starlette types handlers for any Exception; this one only ever gets
+    # the RateLimitExceeded it is registered for.
+    app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)  # pyright: ignore[reportArgumentType]
     app.add_middleware(_DefaultLimitMiddleware)
 
 
@@ -124,13 +126,17 @@ class _DefaultLimitMiddleware(SlowAPIMiddleware):
     them.  Otherwise this is ``SlowAPIMiddleware.dispatch`` unchanged.
     """
 
+    @override
     async def dispatch(self, request: Request, call_next: Any) -> Response:
         app = request.app
         active: Limiter = app.state.limiter
         if not active.enabled:
             return await call_next(request)
 
-        handler = _find_route_handler(list(iter_route_contexts(app.routes)), request.scope)
+        # Route contexts are not BaseRoute subclasses, but provide the
+        # matches() and endpoint that slowapi's lookup uses.
+        routes = list(iter_route_contexts(app.routes))
+        handler = _find_route_handler(routes, request.scope)  # pyright: ignore[reportArgumentType]
         if _should_exempt(active, handler):
             return await call_next(request)
 

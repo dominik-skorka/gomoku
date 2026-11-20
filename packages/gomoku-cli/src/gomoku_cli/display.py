@@ -89,9 +89,12 @@ def render_playback_info(record: GameRecord) -> None:
         console.print(f"  {p.stone}: {label}")
 
     started = record.started_at.strftime("%Y-%m-%d %H:%M:%S")
-    ended = record.ended_at.strftime("%Y-%m-%d %H:%M:%S")
+    ended = record.ended_at.strftime("%Y-%m-%d %H:%M:%S") if record.ended_at else "unfinished"
     console.print(f"  Played: {started} → {ended}")
 
     total = len(record.moves)
-    outcome = "Draw" if record.result.is_draw else f"{record.result.winner} wins"
+    if record.result is None:
+        outcome = "unfinished"
+    else:
+        outcome = "Draw" if record.result.is_draw else f"{record.result.winner} wins"
     console.print(f"  Moves: {total}  |  Result: {outcome}\n")
