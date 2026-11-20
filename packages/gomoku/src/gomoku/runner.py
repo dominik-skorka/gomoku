@@ -14,25 +14,20 @@ identical to ``Game.play_turn`` (validate → place stone → record →
 check win → toggle side); we just expose it as two public methods
 :meth:`submit_move` and :meth:`think` so the API can mix-and-match.
 
-Diagnostics + recording are wired through the same ``on_move`` /
-``DiagnosticsRecorder`` interfaces the CLI uses, so a session that
-opts into ``record=True`` produces files that ``gomoku playback``
-and ``gomoku analyze`` consume without modification.
+Recording and diagnostics are wired the same way as in ``Game`` (game
+observers and a ``DiagnosticsRecorder``), so a session that opts into
+``record=True`` produces files that ``gomoku playback`` and ``gomoku
+analyze`` consume without modification.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+from collections.abc import Iterable
 
 from gomoku.board import Board
-from gomoku.diagnostics import (
-    DiagnosticsRecorder,
-    MoveDiagnostics,
-    set_move_diagnostics,
-)
+from gomoku.diagnostics import DiagnosticsRecorder, MoveDiagnostics, move_diagnostics
 from gomoku.game import InvalidMoveError
-from gomoku.interfaces import Player
+from gomoku.interfaces import GameObserver, Player
 from gomoku.models import GameConfig, GameResult, Move, Stone
 from gomoku.rules import get_game_status
 
@@ -70,9 +65,8 @@ class GameRunner:
     A ``None`` brain marks that side as external — the only way to
     advance the game on that side is :meth:`submit_move`.
 
-    Optional :class:`DiagnosticsRecorder` and ``on_move`` callbacks let
-    the API plug in the same recording / diagnostics machinery the CLI
-    uses, with no special-casing required by the engine.
+    *observers* and an optional :class:`DiagnosticsRecorder` plug in the
+    same recording and diagnostics machinery as :class:`Game`.
     """
 
     def __init__(
@@ -82,7 +76,7 @@ class GameRunner:
         black: Player | None = None,
         white: Player | None = None,
         diagnostics_recorder: DiagnosticsRecorder | None = None,
-        on_move: Callable[[Stone, Move], None] | None = None,
+        observers: Iterable[GameObserver] = (),
     ) -> None:
         self.config = config
         self.board = Board(size=config.board_size)
@@ -91,7 +85,10 @@ class GameRunner:
         self.move_history: list[tuple[Stone, Move]] = []
         self.result: GameResult | None = None
         self._diag_recorder = diagnostics_recorder
-        self._on_move = on_move
+        self._observers: list[GameObserver] = [
+            *observers,
+            *([diagnostics_recorder] if diagnostics_recorder is not None else []),
+        ]
 
     # -- introspection --------------------------------------------------------
 
@@ -143,8 +140,12 @@ class GameRunner:
         if brain is None:
             raise NoBrainConfiguredError(stone)
 
-        with self._diag_session(stone) as diag:
+        # Diagnostics are always collected, so the API can return them;
+        # with a recorder they are also written to its file.
+        with move_diagnostics(self._diag_recorder, self.board, stone, len(self.move_history) + 1) as diag:
             move = brain.get_move(self.board, stone)
+            if diag.chosen_move is None:
+                diag.chosen_move = move
 
         # ``submit_move`` would re-validate; we already know whose
         # turn it is and we've already produced a candidate, so go
@@ -161,48 +162,16 @@ class GameRunner:
     def _apply(self, stone: Stone, move: Move) -> GameResult | None:
         self.board = self.board.place_stone(move, stone)
         self.move_history.append((stone, move))
-        if self._on_move is not None:
-            self._on_move(stone, move)
+        for observer in self._observers:
+            observer.on_move(stone, move)
         result = get_game_status(self.board, move, self.config.win_length)
         if result is not None:
             self.result = result
+            for observer in self._observers:
+                observer.on_game_end(result)
             return result
         self.current_stone = self.current_stone.opponent()
         return None
-
-    @contextmanager
-    def _diag_session(self, stone: Stone) -> Iterator[MoveDiagnostics | None]:
-        """Activate a fresh :class:`MoveDiagnostics` for the brain's call.
-
-        Yields the diag object so the caller can return it once the
-        brain finishes.  When a recorder is configured, the diag is
-        also begin/end-flushed through it so the on-disk
-        ``.diag.jsonl`` matches.
-        """
-        if self._diag_recorder is None:
-            # No recorder, but still capture the in-memory record so
-            # the API can return it on the response.
-            diag = MoveDiagnostics(
-                move_number=len(self.move_history) + 1,
-                stone=stone,
-            )
-            set_move_diagnostics(diag)
-            try:
-                yield diag
-            finally:
-                set_move_diagnostics(None)
-            return
-
-        # Recorder takes over — its begin/end_move sets the ContextVar.
-        board_stones = [
-            f"{'B' if self.board.at(r, c) is Stone.BLACK else 'W'} {Move(row=r, col=c)}"
-            for r, c in sorted(self.board.occupied)
-        ]
-        diag = self._diag_recorder.begin_move(len(self.move_history) + 1, stone, board_stones)
-        try:
-            yield diag
-        finally:
-            self._diag_recorder.end_move(diag)
 
 
 __all__ = [

@@ -115,6 +115,16 @@ class GameRecorder:
         self._last_timestamp = now
         self._write()
 
+    # -- GameObserver ---------------------------------------------------------
+
+    def on_move(self, stone: Stone, move: Move) -> None:
+        """Record each move (``GameObserver``)."""
+        self.record_move(stone, move)
+
+    def on_game_end(self, result: GameResult) -> None:
+        """Finalize the recording (``GameObserver``)."""
+        self.finalize(result)
+
     def finalize(self, result: GameResult) -> GameRecord:
         """Build the completed GameRecord, write it, and produce an MD5 checksum."""
         record = GameRecord(

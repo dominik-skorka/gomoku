@@ -13,6 +13,10 @@ from it; the type checker (pyright, in CI) verifies that it does.
   human at the keyboard.  :class:`~gomoku.game.Game` and the API's runner
   depend on nothing else.  New brains subclass
   ``gomoku_brain.base.Brain``, which implements it.
+* :class:`GameObserver`: anything told about each move and the end of a
+  game, such as :class:`~gomoku.recorder.GameRecorder` and
+  :class:`~gomoku.diagnostics.DiagnosticsRecorder`.  ``Game`` and the
+  runner notify all of theirs.
 """
 
 from __future__ import annotations
@@ -22,7 +26,7 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from gomoku.board import Board
-    from gomoku.models import Move, Stone
+    from gomoku.models import GameResult, Move, Stone
 
 type Cell = tuple[int, int]
 """A board cell as ``(row, col)``, both from 0."""
@@ -69,4 +73,16 @@ class Player(Protocol):
 
     def get_move(self, board: Board, stone: Stone) -> Move:
         """A legal move for *stone* on *board* (not full)."""
+        ...
+
+
+class GameObserver(Protocol):
+    """Told about each move and the end of a game, in order."""
+
+    def on_move(self, stone: Stone, move: Move) -> None:
+        """*stone* played *move* (already on the board)."""
+        ...
+
+    def on_game_end(self, result: GameResult) -> None:
+        """The game ended; called once, after the last :meth:`on_move`."""
         ...

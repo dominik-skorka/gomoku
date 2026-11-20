@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 import subprocess
-import time
 from pathlib import Path
 
 import click
 import logfire
 from gomoku.game import Game, InvalidMoveError
 from gomoku.interfaces import Player
-from gomoku.models import GameConfig, Move, Stone
+from gomoku.models import GameConfig, Stone
 from gomoku.recorder import GameRecorder, PlayerInfo, load_record
 from gomoku.settings import GomokuSettings, KeyboardBrainSettings
 from gomoku_brain import BRAINS, available_brains, register_brain, resolve_brain
@@ -173,14 +172,12 @@ def play(
     rec_dir = record_dir if record_dir is not None else settings.recording.directory
 
     recorder: GameRecorder | None = None
-    on_move = None
     if do_record:
         players = [
             PlayerInfo(stone=Stone.BLACK, provider=black_name, settings=players_settings["--black"]),
             PlayerInfo(stone=Stone.WHITE, provider=white_name, settings=players_settings["--white"]),
         ]
         recorder = GameRecorder(game_config=config, players=players, directory=rec_dir)
-        on_move = recorder.record_move
 
     console.print(f"\n[bold]Gomoku {config.board_size}x{config.board_size}[/bold]")
     console.print(f"  Black: {black_name}")
@@ -209,44 +206,23 @@ def play(
 
     console.print()
 
-    game = Game(config, black, white, on_move=on_move)  # type: ignore[arg-type]
+    # The recorder and the diagnostics recorder observe the game: each
+    # move is written as it is played, and the recording and the summary
+    # line are finished when it ends.
+    game = Game(config, black, white, [recorder] if recorder is not None else [], diagnostics=diag_recorder)
 
     while True:
         move_number = len(game.move_history) + 1
         console.print(f"\nMove #{move_number} \u2014 {game.current_stone} to play", style="bold")
 
-        # Set up diagnostics context for this move.
-        diag_entry = None
-        move_start: float | None = None
-        if diag_recorder is not None:
-            board_stones = [
-                f"{'B' if game.board.at(r, c) == Stone.BLACK else 'W'} {Move(row=r, col=c)}"
-                for r, c in sorted(game.board.occupied)
-            ]
-            diag_entry = diag_recorder.begin_move(move_number, game.current_stone, board_stones)
-            move_start = time.monotonic()
-
         try:
             result = game.play_turn()
         except InvalidMoveError as e:
             console.print(f"[red]Error:[/red] {e}")
-            if diag_entry is not None:
-                diag_entry.notes.append(f"InvalidMoveError: {e}")
-                if move_start is not None:
-                    diag_entry.think_time_ms = int((time.monotonic() - move_start) * 1000)
-                diag_recorder.end_move(diag_entry)  # type: ignore[union-attr]
             break
 
         _last_stone, last_move = game.move_history[-1]
         turn = len(game.move_history)
-
-        # Finalise diagnostics for this move.
-        if diag_entry is not None:
-            if move_start is not None:
-                diag_entry.think_time_ms = int((time.monotonic() - move_start) * 1000)
-            if diag_entry.chosen_move is None:
-                diag_entry.chosen_move = last_move
-            diag_recorder.end_move(diag_entry)  # type: ignore[union-attr]
 
         winning_moves = result.winning_moves if result is not None else None
         render_board(
@@ -260,17 +236,8 @@ def play(
         if result is not None:
             render_result(result, turn)
             if recorder is not None:
-                recorder.finalize(result)
                 console.print(f"\n[bold cyan]Game recorded:[/bold cyan] {recorder.path}")
             if diag_recorder is not None:
-                diag_recorder.write_summary(
-                    {
-                        "ended_at": str(result),
-                        "total_moves": turn,
-                        "winner": int(result.winner) if result.winner else None,
-                        "is_draw": result.is_draw,
-                    }
-                )
                 console.print(f"[bold cyan]Diagnostics:[/bold cyan] {diag_recorder.path}")
             break
 

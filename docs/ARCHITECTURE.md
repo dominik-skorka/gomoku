@@ -244,23 +244,35 @@ class Player(Protocol):             # chooses moves for one side
 `gomoku.game.Game` orchestrates a full match:
 
 ```
-Game(config, black, white, on_move=callback)
+Game(config, black, white, observers=[recorder], diagnostics=diag_recorder)
 ```
 
 Loop:
-1. `play_turn()` calls the current provider's `get_move()`.
+1. `play_turn()` calls the current player's `get_move()`; with
+   `diagnostics`, inside `move_diagnostics(...)`, which makes the move's
+   `MoveDiagnostics` record active for the brain to fill and appends it to
+   the `.diag.jsonl` file afterwards (an illegal move is noted in it).
 2. Validates the returned move (`InvalidMoveError` if illegal).
 3. Places the stone on the board.
-4. Calls `on_move(stone, move)` (used for recording / diagnostics).
-5. Checks win condition via `rules.check_winner()`.
+4. Tells every observer (`GameObserver.on_move`).
+5. Checks win condition via `rules.check_winner()`; at the end, tells every
+   observer `on_game_end(result)`.
 6. Alternates stone colour.
 
 The caller drives the loop turn by turn (`play_turn()`), or `play()` runs
 it to the end.
 
+**Observers** (`gomoku.interfaces.GameObserver`) are how recording works:
+`GameRecorder.on_game_end` writes the result and the `.md5sum`;
+`DiagnosticsRecorder` observes the game too (it is added automatically when
+passed as `diagnostics`) and writes the summary line, after the last move's
+diagnostics.  The CLI and the API wire them the same way.
+
 `gomoku.runner.GameRunner` generalises this for the HTTP API: each side is
 either brain-driven (`think()` runs its brain) or external
-(`submit_move()` takes the move from the client).
+(`submit_move()` takes the move from the client).  It takes the same
+`observers` and diagnostics recorder, and uses the same
+`move_diagnostics`, so its files match the CLI's.
 
 ---
 
