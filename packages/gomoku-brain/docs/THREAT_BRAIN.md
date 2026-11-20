@@ -30,7 +30,7 @@ resorting to general search.  It chains together *threats* — moves the opponen
 | Algorithm       | VCF + (PNS or VCT) with alpha-beta fallback       |
 | Default search  | `threat_search=pns` (configurable: `pns` or `vct`)|
 | Built-in defaults | `vcf_depth=20`, `vct_depth=12`, `pns_nodes=10000`, `pns_time_s=5.0`, `depth=4` |
-| Shipped `gomoku.toml` | `pns_nodes=60000`; fallback `depth=5`, `max_candidates=12`, `eval_ordering_depth=11` (see [Parameters](#parameters)) |
+| Shipped `gomoku.toml` | `pns_nodes=120000`; fallback `depth=5`, `max_candidates=12`, `eval_ordering_depth=11` (see [Parameters](#parameters)) |
 | Strength        | Strongest brain in the workspace                  |
 | Best at         | Endgame / tactical positions                      |
 
@@ -439,7 +439,7 @@ when a setting is left out; the shipped `gomoku.toml` changes some:
 | --------------- | -------- | ------------- | ------------------------------- | ------------------------------ |
 | `vcf_depth`     | 20       | 20            | Max plies for VCF search        | Finds longer four-chains       |
 | `vct_depth`     | 12       | 12            | Max plies for VCT search        | Finds longer three/four-chains |
-| `pns_nodes`     | 10,000   | **60,000**    | Distinct positions PNS may create | Proves/disproves more positions |
+| `pns_nodes`     | 10,000   | **120,000**   | Distinct positions PNS may create | Proves/disproves more positions |
 | `pns_time_s`    | 5.0      | 5.0           | Time budget for PNS (seconds)   | Allows longer proof search     |
 | `threat_search` | `"pns"`  | `"pns"`       | Algorithm: `"pns"` or `"vct"`   | Selects the algorithm of steps 4 and 6 |
 | `depth`         | 4        | 5 (ignored)   | Fallback depth without a `fallback` table | Better positional play |
@@ -508,14 +508,15 @@ and `vct_depth=8` means up to **4 mixed threats**.
 | Scenario                        | Recommendation                                          |
 | ------------------------------- | ------------------------------------------------------- |
 | Fast play / low resources       | `vcf_depth=12, threat_search=vct, vct_depth=6`         |
-| Default / balanced              | the shipped `gomoku.toml` (`pns_nodes=60000`)           |
-| Maximum strength                | `pns_nodes=100000` (+10 Elo over 60,000, not significant; 1.27x the time) |
+| Default / balanced              | the shipped `gomoku.toml` (`pns_nodes=120000`, ~1 s per move) |
+| Faster play                     | `pns_nodes=60000` (about half the think time)            |
 | Better fallback positional play | Raise `fallback.depth` and measure it (see below)       |
 
 Measured with `gomoku match` (300 games each, colours swapped per opening):
 
 | Change | Result | Think time per move |
 |--------|--------|---------------------|
+| `pns_nodes` 60,000 → 120,000, with the faster PNS of #55 | **+47 Elo** (95% interval +22 to +72) | 1027 → 954 ms |
 | `pns_nodes` 30,000 → 60,000 | **+30 Elo** (95% interval +4 to +57) | 667 → 968 ms |
 | `pns_nodes` 30,000 → 100,000 | +40 Elo (+11 to +69) | 651 → 1231 ms |
 | split threes for both sides (`own` and `opponent` `split_threes = true`, at 30,000) | **−58 Elo** (−92 to −26) | 385 → 817 ms |
@@ -628,7 +629,7 @@ New behaviour:
 ### CLI
 
 ```bash
-# The [brains.threat] alias from gomoku.toml (PNS, pns_nodes=60000, fallback depth 5)
+# The [brains.threat] alias from gomoku.toml (PNS, pns_nodes=120000, fallback depth 5)
 uv run gomoku play --black threat --white alphabeta
 
 # Custom board size
@@ -646,7 +647,7 @@ depth = 5               # fallback depth when there is no fallback table
 vcf_depth = 20
 vct_depth = 12
 threat_search = "pns"   # "pns" (default) or "vct"
-pns_nodes = 60_000      # distinct positions PNS may create
+pns_nodes = 120_000     # distinct positions PNS may create
 pns_time_s = 5.0        # time budget for PNS (seconds)
 
 [brains.threat.fallback]  # AlphaBetaBrain settings for the fallback
@@ -725,7 +726,7 @@ ThreatBrain(
 | `minimax`   | Classic minimax         | ~50              | 3                    | ~125,000          |
 | `negamax`   | Negamax                 | ~50              | 3                    | ~125,000          |
 | `alphabeta` | Alpha-beta pruning      | ~7 (with cutoff) | 4                    | ~2,400            |
-| **`threat`**| **VCF + PNS + AB**      | **1-5 / all**    | **20 / 60k / 5**    | **~100-60,000**   |
+| **`threat`**| **VCF + PNS + AB**      | **1-5 / all**    | **20 / 120k / 5**   | **~100-120,000**  |
 
 > Node counts are approximate for a mid-game 15x15 board.
 

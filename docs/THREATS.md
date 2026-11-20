@@ -283,7 +283,7 @@ The Gomoku workspace implements three threat search algorithms:
 |-----------|-------------|-----------|--------|-------|
 | **VCF** | Fours | ~1 (defender), ~2–5 (attacker) | 20 plies | Very fast |
 | **VCT** | Fours + threes | ~2–5 (defender), ~5–10 (attacker) | 12 plies | Moderate |
-| **PNS** | Fours + threes | ~15 (defender), ~5–10 (attacker) | 60,000 positions, 5 s (`gomoku.toml`) | Moderate |
+| **PNS** | Fours + threes | ~15 (defender), ~5–10 (attacker) | 120,000 positions, 5 s (`gomoku.toml`) | Moderate |
 
 See [THREAT_BRAIN.md](../packages/gomoku-brain/docs/THREAT_BRAIN.md) for the
 full algorithm descriptions, pseudocode, and worked examples.
