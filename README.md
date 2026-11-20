@@ -5,6 +5,30 @@ interface, game recording, diagnostics, and opening book support.
 
 ---
 
+## About this project
+
+This is a fun project I started back as a university student. It was meant
+to be a testing ground for learning:
+
+- Python
+- algorithms
+- object-oriented programming and design patterns
+- git
+- testing
+- documentation
+- the theory of two-player zero-sum games
+
+Over the years, new tools and technologies have come along, and the project
+adopts them as they appear:
+
+- GitHub and continuous integration
+- free-threaded Python (no GIL)
+- uv as the package manager
+- Pydantic
+- AI-assisted development
+
+---
+
 ## Quick Start
 
 ```bash
