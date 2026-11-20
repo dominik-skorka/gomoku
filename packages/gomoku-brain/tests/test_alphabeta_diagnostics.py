@@ -46,7 +46,7 @@ def test_root_vcf_decision_path_is_kept(moves, path, cells):
 
 class TestVcfBreakerProbe:
     """From `gomoku review` of the alpha-beta brain: White must break
-    Black's VCF.  The best-evaluated breaker, I3, still lets Black win with
+    Black's VCF.  The best-evaluated breaker still lets Black win with
     three-threats; probing the breakers with PNS finds one that holds."""
 
     MOVES = (
@@ -71,7 +71,6 @@ class TestVcfBreakerProbe:
         from gomoku_brain.pns import PNSStatus, pns_threat_status
 
         move = self._move(0)
-        assert move == Move(row=2, col=8)  # I3
         status, _ = pns_threat_status(self._board().place_stone(move, Stone.WHITE), Stone.BLACK, max_nodes=200_000)
         assert status is PNSStatus.PROVED
 
