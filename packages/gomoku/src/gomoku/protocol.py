@@ -4,8 +4,6 @@
 stays as an alias so existing imports keep working.
 """
 
-from __future__ import annotations
-
 from gomoku.interfaces import Player
 
 MoveProvider = Player

@@ -1,7 +1,5 @@
 """Tests for SearchState — mutable bitboard with make/unmake."""
 
-from __future__ import annotations
-
 import random
 
 import numpy as np

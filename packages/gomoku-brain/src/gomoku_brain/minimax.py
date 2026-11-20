@@ -1,7 +1,5 @@
 """Minimax brain — classic minimax search."""
 
-from __future__ import annotations
-
 from typing import override
 
 from gomoku.board import Board

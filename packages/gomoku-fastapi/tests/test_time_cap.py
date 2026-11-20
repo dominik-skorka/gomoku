@@ -1,7 +1,5 @@
 """API-side cap on per-request search time (``api.max_time_limit_s``)."""
 
-from __future__ import annotations
-
 from gomoku.settings import GomokuSettings
 from gomoku_fastapi.deps import _cap_time_budget, build_brain
 

@@ -1,7 +1,5 @@
 """Tests for the zobrist-memoised scan context / candidate cache on SearchState."""
 
-from __future__ import annotations
-
 import numpy as np
 import pytest
 from gomoku.board import Board

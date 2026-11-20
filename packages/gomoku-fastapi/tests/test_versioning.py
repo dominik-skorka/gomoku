@@ -1,7 +1,5 @@
 """API versioning: discovery endpoint, version headers and deprecation signals."""
 
-from __future__ import annotations
-
 from datetime import date, timedelta
 from importlib.metadata import version as package_version
 

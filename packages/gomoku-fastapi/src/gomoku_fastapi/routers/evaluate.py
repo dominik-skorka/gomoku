@@ -9,8 +9,6 @@ hot after the first request), so we do *not* dispatch to a worker
 thread — the cost of context-switching would dominate the work itself.
 """
 
-from __future__ import annotations
-
 from fastapi import APIRouter, HTTPException, status
 from gomoku.models import Stone
 from gomoku_brain.evaluate import evaluate_board

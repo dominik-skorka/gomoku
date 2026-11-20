@@ -27,8 +27,6 @@ carries on.  An empty line ends the session.  Everything a brain or its logging
 prints goes to stderr, so stdout carries only the protocol.
 """
 
-from __future__ import annotations
-
 import argparse
 import json
 import os

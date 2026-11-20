@@ -18,8 +18,6 @@ wrong-turn / illegal move / no-brain-configured / game-already-over,
 500 only for genuine surprises.
 """
 
-from __future__ import annotations
-
 from datetime import UTC, datetime
 from pathlib import Path
 from tempfile import mkdtemp

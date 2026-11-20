@@ -1,7 +1,5 @@
 """Rich board display for the Gomoku CLI."""
 
-from __future__ import annotations
-
 from gomoku.board import Board
 from gomoku.models import GameResult, Move, Stone
 from gomoku.recorder import GameRecord

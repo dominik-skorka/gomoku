@@ -12,8 +12,6 @@ file-based pipeline with this endpoint without changing downstream
 ``jq`` filters.
 """
 
-from __future__ import annotations
-
 from fastapi import APIRouter, File, HTTPException, UploadFile, status
 from gomoku.analyze import analyze_diagnostics_text
 

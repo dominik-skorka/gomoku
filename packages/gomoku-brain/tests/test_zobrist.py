@@ -8,8 +8,6 @@ These tests cover the two most collision-sensitive parts of the search:
   semantics, otherwise alpha-beta returns the wrong score.
 """
 
-from __future__ import annotations
-
 import random
 
 import pytest

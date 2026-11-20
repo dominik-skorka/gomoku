@@ -19,8 +19,6 @@ from it; the type checker (pyright, in CI) verifies that it does.
   runner notify all of theirs.
 """
 
-from __future__ import annotations
-
 from collections.abc import Collection
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 

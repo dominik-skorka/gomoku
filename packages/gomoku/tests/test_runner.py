@@ -13,8 +13,6 @@ relies on:
    typed exceptions the API can convert into clean 4xx responses.
 """
 
-from __future__ import annotations
-
 import pytest
 from gomoku.game import InvalidMoveError
 from gomoku.models import GameConfig, GameResult, Move, Stone

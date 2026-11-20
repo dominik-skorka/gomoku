@@ -18,8 +18,6 @@ tags travel with the function rather than being woven through the
 search code.
 """
 
-from __future__ import annotations
-
 import threading
 import time
 

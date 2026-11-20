@@ -20,8 +20,6 @@ observers and a ``DiagnosticsRecorder``), so a session that opts into
 analyze`` consume without modification.
 """
 
-from __future__ import annotations
-
 from collections.abc import Iterable
 
 from gomoku.board import Board

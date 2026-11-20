@@ -17,8 +17,6 @@ network, no console) when called without explicit settings, and the
 request-id middleware is pure-Python with no external state.
 """
 
-from __future__ import annotations
-
 import uuid
 from contextvars import ContextVar
 from typing import TYPE_CHECKING, override

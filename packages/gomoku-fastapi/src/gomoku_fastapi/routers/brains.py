@@ -1,7 +1,5 @@
 """``GET /v1/brains`` — list registered brains and their settings schemas."""
 
-from __future__ import annotations
-
 from fastapi import APIRouter
 from gomoku_brain import BRAINS
 

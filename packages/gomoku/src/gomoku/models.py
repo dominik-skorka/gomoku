@@ -1,7 +1,5 @@
 """Core data models for the Gomoku game."""
 
-from __future__ import annotations
-
 from enum import IntEnum
 from typing import override
 

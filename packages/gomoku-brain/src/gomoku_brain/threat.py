@@ -12,8 +12,6 @@ sets are re-exported below for backward compatibility — external callers
 and tests still import them from this module.
 """
 
-from __future__ import annotations
-
 import threading
 import time
 from typing import Any, override

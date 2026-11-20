@@ -18,8 +18,6 @@ stripped.  Two tests compare the live document against it:
       uv run python packages/gomoku-fastapi/tests/test_api_contract.py --update
 """
 
-from __future__ import annotations
-
 import copy
 import json
 import os

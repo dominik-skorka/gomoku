@@ -1,7 +1,5 @@
 """Random brain — picks a uniformly random valid move."""
 
-from __future__ import annotations
-
 import random as _random
 from typing import override
 

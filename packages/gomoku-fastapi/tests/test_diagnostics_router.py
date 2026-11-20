@@ -7,8 +7,6 @@ assert the wire shape and the diagnostics-isolation invariants
 omits the field entirely).
 """
 
-from __future__ import annotations
-
 from gomoku.board import Board
 from gomoku.models import Move, Stone
 

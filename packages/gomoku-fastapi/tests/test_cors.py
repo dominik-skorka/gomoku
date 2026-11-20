@@ -6,8 +6,6 @@ per-test ``GOMOKU_API__CORS_ORIGINS`` env-var overrides to assert
 both branches of the mount-or-skip decision.
 """
 
-from __future__ import annotations
-
 import pytest
 from fastapi.testclient import TestClient
 from gomoku_fastapi import limits

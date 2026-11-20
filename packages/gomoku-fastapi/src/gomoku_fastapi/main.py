@@ -19,8 +19,6 @@ the ``gomoku-api`` console script which delegates to uvicorn.
   loosen them without a code change.
 """
 
-from __future__ import annotations
-
 from contextlib import asynccontextmanager
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as package_version

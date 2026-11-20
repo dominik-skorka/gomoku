@@ -5,8 +5,6 @@ includes the changed routers plus every unchanged one from here, and
 register the version in :mod:`gomoku_fastapi.versioning`.
 """
 
-from __future__ import annotations
-
 from fastapi import APIRouter
 
 from gomoku_fastapi.routers import analyze, brains, evaluate, moves, sessions

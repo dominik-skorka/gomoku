@@ -19,8 +19,6 @@ probes only interleave and ``threads`` > 1 brings no speed-up, just a
 little overhead.
 """
 
-from __future__ import annotations
-
 import queue
 import threading
 import time

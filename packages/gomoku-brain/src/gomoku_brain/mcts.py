@@ -27,8 +27,6 @@ one child, evaluates, and walks back up — with no per-iteration grid
 or occupied-set copies.
 """
 
-from __future__ import annotations
-
 import math
 import random as _random
 from typing import Any, override

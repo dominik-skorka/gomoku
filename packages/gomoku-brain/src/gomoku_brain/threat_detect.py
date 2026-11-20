@@ -11,8 +11,6 @@ for backward compatibility, since tests, ``pns.py``, ``mcts.py``, and
 ``alphabeta.py`` all import these symbols by name).
 """
 
-from __future__ import annotations
-
 from typing import Literal
 
 from gomoku.interfaces import BoardView

@@ -1,7 +1,5 @@
 """``GET /v1/brains`` lists registered brains and their settings schemas."""
 
-from __future__ import annotations
-
 
 class TestListBrains:
     def test_returns_all_built_in_brains(self, client):

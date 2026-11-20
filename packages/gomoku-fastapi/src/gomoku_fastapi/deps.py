@@ -12,8 +12,6 @@ every request.  Tests can clear the cache via :func:`reset_settings_cache`
 and :func:`reset_session_store`.
 """
 
-from __future__ import annotations
-
 from typing import Annotated, Any
 
 from fastapi import Depends, HTTPException, status

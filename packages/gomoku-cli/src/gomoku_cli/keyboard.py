@@ -1,7 +1,5 @@
 """Keyboard input Player — reads moves from the terminal."""
 
-from __future__ import annotations
-
 import re
 
 from gomoku.board import Board

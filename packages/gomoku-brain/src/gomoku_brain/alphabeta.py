@@ -6,8 +6,6 @@ Move-classification helpers (``_check_win``, ``_count_open_threes_at``,
 not interleaved with pattern scanners.
 """
 
-from __future__ import annotations
-
 import time
 from typing import Any, override
 

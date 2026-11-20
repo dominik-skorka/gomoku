@@ -5,8 +5,6 @@ mapping to evaluated moves.  At runtime the current board is canonicalised
 and looked up in the loaded book to retrieve a pre-computed best move.
 """
 
-from __future__ import annotations
-
 import json
 from pathlib import Path
 from typing import TYPE_CHECKING, Any

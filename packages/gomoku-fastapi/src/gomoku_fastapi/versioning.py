@@ -25,8 +25,6 @@ asks to be documented).  Infrastructure endpoints (``/healthz``,
 ``/versions``) are not versioned.
 """
 
-from __future__ import annotations
-
 import json
 import re
 from dataclasses import dataclass

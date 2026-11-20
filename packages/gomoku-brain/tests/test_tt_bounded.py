@@ -1,7 +1,5 @@
 """Bounded, two-generation transposition table."""
 
-from __future__ import annotations
-
 import pytest
 from gomoku_brain.zobrist import BoundType, TranspositionTable
 

@@ -17,8 +17,6 @@ have different consequences:
   field's comment says what it guards against.
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 
 

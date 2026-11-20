@@ -1,7 +1,5 @@
 """Conversion helpers between Board (Pydantic) and numpy arrays for JIT code."""
 
-from __future__ import annotations
-
 import numpy as np
 from gomoku.board import Board
 from gomoku.interfaces import BoardView

@@ -18,8 +18,6 @@ External consumers:
   register the keyboard provider).
 """
 
-from __future__ import annotations
-
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from typing import Any, override

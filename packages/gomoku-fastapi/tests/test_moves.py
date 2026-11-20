@@ -7,8 +7,6 @@ end-to-end smoke test uses ``alphabeta`` with ``depth=1`` so we cover
 the thread-pool path with a brain that actually evaluates positions.
 """
 
-from __future__ import annotations
-
 from gomoku.board import Board
 from gomoku.models import Move, Stone
 

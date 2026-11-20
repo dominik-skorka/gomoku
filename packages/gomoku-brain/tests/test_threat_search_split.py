@@ -16,8 +16,6 @@ This file pins:
    entry points and they agree.
 """
 
-from __future__ import annotations
-
 from gomoku.board import Board
 from gomoku.models import Move, Stone
 

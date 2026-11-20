@@ -1,7 +1,5 @@
 """Game recording and loading — captures a full game for later playback."""
 
-from __future__ import annotations
-
 import hashlib
 import json
 from datetime import UTC, datetime

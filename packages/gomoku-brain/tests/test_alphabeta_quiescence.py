@@ -19,8 +19,6 @@ These tests pin three things:
    have found with the in-line implementation.
 """
 
-from __future__ import annotations
-
 import math
 
 from gomoku.board import Board

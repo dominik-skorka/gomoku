@@ -4,8 +4,6 @@ Instead of evaluating all empty cells (up to 225 on a 15x15 board),
 restrict candidates to cells within a radius of existing stones.
 """
 
-from __future__ import annotations
-
 from gomoku.interfaces import BoardView
 from gomoku.models import Move
 

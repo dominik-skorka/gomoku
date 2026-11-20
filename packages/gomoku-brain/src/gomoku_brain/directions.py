@@ -7,8 +7,6 @@ brain modules (`alphabeta`, `threat`, `evaluate`, `mcts`) need the same
 drift when the set is extended.
 """
 
-from __future__ import annotations
-
 # (dr, dc) pairs.  Order matches ``evaluate_jit._DIRS`` row-for-row so a
 # scan-by-direction produces identical results in both paths.
 DIRECTIONS: list[tuple[int, int]] = [(0, 1), (1, 0), (1, 1), (1, -1)]
