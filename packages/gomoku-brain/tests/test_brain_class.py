@@ -108,9 +108,10 @@ class TestBuiltInBrains:
 
     def test_settings_are_the_single_source_of_defaults(self):
         assert MinimaxBrain().settings.depth == 3
-        assert AlphaBetaBrain(depth=6).depth == 6  # attributes still mirror the settings
+        assert AlphaBetaBrain(depth=6).settings.depth == 6
+        assert not hasattr(AlphaBetaBrain(), "depth")  # no copies beside the settings
 
     def test_threat_fallback_keeps_the_top_level_depth_unless_set(self):
-        assert ThreatBrain(depth=6)._fallback.depth == 6
-        assert ThreatBrain(depth=6, fallback={"lmr": True})._fallback.depth == 6
-        assert ThreatBrain(depth=6, fallback={"depth": 3})._fallback.depth == 3
+        assert ThreatBrain(depth=6)._fallback.settings.depth == 6
+        assert ThreatBrain(depth=6, fallback={"lmr": True})._fallback.settings.depth == 6
+        assert ThreatBrain(depth=6, fallback={"depth": 3})._fallback.settings.depth == 3

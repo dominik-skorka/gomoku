@@ -106,7 +106,6 @@ class ThreatBrain(Brain[ThreatBrainSettings], name="threat"):
     def __init__(self, settings: ThreatBrainSettings | None = None, /, **overrides: Any) -> None:
         super().__init__(settings, **overrides)
         s = self.settings
-        self.depth = s.depth
         # Threat spaces of our own forced-win search and of the opponent's
         # (``[brains.threat.threats]``): ``own`` / ``opponent`` hold the
         # attacker's threats, ``defence`` the defender's replies in both,
@@ -116,13 +115,6 @@ class ThreatBrain(Brain[ThreatBrainSettings], name="threat"):
         self.own_space = ThreatSpace(**{**(threats.get("own") or {}), **defence})
         self.opponent_space = ThreatSpace(**{**(threats.get("opponent") or {}), **defence})
         self.split_forks = bool((threats.get("forks") or {}).get("split", False))
-        self.vcf_depth = s.vcf_depth
-        self.vct_depth = s.vct_depth
-        self.threat_search = s.threat_search
-        self.pns_nodes = s.pns_nodes
-        self.pns_time_s = s.pns_time_s
-        # Threads that probe breaker candidates in parallel (gomoku_brain.probe).
-        self.probe_threads = s.probe_threads
         # ``fallback`` carries AlphaBetaBrain tuning (qs_vcf_depth, LMR,
         # null-move, time limit, ...) for the no-forced-win path —
         # without it the fallback ran with bare defaults while the
@@ -193,7 +185,7 @@ class ThreatBrain(Brain[ThreatBrainSettings], name="threat"):
         vcf_cache: _ThreatCache = {}
 
         # 2) Try VCF — very fast, deep search
-        move = _vcf_state(state, stone, self.vcf_depth, cache=vcf_cache, space=self.own_space)
+        move = _vcf_state(state, stone, self.settings.vcf_depth, cache=vcf_cache, space=self.own_space)
         if move is not None:
             logfire.info("VCF found winning move: {move}", move=str(move))
             if diag is not None:
@@ -203,9 +195,13 @@ class ThreatBrain(Brain[ThreatBrainSettings], name="threat"):
             return move
 
         # 3) Try broader threat search (PNS or VCT)
-        if self.threat_search == "pns":
+        if self.settings.threat_search == "pns":
             move = pns_threat_search(
-                state, stone, max_nodes=self.pns_nodes, max_time_s=self.pns_time_s, space=self.own_space
+                state,
+                stone,
+                max_nodes=self.settings.pns_nodes,
+                max_time_s=self.settings.pns_time_s,
+                space=self.own_space,
             )
             if move is not None:
                 logfire.info("PNS found winning move: {move}", move=str(move))
@@ -214,7 +210,7 @@ class ThreatBrain(Brain[ThreatBrainSettings], name="threat"):
                     diag.chosen_move = move
                 return move
         else:
-            move = _vct(state, stone, self.vct_depth, vcf_cache=vcf_cache, space=self.own_space)
+            move = _vct(state, stone, self.settings.vct_depth, vcf_cache=vcf_cache, space=self.own_space)
             if move is not None:
                 logfire.info("VCT found winning move: {move}", move=str(move))
                 if diag is not None:
@@ -227,7 +223,7 @@ class ThreatBrain(Brain[ThreatBrainSettings], name="threat"):
             diag.notes.append("No forced win found (VCF/PNS/VCT)")
 
         # 4) Check if opponent has a VCF threat
-        opp_vcf = _vcf_state(opp_state, opp, self.vcf_depth, cache=vcf_cache, space=self.opponent_space)
+        opp_vcf = _vcf_state(opp_state, opp, self.settings.vcf_depth, cache=vcf_cache, space=self.opponent_space)
         if opp_vcf is not None:
             if diag is not None:
                 diag.opp_threats = diag.opp_threats.model_copy(update={"vcf_result": "win"})
@@ -301,16 +297,16 @@ class ThreatBrain(Brain[ThreatBrainSettings], name="threat"):
         if not has_four and threes < 2:
             return None
 
-        if self.threat_search == "pns":
+        if self.settings.threat_search == "pns":
             opp_threat = pns_threat_search(
                 opp_state,
                 opp,
-                max_nodes=self.pns_nodes,
-                max_time_s=self.pns_time_s,
+                max_nodes=self.settings.pns_nodes,
+                max_time_s=self.settings.pns_time_s,
                 space=self.opponent_space,
             )
         else:
-            opp_threat = _vct(opp_state, opp, self.vct_depth, vcf_cache=vcf_cache, space=self.opponent_space)
+            opp_threat = _vct(opp_state, opp, self.settings.vct_depth, vcf_cache=vcf_cache, space=self.opponent_space)
 
         if opp_threat is None:
             return None
@@ -371,9 +367,9 @@ class ThreatBrain(Brain[ThreatBrainSettings], name="threat"):
         search keeps looking for a proven candidate instead of trusting
         it.
 
-        A global wall-clock cap (``self.pns_time_s``) bounds the whole
+        A global wall-clock cap (``self.settings.pns_time_s``) bounds the whole
         loop, and each PNS probe gets at most half the configured budget
-        and no more than the time remaining.  ``self.probe_threads``
+        and no more than the time remaining.  ``self.settings.probe_threads``
         probes candidates in parallel (see :mod:`gomoku_brain.probe`).
         """
         opp = stone.opponent()
@@ -383,23 +379,23 @@ class ThreatBrain(Brain[ThreatBrainSettings], name="threat"):
         # and writes are thread-safe); a result one thread stores is
         # simply reused by the others.
         vct_probe_cache: _ThreatCache = {}
-        deadline = time.monotonic() + self.pns_time_s
+        deadline = time.monotonic() + self.settings.pns_time_s
 
         def probe(after: SearchState, stop: threading.Event | None) -> Verdict:
             # Fast VCF probe first.
-            if _vcf_state(after, opp, self.vcf_depth, cache=vcf_cache, space=self.opponent_space) is not None:
+            if _vcf_state(after, opp, self.settings.vcf_depth, cache=vcf_cache, space=self.opponent_space) is not None:
                 return Verdict.LOST
             # Expensive threat probe — bounded by remaining global budget.
-            if self.threat_search == "pns":
+            if self.settings.threat_search == "pns":
                 remaining = max(_MIN_PROBE_TIME_S, deadline - time.monotonic())
                 status, _ = pns_threat_status(
                     after,
                     opp,
-                    max_nodes=int(self.pns_nodes * _OPP_PNS_NODE_FRACTION),
-                    max_time_s=min(self.pns_time_s * _OPP_PNS_TIME_FRACTION, remaining),
+                    max_nodes=int(self.settings.pns_nodes * _OPP_PNS_NODE_FRACTION),
+                    max_time_s=min(self.settings.pns_time_s * _OPP_PNS_TIME_FRACTION, remaining),
                     space=self.opponent_space,
                     stop=stop,
-                    vcf_depth=self.vcf_depth,
+                    vcf_depth=self.settings.vcf_depth,
                     check_root_counterattacks=True,
                 )
                 if status is PNSStatus.PROVED:
@@ -410,14 +406,14 @@ class ThreatBrain(Brain[ThreatBrainSettings], name="threat"):
             found = _vct_state(
                 after,
                 opp,
-                self.vct_depth,
+                self.settings.vct_depth,
                 vct_cache=vct_probe_cache,
                 vcf_cache=vcf_cache,
                 space=self.opponent_space,
             )
             return Verdict.LOST if found is not None else Verdict.SAFE
 
-        result = probe_in_order(state, stone, scored, probe, deadline, self.probe_threads)
+        result = probe_in_order(state, stone, scored, probe, deadline, self.settings.probe_threads)
         if result.timed_out:
             logfire.info("{label}: time budget exhausted after {n} candidates", label=label, n=result.probed)
         if result.safe is not None:
@@ -489,7 +485,7 @@ class ThreatBrain(Brain[ThreatBrainSettings], name="threat"):
         """
         candidates = get_candidate_moves(state, radius=_CANDIDATE_RADIUS)
         durable, breakers = classify_vcf_breakers(
-            state, candidates, stone, self.vcf_depth, cache=vcf_cache, space=self.opponent_space
+            state, candidates, stone, self.settings.vcf_depth, cache=vcf_cache, space=self.opponent_space
         )
 
         if not breakers:

@@ -136,10 +136,10 @@ class TestThreatFallbackTuning:
         brain = get_brain("threat", depth=5)
         fb = brain._fallback
         assert isinstance(fb, AlphaBetaBrain)
-        assert fb.depth == 5
-        assert fb.qs_vcf_depth == 0
-        assert fb.lmr is False
-        assert fb.null_move_pruning is False
+        assert fb.settings.depth == 5
+        assert fb.settings.qs_vcf_depth == 0
+        assert fb.settings.lmr is False
+        assert fb.settings.null_move_pruning is False
 
     def test_fallback_table_tunes_the_fallback(self):
         bs = BrainSettings.model_validate(
@@ -159,13 +159,13 @@ class TestThreatFallbackTuning:
         )
         brain = get_brain_from_settings("tuned_threat", bs)
         fb = brain._fallback
-        assert fb.qs_vcf_depth == 12
-        assert fb.threat_extensions == 2
-        assert fb.null_move_pruning is True
-        assert fb.lmr is True
-        assert fb.time_limit_s == 120.0
+        assert fb.settings.qs_vcf_depth == 12
+        assert fb.settings.threat_extensions == 2
+        assert fb.settings.null_move_pruning is True
+        assert fb.settings.lmr is True
+        assert fb.settings.time_limit_s == 120.0
         # vcf_depth stays off — the threat brain already ran VCF itself.
-        assert fb.vcf_depth == 0
+        assert fb.settings.vcf_depth == 0
 
     def test_alphabeta_alias_keeps_early_game_settings(self):
         """Regression: early_game_* keys used to be silently dropped by
@@ -175,8 +175,8 @@ class TestThreatFallbackTuning:
             {"ab": {"type": "alphabeta", "early_game_max_candidates": 8, "early_game_futility_margin": 600}}
         )
         brain = get_brain_from_settings("ab", bs)
-        assert brain.early_game_max_candidates == 8
-        assert brain.early_game_futility_margin == 600
+        assert brain.settings.early_game_max_candidates == 8
+        assert brain.settings.early_game_futility_margin == 600
 
     def test_fallback_search_shape_settings_reach_the_brain(self):
         bs = BrainSettings.model_validate(
@@ -187,9 +187,9 @@ class TestThreatFallbackTuning:
                 }
             }
         )
-        fb = get_brain_from_settings("t", bs)._fallback
+        fb = get_brain_from_settings("t", bs)._fallback.settings
         assert (fb.depth, fb.eval_ordering_depth, fb.max_candidates, fb.futility_margin) == (5, 11, 12, 900)
 
     def test_alphabeta_search_shape_defaults_are_unchanged(self):
-        brain = get_brain("alphabeta")
-        assert (brain.max_candidates, brain.futility_margin, brain.eval_ordering_depth) == (20, 1500, 3)
+        s = get_brain("alphabeta").settings
+        assert (s.max_candidates, s.futility_margin, s.eval_ordering_depth) == (20, 1500, 3)

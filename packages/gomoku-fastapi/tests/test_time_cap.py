@@ -41,17 +41,17 @@ class TestCapTimeBudget:
 class TestBuildBrain:
     def test_alphabeta_is_capped(self):
         brain = build_brain("alphabeta", None, _settings(3.0))
-        assert brain.time_limit_s == 3.0
+        assert brain.settings.time_limit_s == 3.0
 
     def test_override_cannot_exceed_cap(self):
         brain = build_brain("alphabeta", {"time_limit_s": 500.0}, _settings(3.0))
-        assert brain.time_limit_s == 3.0
+        assert brain.settings.time_limit_s == 3.0
 
     def test_threat_fallback_is_capped_and_keeps_depth(self):
         brain = build_brain("threat", None, _settings(3.0))
-        assert brain._fallback.time_limit_s == 3.0
-        assert brain._fallback.depth == brain.depth
+        assert brain._fallback.settings.time_limit_s == 3.0
+        assert brain._fallback.settings.depth == brain.settings.depth
 
     def test_zero_disables_cap(self):
         brain = build_brain("alphabeta", {"time_limit_s": 100.0}, _settings(0.0))
-        assert brain.time_limit_s == 100.0
+        assert brain.settings.time_limit_s == 100.0
