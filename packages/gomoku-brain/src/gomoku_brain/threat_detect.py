@@ -43,7 +43,7 @@ _ScanCtx = tuple
 # resolved, ``False`` = JIT disabled.  ``_scan_context`` runs ~20k times
 # per search; re-importing the kernels and re-checking the JIT setting on
 # every call used to cost more than the (memoised) kernel work itself.
-_SCAN_KIT: tuple | None | bool = None
+_SCAN_KIT: tuple | bool | None = None
 
 
 def _resolve_scan_kit() -> tuple | bool:

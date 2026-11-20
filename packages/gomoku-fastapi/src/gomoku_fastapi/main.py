@@ -24,7 +24,7 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as package_version
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -71,6 +71,35 @@ def _package_version() -> str:
         return "0+unknown"
 
 
+def _only_version(doc: dict[str, Any], prefix: str) -> dict[str, Any]:
+    """*doc* with only the paths under *prefix* and the schemas they use."""
+    paths = {p: item for p, item in doc.get("paths", {}).items() if p == prefix or p.startswith(f"{prefix}/")}
+    schemas: dict[str, Any] = doc.get("components", {}).get("schemas", {})
+    used: set[str] = set()
+    pending = [paths]
+    while pending:
+        node = pending.pop()
+        if isinstance(node, dict):
+            ref = node.get("$ref")
+            if isinstance(ref, str) and ref.startswith("#/components/schemas/"):
+                name = ref.rsplit("/", 1)[1]
+                if name not in used and name in schemas:
+                    used.add(name)
+                    pending.append(schemas[name])
+            pending.extend(node.values())
+        elif isinstance(node, list):
+            pending.extend(node)
+    out = {**doc, "paths": paths}
+    components = {k: v for k, v in doc.get("components", {}).items() if k != "schemas"}
+    if used:
+        components["schemas"] = {name: schema for name, schema in schemas.items() if name in used}
+    if components:
+        out["components"] = components
+    else:
+        out.pop("components", None)
+    return out
+
+
 def _add_version_openapi(app: FastAPI, version: ApiVersion) -> None:
     """Serve ``/<version>/openapi.json``: an OpenAPI document of that version only.
 
@@ -81,17 +110,16 @@ def _add_version_openapi(app: FastAPI, version: ApiVersion) -> None:
 
     async def version_openapi() -> object:
         if "doc" not in cache:
-            routes = [
-                r
-                for r in app.routes
-                if getattr(r, "path", "") == version.prefix or getattr(r, "path", "").startswith(f"{version.prefix}/")
-            ]
-            cache["doc"] = get_openapi(
+            # The whole app's document, cut down to this version.  (Filtering
+            # ``app.routes`` by path does not work: FastAPI keeps included
+            # routers there as nested objects, expanded only by get_openapi.)
+            doc = get_openapi(
                 title=f"{app.title} ({version.name})",
                 version=app.version,
                 description=app.description,
-                routes=routes,
+                routes=app.routes,
             )
+            cache["doc"] = _only_version(doc, version.prefix)
         return cache["doc"]
 
     app.add_api_route(f"{version.prefix}/openapi.json", version_openapi, include_in_schema=False)

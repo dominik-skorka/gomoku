@@ -27,10 +27,12 @@ rapid request loops without tripping 429s.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
+from fastapi.routing import iter_route_contexts
 from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware, _find_route_handler, _should_exempt, sync_check_limits
 from slowapi.util import get_remote_address
 
 from gomoku_fastapi.deps import get_settings
@@ -105,11 +107,41 @@ def install(app: FastAPI) -> None:
 
     Idempotent — safe to call from each ``create_app`` invocation.
     """
-    from slowapi.middleware import SlowAPIMiddleware
-
     app.state.limiter = limiter
     app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
-    app.add_middleware(SlowAPIMiddleware)
+    app.add_middleware(_DefaultLimitMiddleware)
+
+
+class _DefaultLimitMiddleware(SlowAPIMiddleware):
+    """slowapi's middleware, finding the endpoint among *all* routes.
+
+    slowapi looks the endpoint up in ``app.routes``.  FastAPI keeps
+    included routers there as single nested entries without an
+    ``endpoint``, so slowapi found no endpoint for any route of an
+    included router, treated it as exempt, and the default limit
+    silently applied to nothing.  ``iter_route_contexts`` lists every
+    route with its full path, as FastAPI's own OpenAPI generation sees
+    them.  Otherwise this is ``SlowAPIMiddleware.dispatch`` unchanged.
+    """
+
+    async def dispatch(self, request: Request, call_next: Any) -> Response:
+        app = request.app
+        active: Limiter = app.state.limiter
+        if not active.enabled:
+            return await call_next(request)
+
+        handler = _find_route_handler(list(iter_route_contexts(app.routes)), request.scope)
+        if _should_exempt(active, handler):
+            return await call_next(request)
+
+        error_response, should_inject_headers = sync_check_limits(active, request, handler, app)
+        if error_response is not None:
+            return error_response
+
+        response = await call_next(request)
+        if should_inject_headers:
+            response = active._inject_headers(response, request.state.view_rate_limit)
+        return response
 
 
 __all__ = [

@@ -6,11 +6,11 @@ requires-python = ">=3.14"
 dependencies = [
     "gomoku",
     "gomoku-brain",
-    "fastapi>=0.115",
-    "uvicorn[standard]>=0.32",
-    "python-multipart>=0.0.20",
-    "logfire[fastapi]>=4.0",
-    "slowapi>=0.1.9",
+    "fastapi>=0.165.0",
+    "uvicorn[standard]>=0.54.0",
+    "python-multipart>=0.0.34",
+    "logfire[fastapi]>=6.0.0",
+    "slowapi>=0.1.10",
 ]
 
 [tool.uv.sources]
@@ -18,12 +18,12 @@ gomoku = { workspace = true }
 gomoku-brain = { workspace = true }
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling>=1.33.0"]
 build-backend = "hatchling.build"
 
 [dependency-groups]
 dev = [
-    "library-skills>=0.0.3",
+    "library-skills>=0.0.21",
 ]
 
 [tool.hatch.build.targets.wheel]
