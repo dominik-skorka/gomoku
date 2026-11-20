@@ -221,7 +221,11 @@ class ThreatBrain:
             # 3) Try broader threat search (PNS or VCT)
             if self.threat_search == "pns":
                 move = pns_threat_search(
-                    state, stone, max_nodes=self.pns_nodes, max_time_s=self.pns_time_s, space=self.own_space
+                    state,
+                    stone,
+                    max_nodes=self.pns_nodes,
+                    max_time_s=self.pns_time_s,
+                    space=self.own_space,
                 )
                 if move is not None:
                     logfire.info("PNS found winning move: {move}", move=str(move))
@@ -415,6 +419,9 @@ class ThreatBrain:
                     max_time_s=min(self.pns_time_s * _OPP_PNS_TIME_FRACTION, remaining),
                     space=self.opponent_space,
                     stop=stop,
+                    vcf_depth=self.vcf_depth,
+                    quiet_vct_depth=self.vct_depth,
+                    check_root_counterattacks=True,
                 )
                 if status is PNSStatus.PROVED:
                     return Verdict.LOST

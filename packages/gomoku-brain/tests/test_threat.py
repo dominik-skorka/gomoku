@@ -430,7 +430,18 @@ class TestVctAwareBreakerChoice:
         b = _place(b, [(7, 8), (6, 6), (9, 9)], Stone.WHITE)
         state = SearchState.from_board(b, Stone.BLACK)
 
-        def fake_status(st, _opp, max_nodes, max_time_s, space=None, stop=None):
+        def fake_status(
+            st,
+            _opp,
+            max_nodes,
+            max_time_s,
+            space=None,
+            stop=None,
+            vcf_depth=20,
+            quiet_vct_depth=0,
+            check_root_counterattacks=False,
+        ):
+            assert check_root_counterattacks
             row, col, _ = st.last_move()
             return (PNSStatus.DISPROVED if (row, col) in proven else PNSStatus.UNKNOWN), None
 
@@ -453,6 +464,40 @@ class TestVctAwareBreakerChoice:
         brain, b, state, order = self._setup(monkeypatch, proven=set(), threads=threads)
         move = brain._vct_aware_search(b, state, Stone.BLACK, Move(row=0, col=0), {})
         assert move == order[0]
+
+    def test_rejects_breaker_whose_forced_vcf_reply_starts_a_win(self):
+        """G5 looks safe until Black's forced VCF breaker G8 is searched."""
+        from gomoku_brain.search_state import SearchState
+
+        board = Board(size=15)
+        for name, stone in (
+            ("H8", Stone.BLACK),
+            ("G7", Stone.WHITE),
+            ("I9", Stone.BLACK),
+            ("G6", Stone.WHITE),
+            ("H9", Stone.BLACK),
+        ):
+            move = Move(row=int(name[1:]) - 1, col=ord(name[0]) - ord("A"))
+            board = board.place_stone(move, stone)
+
+        g5 = Move(row=4, col=6)
+        h7 = Move(row=6, col=7)
+        # The probe receives half of this node budget. H7 is disproved within
+        # 5k nodes, while G5 remains unproved; the generous time cap keeps the
+        # assertion node-bound instead of runner-speed-bound.
+        brain = ThreatBrain(pns_nodes=10_000, pns_time_s=60.0)
+        state = SearchState.from_board(board, Stone.WHITE)
+
+        safe, unproven = brain._probe_breakers(
+            state,
+            Stone.WHITE,
+            [(1.0, g5), (0.0, h7)],
+            {},
+            "regression",
+        )
+
+        assert safe == h7
+        assert unproven == g5
 
 
 class TestVcfBreakerChoice:

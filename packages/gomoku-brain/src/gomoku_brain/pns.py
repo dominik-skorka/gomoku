@@ -2,8 +2,10 @@
 
 Implements the PN1 algorithm (Allis 1994) restricted to threat moves:
 
-- **OR nodes (attacker)**: children are four-threats and live-three threats.
-  The attacker wins if *any* child is proved.
+- **OR nodes (attacker)**: children are four-threats and live-three threats;
+  when enabled for a breaker probe, the root also considers forced VCF
+  breakers and a bounded set of quiet moves that immediately establish a
+  VCT. The attacker wins if *any* child is proved.
 - **AND nodes (defender)**: children are threat-relevant moves -- direct
   blocks and counter-threats.  The attacker wins only if *every* child is
   proved.
@@ -26,7 +28,9 @@ from __future__ import annotations
 
 import threading
 import time
+from dataclasses import replace
 from enum import Enum, auto
+from functools import cache
 
 from gomoku.board import Board
 from gomoku.models import Move, Stone
@@ -41,7 +45,7 @@ from gomoku_brain.threat_detect import (
     _scan_context,
     _ScanCtx,
 )
-from gomoku_brain.threat_search import _state_is_win
+from gomoku_brain.threat_search import _state_is_win, _vcf_state, _vct_state, classify_vcf_breakers
 from gomoku_brain.threat_space import DEFAULT_THREAT_SPACE, ThreatSpace
 
 # ---------------------------------------------------------------------------
@@ -49,6 +53,39 @@ from gomoku_brain.threat_space import DEFAULT_THREAT_SPACE, ThreatSpace
 # ---------------------------------------------------------------------------
 
 INF = 1_000_000_000  # Practical infinity for proof/disproof numbers
+_QUIET_SETUP_CANDIDATES = 4
+_QUIET_SETUP_MAX_DEPTH = 6
+
+
+@cache
+def _opponent_space(space: ThreatSpace) -> ThreatSpace:
+    """View *space* with its attack and counter-threat roles reversed."""
+    return replace(
+        space,
+        fours=space.counter_fours,
+        split_fours=space.split_counter_fours,
+        threes=space.counter_threes,
+        split_threes=space.split_counter_threes,
+        counter_fours=space.fours,
+        split_counter_fours=space.split_fours,
+        counter_threes=space.threes,
+        split_counter_threes=space.split_threes,
+    )
+
+
+@cache
+def _defender_vcf_space(space: ThreatSpace) -> ThreatSpace:
+    """View *space* from the defender's side for an incoming VCF.
+
+    The defender attacks with the counter-four patterns that the PNS
+    configuration allows, while the original attacker answers with its own
+    four patterns. Other fields do not participate in VCF search.
+    """
+    return replace(
+        _opponent_space(space),
+        threes=False,
+        split_threes=False,
+    )
 
 # Position table for one search: zobrist hash -> the node for that
 # position.  A position reached through a different move order links to
@@ -411,8 +448,78 @@ def _link(node: _PNSNode, child: _PNSNode, move: Cell) -> None:
     node.moves.append(move)
 
 
+def _quiet_vct_setup_cells(
+    state: SearchState,
+    attacker: Stone,
+    ctx: _ScanCtx,
+    space: ThreatSpace,
+    depth: int,
+) -> list[Cell]:
+    """Return bounded quiet root moves that immediately establish a VCT.
+
+    This is deliberately a one-ply bridge into the regular threat space, not
+    unrestricted move generation.  Only the strongest cells that create new
+    threat continuations are searched.  If the defender already has a VCT,
+    the position is a tactical race and arbitrary quiet moves cannot be
+    assumed to answer it, so this extension stays disabled.
+    """
+    if depth <= 0:
+        return []
+
+    defender = attacker.opponent()
+    defender_space = _opponent_space(space)
+    if _vct_state(state, defender, depth, vct_cache={}, vcf_cache={}, space=defender_space) is not None:
+        return []
+    setup_depth = min(depth, _QUIET_SETUP_MAX_DEPTH)
+
+    existing = set(_attack_cells(state, attacker, ctx, space))
+    ranked: list[tuple[int, Cell]] = []
+    for move in get_candidate_moves(state):
+        cell = (move.row, move.col)
+        if cell in existing:
+            continue
+        state.make(move.row, move.col, attacker)
+        try:
+            child_ctx = _scan_context(state)
+            new_threats = len(set(_attack_cells(state, attacker, child_ctx, space)) - existing)
+            if new_threats >= 2 and _win_cell(state, defender, child_ctx) is None:
+                ranked.append((-new_threats, cell))
+        finally:
+            state.unmake()
+
+    ranked.sort()
+    vct_cache = {}
+    vcf_cache = {}
+    setups: list[Cell] = []
+    for _priority, cell in ranked[:_QUIET_SETUP_CANDIDATES]:
+        state.make(cell[0], cell[1], attacker)
+        try:
+            if (
+                _vct_state(
+                    state,
+                    attacker,
+                    setup_depth,
+                    vct_cache=vct_cache,
+                    vcf_cache=vcf_cache,
+                    space=space,
+                )
+                is not None
+            ):
+                setups.append(cell)
+        finally:
+            state.unmake()
+    return setups
+
+
 def _expand(
-    node: _PNSNode, state: SearchState, attacker: Stone, table: _NodeTable, space: ThreatSpace = DEFAULT_THREAT_SPACE
+    node: _PNSNode,
+    state: SearchState,
+    attacker: Stone,
+    table: _NodeTable,
+    space: ThreatSpace = DEFAULT_THREAT_SPACE,
+    vcf_depth: int = 20,
+    quiet_vct_depth: int = 0,
+    check_root_counterattacks: bool = False,
 ) -> int:
     """Generate children for ``node``; return how many new nodes were created.
 
@@ -460,10 +567,63 @@ def _expand(
             _update_ancestors(node)
             return created
 
-        # Four-threats first (stronger), then live-three threats; a cell
-        # that is both is tried once.
+        # A defender VCF constrains the attacker to moves that break it. Such
+        # a move may be quiet in the attacker's threat space, yet start a
+        # forced win after neutralising the incoming sequence.
+        defender_vcf = None
+        defender_vcf_cache = None
+        defender_space = None
+        if check_root_counterattacks and vcf_depth > 0:
+            defender_space = _defender_vcf_space(space)
+            if defender_space.fours:
+                defender_vcf_cache = {}
+                defender_vcf = _vcf_state(
+                    state,
+                    defender,
+                    vcf_depth,
+                    cache=defender_vcf_cache,
+                    space=defender_space,
+                )
+        if defender_vcf is not None:
+            assert defender_space is not None
+            assert defender_vcf_cache is not None
+            _, breakers = classify_vcf_breakers(
+                state,
+                get_candidate_moves(state),
+                attacker,
+                vcf_depth,
+                cache=defender_vcf_cache,
+                space=defender_space,
+            )
+            ranked_breakers: list[tuple[int, Cell]] = []
+            for move in breakers:
+                state.make(move.row, move.col, attacker)
+                try:
+                    # Prefer the breaker that creates the richest attacking
+                    # continuation. PNS resolves an OR node as soon as one
+                    # child is proved, so this ordering avoids spending the
+                    # budget disproving a passive block first.
+                    priority = len(_attack_cells(state, attacker, _scan_context(state), space))
+                    ranked_breakers.append((-priority, (move.row, move.col)))
+                finally:
+                    state.unmake()
+            ranked_breakers.sort()
+            attack_cells = [cell for _priority, cell in ranked_breakers]
+            proved_setup_cells: set[Cell] = set()
+        else:
+            # Four-threats first (stronger), then live-three threats.
+            attack_cells = _attack_cells(state, attacker, ctx, space)
+            setups = (
+                _quiet_vct_setup_cells(state, attacker, ctx, space, quiet_vct_depth)
+                if check_root_counterattacks
+                else []
+            )
+            proved_setup_cells = set(setups)
+            attack_cells = setups + attack_cells
+
+        # A cell that occurs through several patterns is tried once.
         seen_moves: set[Cell] = set()
-        for attack in _attack_cells(state, attacker, ctx, space):
+        for attack in attack_cells:
             if attack in seen_moves:
                 continue
             seen_moves.add(attack)
@@ -485,6 +645,10 @@ def _expand(
                 # for an AND child, so a new node keeps its 1/1 defaults.
                 child, is_new = _child_at(state, _NodeType.AND, table)
                 created += is_new
+                if attack in proved_setup_cells:
+                    # The bounded one-ply probe already established a VCT
+                    # from this child position.
+                    _mark(child, True)
                 _link(node, child, attack)
             finally:
                 state.unmake()
@@ -653,6 +817,9 @@ def pns_threat_status(
     max_time_s: float = 5.0,
     space: ThreatSpace = DEFAULT_THREAT_SPACE,
     stop: threading.Event | None = None,
+    vcf_depth: int = 20,
+    quiet_vct_depth: int = 0,
+    check_root_counterattacks: bool = False,
 ) -> tuple[PNSStatus, Move | None]:
     """Run Proof-Number Search in threat-space and report how it ended.
 
@@ -668,6 +835,12 @@ def pns_threat_status(
 
     Setting *stop* (from another thread) ends the search like a spent
     budget: it returns ``UNKNOWN`` unless it has already finished.
+
+    With *check_root_counterattacks*, *vcf_depth* bounds a root check for an
+    incoming defender VCF and *quiet_vct_depth* bounds a one-ply search for
+    quiet moves that immediately establish a VCT. This deliberately opt-in
+    work is used when deciding whether a candidate is safe; normal PNS calls
+    avoid its additional cost.
 
     ``max_nodes`` counts distinct positions.  Accepts an existing
     :class:`SearchState` to skip the per-call Pydantic→bitboard
@@ -712,7 +885,16 @@ def pns_threat_status(
             #    stale walk can end on an expanded, solved node; it then
             #    only needs the backpropagation below.
             if not mpn.expanded:
-                nodes_created += _expand(mpn, state, attacker, table, space)
+                nodes_created += _expand(
+                    mpn,
+                    state,
+                    attacker,
+                    table,
+                    space,
+                    vcf_depth,
+                    quiet_vct_depth,
+                    check_root_counterattacks and mpn is root,
+                )
 
             # 4) Backpropagate along the selection path only.
             _backpropagate_path(path)

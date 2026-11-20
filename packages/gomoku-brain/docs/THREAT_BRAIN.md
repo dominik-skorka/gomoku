@@ -260,11 +260,27 @@ the refutations all-candidate expansion would find.
 > by taking an end of the would-be four.  The threat brain then played
 > those false wins and lost games it was ahead in.
 
+When `_probe_breakers()` asks PNS to validate a candidate, the root **OR node**
+also bridges two otherwise-missing classes of move into threat space:
+
+1. If the defender already has a VCF, its breakers replace the normal threat
+   children. A breaker may also start the attacker's win (`G5` / `G8`).
+2. If the defender has no VCT, PNS ranks quiet cells that create at least two
+   new threat continuations and checks the strongest four to a maximum VCT
+   depth of six. A cell whose child position has a proved VCT becomes a proved
+   root continuation. This catches one-ply setups such as `G8` after `I7` or
+   `J9` without admitting every legal move into every OR node.
+
+The second check is deliberately skipped when the defender already has a VCT:
+then the position is a tactical race, and a quiet move is not valid unless it
+also answers that sequence. Ordinary PNS calls leave both root extensions
+disabled.
+
 ### Node types
 
 | Node type | Who moves | Children | Win condition |
 |-----------|-----------|----------|---------------|
-| **OR**  (attacker) | Attacker | Four-threats + three-threats | *Any* child proved |
+| **OR**  (attacker) | Attacker | Four-threats + three-threats; bounded root counterattacks during breaker validation | *Any* child proved |
 | **AND** (defender) | Defender | Blocks + counter-threats | *Every* child proved |
 
 ### How proof numbers work
