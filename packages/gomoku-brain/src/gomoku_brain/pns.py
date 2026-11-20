@@ -24,8 +24,6 @@ node.  :func:`pns_threat_status` reports whether the root was proved,
 disproved, or left unknown when the budget ran out.
 """
 
-from __future__ import annotations
-
 import threading
 import time
 from dataclasses import replace

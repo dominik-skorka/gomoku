@@ -14,8 +14,6 @@ name to settings model lives alongside the brain classes themselves in
 ``gomoku_brain.BRAINS`` (see :mod:`gomoku_brain` for the single registry).
 """
 
-from __future__ import annotations
-
 import os
 from pathlib import Path
 from typing import override

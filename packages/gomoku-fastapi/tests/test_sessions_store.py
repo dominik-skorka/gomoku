@@ -9,8 +9,6 @@ tests pin the contract the router relies on:
 4. ``delete`` is idempotent.
 """
 
-from __future__ import annotations
-
 import time
 
 import pytest

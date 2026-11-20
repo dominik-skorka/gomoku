@@ -21,8 +21,6 @@ in ``test_search_state.py``, ``test_evaluate_jit.py``, ``test_threat.py``,
 and ``test_parity.py``; we don't duplicate that coverage here.
 """
 
-from __future__ import annotations
-
 import math
 import random
 

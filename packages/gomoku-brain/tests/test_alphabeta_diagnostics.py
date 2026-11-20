@@ -1,7 +1,5 @@
 """AlphaBetaBrain reports what its root VCF pre-check actually decided."""
 
-from __future__ import annotations
-
 import pytest
 from gomoku.board import Board
 from gomoku.diagnostics import MoveDiagnostics, set_move_diagnostics

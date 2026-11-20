@@ -1,7 +1,5 @@
 """Win detection and game status checks."""
 
-from __future__ import annotations
-
 from gomoku.board import Board
 from gomoku.interfaces import BoardView
 from gomoku.models import GameResult, Move, Stone

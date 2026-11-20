@@ -5,8 +5,6 @@ so that Numba can compile them to machine code. Use :func:`evaluate_grid` as
 the main entry point.
 """
 
-from __future__ import annotations
-
 import numpy as np
 from numba import njit
 from numpy.typing import NDArray

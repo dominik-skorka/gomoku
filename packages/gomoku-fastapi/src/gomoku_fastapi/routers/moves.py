@@ -9,8 +9,6 @@ chosen move.  When ``diagnostics: true`` the server also activates the
 captured record alongside the move.
 """
 
-from __future__ import annotations
-
 import anyio
 from fastapi import APIRouter, HTTPException, Request, status
 from gomoku.board import Board

@@ -6,8 +6,6 @@ invariant: no cycle among *module-scope* imports.  Imports inside
 function bodies (lazy JIT / optional-dependency loads) are ignored.
 """
 
-from __future__ import annotations
-
 import ast
 from pathlib import Path
 

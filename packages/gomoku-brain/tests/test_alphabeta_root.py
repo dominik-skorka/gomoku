@@ -14,8 +14,6 @@ These tests pin three things:
 3. The brain still uses the function via ``get_move`` (end-to-end smoke).
 """
 
-from __future__ import annotations
-
 from gomoku.board import Board
 from gomoku.models import Move, Stone
 from gomoku_brain.alphabeta import AlphaBetaBrain

@@ -11,8 +11,6 @@ Each non-trivial brain's ``get_move`` opens the same kind of session:
 that setup at the top of every ``get_move``.
 """
 
-from __future__ import annotations
-
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager

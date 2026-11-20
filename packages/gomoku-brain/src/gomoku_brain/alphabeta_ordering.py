@@ -11,8 +11,6 @@ Pydantic :class:`Board`, a :class:`_GridBoard`, or a
 mutate state.
 """
 
-from __future__ import annotations
-
 from gomoku.interfaces import BoardView
 from gomoku.models import Move, Stone
 from gomoku.rules import check_winner

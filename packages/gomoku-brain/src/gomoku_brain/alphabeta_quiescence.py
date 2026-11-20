@@ -19,8 +19,6 @@ mutable node counter — into one tiny dataclass keeps the call
 signatures clean and lets the search stay a pure free function.
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass, field
 
 from gomoku.models import Move, Stone

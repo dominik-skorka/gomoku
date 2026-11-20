@@ -6,8 +6,6 @@ analyzer can flag blunders, alternative-best deviations, time spikes,
 and TT performance.
 """
 
-from __future__ import annotations
-
 from gomoku.board import Board
 from gomoku.diagnostics import (
     CandidateInfo,

@@ -1,7 +1,5 @@
 """Tests for the FastAPI lifespan handler (graceful shutdown)."""
 
-from __future__ import annotations
-
 from fastapi.testclient import TestClient
 from gomoku_fastapi.deps import get_session_store
 from gomoku_fastapi.main import create_app

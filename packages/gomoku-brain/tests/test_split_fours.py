@@ -6,8 +6,6 @@ attacks and as the defender's counter-fours.  PNS then "proved" wins a
 split counter-four refutes.
 """
 
-from __future__ import annotations
-
 import numpy as np
 import pytest
 from gomoku.board import Board

@@ -1,7 +1,5 @@
 """``GET /healthz`` is the simplest possible smoke test."""
 
-from __future__ import annotations
-
 
 class TestHealth:
     def test_returns_ok(self, client):

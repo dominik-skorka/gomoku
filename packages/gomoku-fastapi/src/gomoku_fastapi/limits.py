@@ -25,8 +25,6 @@ corresponding tier permissive — useful in tests that want to fire
 rapid request loops without tripping 429s.
 """
 
-from __future__ import annotations
-
 from typing import TYPE_CHECKING, Any, override
 
 from fastapi.routing import iter_route_contexts

@@ -5,8 +5,6 @@ adding a new brain only requires editing :data:`gomoku_brain.BRAINS` —
 no parallel dict in :mod:`gomoku.settings` to keep in sync.
 """
 
-from __future__ import annotations
-
 import pytest
 from gomoku.settings import (
     AlphaBetaBrainSettings,

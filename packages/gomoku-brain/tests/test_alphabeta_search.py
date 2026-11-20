@@ -1,7 +1,5 @@
 """Tests for invariants of the alpha-beta search itself."""
 
-from __future__ import annotations
-
 from gomoku.board import Board
 from gomoku.models import Move, Stone
 from gomoku_brain.alphabeta import AlphaBetaBrain

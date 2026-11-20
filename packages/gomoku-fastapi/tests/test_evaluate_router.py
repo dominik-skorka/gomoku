@@ -6,8 +6,6 @@ wire shape and a few signed-score invariants (own pieces help, the
 empty board is neutral, perspective flips the sign).
 """
 
-from __future__ import annotations
-
 from gomoku.board import Board
 from gomoku.models import Move, Stone
 

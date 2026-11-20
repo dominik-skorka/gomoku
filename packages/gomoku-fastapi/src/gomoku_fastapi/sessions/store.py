@@ -18,8 +18,6 @@ the in-memory store is replaced with a Redis-backed alternative,
 expiration moves into Redis and this concern disappears.
 """
 
-from __future__ import annotations
-
 import shutil
 import threading
 import time

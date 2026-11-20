@@ -1,7 +1,5 @@
 """Zobrist hashing and transposition table for Gomoku alpha-beta search."""
 
-from __future__ import annotations
-
 import random
 from enum import IntEnum
 from typing import NamedTuple

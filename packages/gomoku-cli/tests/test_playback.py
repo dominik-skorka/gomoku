@@ -1,7 +1,5 @@
 """Tests for the playback CLI command and navigator logic."""
 
-from __future__ import annotations
-
 from datetime import UTC, datetime
 from pathlib import Path
 

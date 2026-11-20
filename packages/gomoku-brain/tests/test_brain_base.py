@@ -1,7 +1,5 @@
 """Tests for the shared ``brain_session`` context manager."""
 
-from __future__ import annotations
-
 import time
 
 from gomoku.diagnostics import (

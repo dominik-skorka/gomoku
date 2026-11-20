@@ -1,7 +1,5 @@
 """Heuristic board evaluation for Gomoku AI."""
 
-from __future__ import annotations
-
 from gomoku.interfaces import BoardView
 from gomoku.models import Move, Stone
 

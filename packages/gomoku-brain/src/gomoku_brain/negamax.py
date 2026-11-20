@@ -1,7 +1,5 @@
 """Negamax brain — negamax simplification of minimax."""
 
-from __future__ import annotations
-
 from typing import override
 
 from gomoku.board import Board

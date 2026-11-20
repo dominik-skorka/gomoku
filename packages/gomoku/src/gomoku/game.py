@@ -1,7 +1,5 @@
 """Game engine — orchestrates a full Gomoku game."""
 
-from __future__ import annotations
-
 from collections.abc import Iterable
 from contextlib import nullcontext
 

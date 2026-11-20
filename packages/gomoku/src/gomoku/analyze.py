@@ -21,8 +21,6 @@ Two parsing entry points cover the two call patterns:
   for HTTP uploads where there is no local file.
 """
 
-from __future__ import annotations
-
 import json
 from dataclasses import dataclass, field
 from pathlib import Path

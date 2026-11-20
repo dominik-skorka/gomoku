@@ -23,8 +23,6 @@ and diagnostics handle (:func:`~gomoku_brain.brain_base.brain_session`)
 around its decision.
 """
 
-from __future__ import annotations
-
 from abc import ABC, abstractmethod
 from types import get_original_bases
 from typing import TYPE_CHECKING, Any, ClassVar, cast, final, get_args, get_origin

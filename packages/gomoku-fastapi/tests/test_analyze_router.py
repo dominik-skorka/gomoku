@@ -11,8 +11,6 @@ The endpoint is a wire-level wrapper over
    input.
 """
 
-from __future__ import annotations
-
 import json
 
 from gomoku.diagnostics import DiagnosticsHeader

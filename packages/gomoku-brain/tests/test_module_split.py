@@ -18,8 +18,6 @@ under the right import order, but downstream callers that haven't
 been migrated would stop importing.
 """
 
-from __future__ import annotations
-
 from gomoku.board import Board
 from gomoku.models import Move, Stone
 

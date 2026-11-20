@@ -30,8 +30,6 @@ The scenarios are expressed as move lists so they are reproducible across
 machines and commits.  Add more if you want finer granularity.
 """
 
-from __future__ import annotations
-
 import time
 from dataclasses import dataclass, field
 

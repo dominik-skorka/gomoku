@@ -1,7 +1,5 @@
 """Shared fixtures for ``gomoku-fastapi`` tests."""
 
-from __future__ import annotations
-
 import pytest
 from fastapi.testclient import TestClient
 from gomoku_fastapi import limits

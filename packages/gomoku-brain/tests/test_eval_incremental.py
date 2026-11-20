@@ -7,8 +7,6 @@ in float64, so any mismatch indicates a locality bug in the delta
 kernel, not floating-point drift.
 """
 
-from __future__ import annotations
-
 import random
 
 import numpy as np

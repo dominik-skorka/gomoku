@@ -28,8 +28,6 @@ Public surface:
   three-threat (open-end blocks + counter-fours).
 """
 
-from __future__ import annotations
-
 from gomoku.board import Board
 from gomoku.models import Move, Stone
 

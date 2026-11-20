@@ -8,8 +8,6 @@ core didn't need (``MoveRequest``, ``MoveResponse`` etc.) plus a couple
 of metadata DTOs (``BrainInfo``).
 """
 
-from __future__ import annotations
-
 from datetime import date
 from typing import Any, Literal
 

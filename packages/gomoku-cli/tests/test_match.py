@@ -1,7 +1,5 @@
 """Tests for the engine-versus-engine match harness."""
 
-from __future__ import annotations
-
 import json
 import subprocess
 from pathlib import Path

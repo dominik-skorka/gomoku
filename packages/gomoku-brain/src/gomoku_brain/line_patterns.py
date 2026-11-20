@@ -6,8 +6,6 @@ rules.  Each function looks at one line through an empty cell as if
 *stone* were placed there.
 """
 
-from __future__ import annotations
-
 from gomoku.interfaces import BoardView
 from gomoku.models import Stone
 

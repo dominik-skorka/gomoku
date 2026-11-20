@@ -1,7 +1,5 @@
 """Opening book and board symmetry reduction for Gomoku alpha-beta search."""
 
-from __future__ import annotations
-
 from typing import TYPE_CHECKING
 
 from gomoku.models import Move, Stone

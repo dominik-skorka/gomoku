@@ -1,7 +1,5 @@
 """Blunder review: detection rules, escalation and the end-to-end command."""
 
-from __future__ import annotations
-
 import json
 from pathlib import Path
 from typing import Any

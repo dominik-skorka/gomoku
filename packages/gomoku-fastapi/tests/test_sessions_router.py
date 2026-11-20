@@ -9,8 +9,6 @@ A typical UI workflow is rehearsed in :class:`TestEndToEnd` to make
 sure the five endpoints compose into a complete game.
 """
 
-from __future__ import annotations
-
 from gomoku.models import Move, Stone
 
 

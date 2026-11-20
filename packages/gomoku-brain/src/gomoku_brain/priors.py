@@ -1,7 +1,5 @@
 """Cheap pattern-based move priors shared by MCTS and alpha-beta."""
 
-from __future__ import annotations
-
 import numpy as np
 
 from gomoku_brain.search_state import SearchState

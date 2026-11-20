@@ -33,9 +33,15 @@ select = [
     "B",   # flake8-bugbear
     "SIM", # flake8-simplify
     "RUF", # ruff-specific
+    "TID251", # banned imports (below)
 ]
 # "×" is used deliberately in comments, docstrings and user-facing output.
 ignore = ["RUF001", "RUF002", "RUF003"]
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+# Python 3.14 evaluates annotations lazily (PEP 649/749): forward references
+# and TYPE_CHECKING-only names in annotations work without it.
+"__future__.annotations".msg = "not needed on Python 3.14 (annotations are evaluated lazily)"
 
 [tool.pytest.ini_options]
 testpaths = [

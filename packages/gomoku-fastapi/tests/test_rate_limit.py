@@ -15,8 +15,6 @@ What we lock in:
 4. Empty-string limits truly disable the tier (the default in tests).
 """
 
-from __future__ import annotations
-
 import pytest
 from fastapi.testclient import TestClient
 from gomoku.board import Board

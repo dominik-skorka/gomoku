@@ -6,8 +6,6 @@ threat information.  The :class:`DiagnosticsRecorder` writes one JSON object
 per line to a ``.diag.jsonl`` file following the recording naming convention.
 """
 
-from __future__ import annotations
-
 import json
 import time
 from collections.abc import Iterator

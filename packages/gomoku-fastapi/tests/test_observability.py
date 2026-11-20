@@ -7,8 +7,6 @@ fact that ``configure_logfire`` is callable repeatedly without
 crashing.
 """
 
-from __future__ import annotations
-
 from gomoku_fastapi.observability import (
     RequestIDMiddleware,
     configure_logfire,

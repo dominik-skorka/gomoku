@@ -8,8 +8,6 @@ imports keep working) and adds :func:`render_report`, which renders an
 ``AnalysisReport`` as a rich-formatted table on a console.
 """
 
-from __future__ import annotations
-
 from typing import Any
 
 # Re-exports — preserve the historical import surface.

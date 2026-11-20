@@ -16,8 +16,6 @@ with ``PYTHONPATH`` pointing at its source tree, which is how two
 revisions of the same packages coexist.
 """
 
-from __future__ import annotations
-
 import json
 import math
 import os

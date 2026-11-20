@@ -1,7 +1,5 @@
 """Playback navigator — replay a recorded game with arrow-key controls."""
 
-from __future__ import annotations
-
 import sys
 import termios
 import tty

@@ -9,8 +9,6 @@ Use :func:`from_board` to convert a :class:`~gomoku.board.Board` or
 :class:`~gomoku_brain.grid_utils._GridBoard` to a ``BitboardState``.
 """
 
-from __future__ import annotations
-
 import numpy as np
 from gomoku.board import Board
 from gomoku.models import Move, Stone

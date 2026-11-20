@@ -15,8 +15,6 @@ parts work in the engine specs of ``gomoku match``, ``review`` and
 * Overrides apply on top of the alias's settings from ``gomoku.toml``.
 """
 
-from __future__ import annotations
-
 import tomllib
 import types
 from typing import Any, Union, get_args, get_origin

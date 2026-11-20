@@ -17,8 +17,6 @@ These tests pin three layers of the new behaviour:
   fall back to field defaults without raising.
 """
 
-from __future__ import annotations
-
 from gomoku.settings import (
     CONFIG_FILENAME,
     GomokuSettings,

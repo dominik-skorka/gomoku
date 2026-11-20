@@ -15,8 +15,6 @@ change of behaviour, not only of speed — and can profile B (cProfile, top
 functions by self time) to show where the time goes.
 """
 
-from __future__ import annotations
-
 import json
 import statistics
 from dataclasses import asdict, dataclass, field

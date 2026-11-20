@@ -49,8 +49,6 @@ The review passes when the candidate has no more logic-bug blunders
 than the baseline (both play the same openings, with colours swapped).
 """
 
-from __future__ import annotations
-
 import json
 import threading
 from collections.abc import Callable

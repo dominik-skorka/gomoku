@@ -1,7 +1,5 @@
 """``GET /versions`` — which API versions are served, and their status."""
 
-from __future__ import annotations
-
 from fastapi import APIRouter
 
 from gomoku_fastapi.schemas import VersionInfo, VersionsResponse

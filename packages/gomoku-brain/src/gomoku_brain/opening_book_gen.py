@@ -14,8 +14,6 @@ Reference:
   Opening Books", CG 2000, Springer.
 """
 
-from __future__ import annotations
-
 import heapq
 import json
 import logging

@@ -12,8 +12,6 @@ equality.  They complement the single-scenario sanity checks in
 with positions the author would never think to hand-craft.
 """
 
-from __future__ import annotations
-
 import random
 
 import numpy as np
