@@ -402,6 +402,16 @@ When the opponent has a VCF (forced win via fours), the brain does
 Each probe gets half of `pns_nodes` and `pns_time_s`.  The whole probe
 loop is capped at `pns_time_s`.
 
+With `probe_threads` > 1 the breakers are probed in parallel
+(`gomoku_brain/probe.py`), each thread on its own copy of the position
+(`SearchState.fork()`).  The breaker played is still the one the serial
+loop would play from the same probe results, the *first* `DISPROVED` in
+evaluation order, not the first to finish.  Probes of worse breakers
+still running then are stopped.  Threads only change the move through
+time: more breakers get probed before the cap.  They run truly in parallel
+only on a free-threaded Python (`python3.14t`).  On the 48 bench
+positions, 4 threads there cut the threat brain's think time by 14%.
+
 > **History:** an earlier version blocked the VCF's first cell
 > unconditionally, ignoring a growing row the opponent was building.  A
 > later one picked the positionally best breaker without the probe in
@@ -432,7 +442,7 @@ caching.  See [ALPHABETA_BRAIN.md](ALPHABETA_BRAIN.md).
 
 ## Parameters
 
-The brain has eight settings, one of them the `threats` tables.  "Default" is the built-in value, used
+The brain has nine settings, one of them the `threats` tables.  "Default" is the built-in value, used
 when a setting is left out; the shipped `gomoku.toml` changes some:
 
 | Parameter       | Default  | `gomoku.toml` | Controls                        | Effect of increasing           |
@@ -441,6 +451,7 @@ when a setting is left out; the shipped `gomoku.toml` changes some:
 | `vct_depth`     | 12       | 12            | Max plies for VCT search        | Finds longer three/four-chains |
 | `pns_nodes`     | 10,000   | **120,000**   | Distinct positions PNS may create | Proves/disproves more positions |
 | `pns_time_s`    | 5.0      | 5.0           | Time budget for PNS (seconds)   | Allows longer proof search     |
+| `probe_threads` | 1        | 1             | Threads probing breakers in parallel | More breakers probed in time (free-threaded Python only) |
 | `threat_search` | `"pns"`  | `"pns"`       | Algorithm: `"pns"` or `"vct"`   | Selects the algorithm of steps 4 and 6 |
 | `depth`         | 4        | 5 (ignored)   | Fallback depth without a `fallback` table | Better positional play |
 | `fallback`      | none     | **table**     | `AlphaBetaBrain` settings for the fallback (its `depth` replaces the top-level one) | — |

@@ -20,6 +20,7 @@ search code.
 
 from __future__ import annotations
 
+import threading
 import time
 
 import logfire
@@ -39,6 +40,7 @@ def root_vcf(
     vcf_depth: int,
     breaker_pns_nodes: int = 0,
     breaker_pns_time_s: float = 2.0,
+    breaker_threads: int = 1,
 ) -> Move | None:
     """Run VCF at the root for *stone* and its opponent.
 
@@ -131,7 +133,7 @@ def root_vcf(
     state = SearchState.from_board(board, stone)
     scored = _scored_moves(state, effective, stone)
     if breaker_pns_nodes > 0:
-        probed = _probe_breakers(state, stone, scored, breaker_pns_nodes, breaker_pns_time_s)
+        probed = _probe_breakers(state, stone, scored, breaker_pns_nodes, breaker_pns_time_s, breaker_threads)
         if probed is not None:
             return probed
     return scored[0][1]
@@ -143,33 +145,33 @@ def _probe_breakers(
     scored: list[tuple[float, Move]],
     pns_nodes: int,
     time_s: float,
+    threads: int = 1,
 ) -> Move | None:
     """Breaking the VCF is not enough if the opponent keeps a forced win
     that also uses threes.  Probe the breakers, best evaluation first,
     with a threat-space PNS for the opponent: return the first after which
     it is ``DISPROVED``, else the best whose probe ran out of budget
     (``UNKNOWN``), else ``None`` (every probe proved a win: keep the
-    evaluation's pick).  The whole loop is capped at *time_s*.
+    evaluation's pick).  The whole loop is capped at *time_s*; *threads*
+    probes breakers in parallel (see :mod:`gomoku_brain.probe`).
 
     The same check the threat brain makes in ``ThreatBrain._probe_breakers``.
     """
     from gomoku_brain.pns import PNSStatus, pns_threat_status
+    from gomoku_brain.probe import Verdict, probe_in_order
 
     opp = stone.opponent()
     deadline = time.monotonic() + time_s
-    unproven: Move | None = None
-    for _score, move in scored:
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            break
-        state.make(move.row, move.col, stone)
-        try:
-            status, _ = pns_threat_status(state, opp, max_nodes=pns_nodes, max_time_s=remaining)
-        finally:
-            state.unmake()
+
+    def probe(after: SearchState, stop: threading.Event | None) -> Verdict:
+        remaining = max(0.0, deadline - time.monotonic())
+        status, _ = pns_threat_status(after, opp, max_nodes=pns_nodes, max_time_s=remaining, stop=stop)
         if status is PNSStatus.DISPROVED:
-            logfire.info("VCF breaker {move} leaves the opponent no forced win", move=str(move))
-            return move
-        if status is PNSStatus.UNKNOWN and unproven is None:
-            unproven = move
-    return unproven
+            return Verdict.SAFE
+        return Verdict.UNPROVEN if status is PNSStatus.UNKNOWN else Verdict.LOST
+
+    result = probe_in_order(state, stone, scored, probe, deadline, threads)
+    if result.safe is not None:
+        logfire.info("VCF breaker {move} leaves the opponent no forced win", move=str(result.safe))
+        return result.safe
+    return result.unproven

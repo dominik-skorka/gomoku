@@ -14,6 +14,7 @@ and tests still import them from this module.
 
 from __future__ import annotations
 
+import threading
 import time
 
 import logfire
@@ -26,6 +27,7 @@ from gomoku_brain.brain_base import brain_session
 from gomoku_brain.candidates import get_candidate_moves
 from gomoku_brain.evaluate import find_fork_cells
 from gomoku_brain.pns import PNSStatus, pns_threat_search, pns_threat_status
+from gomoku_brain.probe import Verdict, probe_in_order
 from gomoku_brain.search_state import SearchState
 from gomoku_brain.threat_detect import (
     _count_distinct_three_cells,
@@ -108,6 +110,7 @@ class ThreatBrain:
         threat_search: str = "pns",
         pns_nodes: int = 10_000,
         pns_time_s: float = 5.0,
+        probe_threads: int = 1,
         fallback: dict[str, object] | None = None,
         threats: dict[str, dict[str, bool]] | None = None,
     ) -> None:
@@ -126,6 +129,8 @@ class ThreatBrain:
         self.threat_search = threat_search
         self.pns_nodes = pns_nodes
         self.pns_time_s = pns_time_s
+        # Threads that probe breaker candidates in parallel (gomoku_brain.probe).
+        self.probe_threads = probe_threads
         # ``fallback`` carries AlphaBetaBrain tuning (qs_vcf_depth, LMR,
         # null-move, time limit, ...) for the no-forced-win path —
         # without it the fallback ran with bare defaults while the
@@ -384,68 +389,62 @@ class ThreatBrain:
 
         A global wall-clock cap (``self.pns_time_s``) bounds the whole
         loop, and each PNS probe gets at most half the configured budget
-        and no more than the time remaining.
+        and no more than the time remaining.  ``self.probe_threads``
+        probes candidates in parallel (see :mod:`gomoku_brain.probe`).
         """
         opp = stone.opponent()
         # Probe caches shared across candidates — the positions reached
-        # after different first moves transpose heavily.
+        # after different first moves transpose heavily.  With several
+        # probe threads they are shared between threads too (dict reads
+        # and writes are thread-safe); a result one thread stores is
+        # simply reused by the others.
         vct_probe_cache: _ThreatCache = {}
         deadline = time.monotonic() + self.pns_time_s
-        probed = 0
-        unproven: Move | None = None
-        for score, move in scored:
-            if time.monotonic() > deadline:
-                logfire.info("{label}: time budget exhausted after {n} candidates", label=label, n=probed)
-                break
-            probed += 1
 
-            state.make(move.row, move.col, stone)
-            try:
-                # Fast VCF probe first.
-                if _vcf_state(state, opp, self.vcf_depth, cache=vcf_cache, space=self.opponent_space) is not None:
-                    continue
-                # Expensive threat probe — bounded by remaining global budget.
-                if self.threat_search == "pns":
-                    remaining = max(_MIN_PROBE_TIME_S, deadline - time.monotonic())
-                    status, _ = pns_threat_status(
-                        state,
-                        opp,
-                        max_nodes=int(self.pns_nodes * _OPP_PNS_NODE_FRACTION),
-                        max_time_s=min(self.pns_time_s * _OPP_PNS_TIME_FRACTION, remaining),
-                        space=self.opponent_space,
-                    )
-                    if status is PNSStatus.PROVED:
-                        continue
-                    if status is PNSStatus.UNKNOWN:
-                        if unproven is None:
-                            unproven = move
-                        continue
-                elif (
-                    _vct_state(
-                        state,
-                        opp,
-                        self.vct_depth,
-                        vct_cache=vct_probe_cache,
-                        vcf_cache=vcf_cache,
-                        space=self.opponent_space,
-                    )
-                    is not None
-                ):
-                    continue
-                logfire.info(
-                    "{label}: first durable breaker {move} (eval={score:.0f}) after {n} probes",
-                    label=label,
-                    move=str(move),
-                    score=score,
-                    n=probed,
+        def probe(after: SearchState, stop: threading.Event | None) -> Verdict:
+            # Fast VCF probe first.
+            if _vcf_state(after, opp, self.vcf_depth, cache=vcf_cache, space=self.opponent_space) is not None:
+                return Verdict.LOST
+            # Expensive threat probe — bounded by remaining global budget.
+            if self.threat_search == "pns":
+                remaining = max(_MIN_PROBE_TIME_S, deadline - time.monotonic())
+                status, _ = pns_threat_status(
+                    after,
+                    opp,
+                    max_nodes=int(self.pns_nodes * _OPP_PNS_NODE_FRACTION),
+                    max_time_s=min(self.pns_time_s * _OPP_PNS_TIME_FRACTION, remaining),
+                    space=self.opponent_space,
+                    stop=stop,
                 )
-                return move, unproven
-            finally:
-                state.unmake()
+                if status is PNSStatus.PROVED:
+                    return Verdict.LOST
+                if status is PNSStatus.UNKNOWN:
+                    return Verdict.UNPROVEN
+                return Verdict.SAFE
+            found = _vct_state(
+                after,
+                opp,
+                self.vct_depth,
+                vct_cache=vct_probe_cache,
+                vcf_cache=vcf_cache,
+                space=self.opponent_space,
+            )
+            return Verdict.LOST if found is not None else Verdict.SAFE
 
-        if unproven is not None:
-            logfire.info("{label}: no proven breaker, best unproven {move}", label=label, move=str(unproven))
-        return None, unproven
+        result = probe_in_order(state, stone, scored, probe, deadline, self.probe_threads)
+        if result.timed_out:
+            logfire.info("{label}: time budget exhausted after {n} candidates", label=label, n=result.probed)
+        if result.safe is not None:
+            logfire.info(
+                "{label}: first durable breaker {move} after {n} probes",
+                label=label,
+                move=str(result.safe),
+                n=result.probed,
+            )
+            return result.safe, result.unproven
+        if result.unproven is not None:
+            logfire.info("{label}: no proven breaker, best unproven {move}", label=label, move=str(result.unproven))
+        return None, result.unproven
 
     # -- Fork detection -----------------------------------------------------
 

@@ -74,6 +74,14 @@ def find_config_file(start: Path | None = None) -> Path | None:
 # ── Per-brain configuration sections ────────────────────────────────────────
 
 
+_PROBE_THREADS_DOC = (
+    "Threads that check candidate moves in parallel for the opponent's forced win (breaker "
+    "probes).  The move picked is the one a single thread would pick from the same results, "
+    "but more threads probe more candidates within the time cap.  Only a free-threaded "
+    "Python (python3.14t) runs them truly in parallel; with the GIL, keep 1."
+)
+
+
 class KeyboardBrainSettings(BaseModel):
     """Settings for the keyboard (human) provider (no tunables)."""
 
@@ -134,6 +142,7 @@ class AlphaBetaBrainSettings(BaseModel):
     vcf_breaker_time_s: float = Field(
         default=2.0, ge=0.1, le=60.0, description="Time cap for all the breaker probes of one move."
     )
+    probe_threads: int = Field(default=1, ge=1, le=64, description=_PROBE_THREADS_DOC)
 
 
 class ThreatAttackSettings(BaseModel):
@@ -193,6 +202,7 @@ class ThreatBrainSettings(BaseModel):
     threat_search: str = Field(default="pns", pattern="^(pns|vct)$")
     pns_nodes: int = Field(default=10_000, ge=1_000, le=10_000_000)
     pns_time_s: float = Field(default=5.0, ge=0.1, le=60.0)
+    probe_threads: int = Field(default=1, ge=1, le=64, description=_PROBE_THREADS_DOC)
     threats: ThreatSearchSettings = Field(
         default_factory=ThreatSearchSettings,
         description=(
@@ -277,15 +287,15 @@ class ApiSettings(BaseModel):
         description=(
             "Browser origins allowed to call the API.  Empty list = no "
             "CORS middleware mounted (server-to-server only).  Use "
-            "``[\"*\"]`` for fully open CORS, or list specific origins "
-            "like ``[\"http://localhost:5173\"]``."
+            '``["*"]`` for fully open CORS, or list specific origins '
+            'like ``["http://localhost:5173"]``.'
         ),
     )
     rate_limit_default: str = Field(
         default="120/minute",
         description=(
             "Default per-IP slowapi limit applied to all endpoints.  "
-            "Format: ``\"<count>/<period>\"`` — see slowapi docs.  "
+            'Format: ``"<count>/<period>"`` — see slowapi docs.  '
             "Set to empty string to disable the default limit."
         ),
     )

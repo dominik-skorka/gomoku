@@ -60,6 +60,7 @@ gomoku/
 │   │   │   ├── threat_search.py      ← VCF and VCT searches, VCF breakers
 │   │   │   ├── threat_space.py       ← ThreatSpace: threats a search plays and answers
 │   │   │   ├── pns.py        ← Proof-number search in threat space
+│   │   │   ├── probe.py      ← Breaker probes, serial or on several threads
 │   │   │   ├── line_patterns.py      ← Pure-Python line rules (five / three cells)
 │   │   │   ├── mcts.py       ← MCTSBrain (PUCT + heuristic eval)
 │   │   │   ├── priors.py     ← Move priors (MCTS, alpha-beta ordering)
@@ -283,7 +284,7 @@ the layers above it in this table:
 |-------|---------|
 | 0 (leaves) | `threat_space`, `line_patterns`, `directions`, `candidates`, `zobrist`, `brain_base`, `grid_utils`, `opening`, `evaluate_jit`, `bitboard_jit` |
 | 1 | `search_state`, `evaluate`, `bitboard`, `opening_book`, `random` |
-| 2 | `threat_detect`, `alphabeta_ordering`, `priors`, `minimax`, `negamax`, `opening_book_gen` |
+| 2 | `threat_detect`, `probe`, `alphabeta_ordering`, `priors`, `minimax`, `negamax`, `opening_book_gen` |
 | 3 | `threat_search` (VCF, VCT, VCF breakers) |
 | 4 | `pns`, `alphabeta_root`, `alphabeta_quiescence` |
 | 5 | `alphabeta` |
