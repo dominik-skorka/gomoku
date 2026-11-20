@@ -12,9 +12,10 @@ from gomoku.game import Game, InvalidMoveError
 from gomoku.models import GameConfig, Move, Stone
 from gomoku.recorder import GameRecorder, PlayerInfo, load_record
 from gomoku.settings import GomokuSettings, KeyboardBrainSettings
-from gomoku_brain import available_brains, get_brain_from_settings, register_brain, resolve_brain
+from gomoku_brain import BRAINS, available_brains, register_brain, resolve_brain
 from rich.console import Console
 
+from gomoku_cli.brain_spec import apply_overrides, parse_brain_spec
 from gomoku_cli.display import render_board, render_result
 from gomoku_cli.keyboard import KeyboardProvider
 
@@ -24,14 +25,20 @@ console = Console()
 register_brain("keyboard", KeyboardProvider, KeyboardBrainSettings)
 
 
-def _make_provider(name: str, settings: GomokuSettings) -> object:
-    return get_brain_from_settings(name, settings.brains)
+def _resolve(name: str, overrides: dict, settings: GomokuSettings) -> tuple[str, dict]:
+    """``(brain type, settings)`` of brain *name* with *overrides* applied."""
+    brain_type, kwargs = resolve_brain(name, settings.brains)
+    return brain_type, apply_overrides(BRAINS[brain_type].settings_cls, kwargs, overrides)
 
 
-def _player_settings(name: str, settings: GomokuSettings) -> dict:
-    """Extract the brain settings dict for a given provider name."""
-    _brain_type, kwargs = resolve_brain(name, settings.brains)
-    return kwargs
+def _make_provider(name: str, overrides: dict, settings: GomokuSettings) -> object:
+    brain_type, kwargs = _resolve(name, overrides, settings)
+    return BRAINS[brain_type].brain_cls(**kwargs)
+
+
+def _player_settings(name: str, overrides: dict, settings: GomokuSettings) -> dict:
+    """The settings dict a provider plays with."""
+    return _resolve(name, overrides, settings)[1]
 
 
 @click.group()
@@ -47,7 +54,10 @@ def cli() -> None:
     type=str,
     default="keyboard",
     show_default=True,
-    help="Move provider for Black (brain name or alias from gomoku.toml).",
+    help=(
+        "Move provider for Black: a brain name or alias from gomoku.toml, optionally with "
+        "settings changed, e.g. threat,depth=8,fallback.depth=8."
+    ),
 )
 @click.option(
     "--white",
@@ -55,7 +65,7 @@ def cli() -> None:
     type=str,
     default="random",
     show_default=True,
-    help="Move provider for White (brain name or alias from gomoku.toml).",
+    help="Move provider for White, in the same form as --black.",
 )
 @click.option("--board-size", type=click.IntRange(5, 25), default=None, help="Board size (NxN). [default: from config]")
 @click.option(
@@ -97,13 +107,28 @@ def play(
     diagnostics_dir: Path | None,
     opening_book_path: Path | None,
 ) -> None:
-    """Start a Gomoku game."""
+    """Start a Gomoku game.
+
+    \b
+    Brain settings can be changed for one game after the brain's name:
+      gomoku play --black threat,depth=8,fallback.depth=8 --white alphabeta,depth=6
+    A dotted key reaches into a nested table (fallback.depth,
+    threats.own.split_threes); values are TOML values (8, 2.5, true) or
+    plain words (threat_search=vct).  Unknown keys are an error.
+    """
     settings = _load_settings(config_path)
+    specs = {}
+    for text, label in [(black_name, "--black"), (white_name, "--white")]:
+        try:
+            specs[label] = parse_brain_spec(text)
+        except ValueError as exc:
+            raise click.BadParameter(str(exc), param_hint=f"'{label}'") from exc
+    (black_brain, black_overrides), (white_brain, white_overrides) = specs["--black"], specs["--white"]
 
     # If --opening-book is given, inject the path into all alpha-beta brain aliases.
     if opening_book_path is not None:
         book_str = str(opening_book_path)
-        for name in [black_name, white_name]:
+        for name in [black_brain, white_brain]:
             try:
                 brain_type, _kwargs = resolve_brain(name, settings.brains)
             except ValueError:
@@ -120,7 +145,7 @@ def play(
 
     # Validate provider names early.
     available = available_brains(settings.brains)
-    for name, label in [(black_name, "--black"), (white_name, "--white")]:
+    for name, label in [(black_brain, "--black"), (white_brain, "--white")]:
         if name not in available:
             raise click.BadParameter(
                 f"Unknown provider {name!r}. Available: {', '.join(available)}",
@@ -131,8 +156,14 @@ def play(
         settings.game.board_size = board_size
 
     config = GameConfig(board_size=settings.game.board_size, win_length=settings.game.win_length)
-    black = _make_provider(black_name, settings)
-    white = _make_provider(white_name, settings)
+    players_settings = {}
+    for label, (name, overrides) in specs.items():
+        try:
+            players_settings[label] = _player_settings(name, overrides, settings)
+        except ValueError as exc:
+            raise click.BadParameter(f"{label} {name}: {exc}", param_hint=f"'{label}'") from exc
+    black = _make_provider(black_brain, black_overrides, settings)
+    white = _make_provider(white_brain, white_overrides, settings)
 
     # Determine whether to record
     do_record = record if record is not None else settings.recording.enabled
@@ -142,8 +173,8 @@ def play(
     on_move = None
     if do_record:
         players = [
-            PlayerInfo(stone=Stone.BLACK, provider=black_name, settings=_player_settings(black_name, settings)),
-            PlayerInfo(stone=Stone.WHITE, provider=white_name, settings=_player_settings(white_name, settings)),
+            PlayerInfo(stone=Stone.BLACK, provider=black_name, settings=players_settings["--black"]),
+            PlayerInfo(stone=Stone.WHITE, provider=white_name, settings=players_settings["--white"]),
         ]
         recorder = GameRecorder(game_config=config, players=players, directory=rec_dir)
         on_move = recorder.record_move
@@ -162,8 +193,8 @@ def play(
     diag_recorder: DiagnosticsRecorder | None = None
     if do_diag:
         players_info = [
-            {"stone": int(Stone.BLACK), "provider": black_name, "settings": _player_settings(black_name, settings)},
-            {"stone": int(Stone.WHITE), "provider": white_name, "settings": _player_settings(white_name, settings)},
+            {"stone": int(Stone.BLACK), "provider": black_name, "settings": players_settings["--black"]},
+            {"stone": int(Stone.WHITE), "provider": white_name, "settings": players_settings["--white"]},
         ]
         diag_recorder = DiagnosticsRecorder(
             game_config=config,
@@ -323,7 +354,7 @@ def _load_settings(config_path: Path | None) -> GomokuSettings:
     type=str,
     default="alphabeta",
     show_default=True,
-    help="Brain to use for position evaluation.",
+    help="Brain to use for position evaluation (NAME[,KEY=VALUE...], as in play --black).",
 )
 @click.option(
     "--max-positions",
@@ -391,18 +422,25 @@ def generate_book(
     logging.basicConfig(level=logging.INFO, format="%(message)s")
 
     settings = _load_settings(config_path)
+    try:
+        name, overrides = parse_brain_spec(brain_name)
+    except ValueError as exc:
+        raise click.BadParameter(str(exc), param_hint="'--brain'") from exc
 
     available = available_brains(settings.brains)
-    if brain_name not in available:
+    if name not in available:
         raise click.BadParameter(
-            f"Unknown brain {brain_name!r}. Available: {', '.join(available)}",
+            f"Unknown brain {name!r}. Available: {', '.join(available)}",
             param_hint="'--brain'",
         )
 
     if board_size is not None:
         settings.game.board_size = board_size
 
-    brain = _make_provider(brain_name, settings)
+    try:
+        brain = _make_provider(name, overrides, settings)
+    except ValueError as exc:
+        raise click.BadParameter(f"{name}: {exc}", param_hint="'--brain'") from exc
 
     console.print("\n[bold]Opening Book Generator (DOE)[/bold]")
     console.print(f"  Brain: {brain_name}")
@@ -454,7 +492,15 @@ def _echo_engines(engine_a, engine_b) -> None:
 
 
 @cli.command()
-@click.option("--a", "spec_a", required=True, help="Engine A: brain=NAME[,rev=GIT_REV][,config=PATH].")
+@click.option(
+    "--a",
+    "spec_a",
+    required=True,
+    help=(
+        "Engine A: brain=NAME[,rev=GIT_REV][,config=PATH][,KEY=VALUE...]; "
+        "KEY=VALUE changes a brain setting, as in play --black."
+    ),
+)
 @click.option("--b", "spec_b", required=True, help="Engine B, same format. Without rev= the working tree is used.")
 @click.option("--games", type=click.IntRange(2, 10_000), default=20, show_default=True, help="Games to play (even).")
 @click.option("--seed", type=int, default=1, show_default=True, help="Seed for the generated openings.")
@@ -550,7 +596,15 @@ def match(
 
 
 @cli.command()
-@click.option("--a", "spec_a", required=True, help="Baseline engine: brain=NAME[,rev=GIT_REV][,config=PATH].")
+@click.option(
+    "--a",
+    "spec_a",
+    required=True,
+    help=(
+        "Baseline engine: brain=NAME[,rev=GIT_REV][,config=PATH][,KEY=VALUE...]; "
+        "KEY=VALUE changes a brain setting, as in play --black."
+    ),
+)
 @click.option("--b", "spec_b", required=True, help="Candidate engine, same format. Without rev= the working tree.")
 @click.option("--games", type=click.IntRange(2, 200), default=6, show_default=True, help="Games to play (even).")
 @click.option("--seed", type=int, default=1, show_default=True, help="Seed for the generated openings.")
@@ -671,7 +725,15 @@ def review(
 
 
 @cli.command()
-@click.option("--a", "spec_a", required=True, help="Baseline engine: brain=NAME[,rev=GIT_REV][,config=PATH].")
+@click.option(
+    "--a",
+    "spec_a",
+    required=True,
+    help=(
+        "Baseline engine: brain=NAME[,rev=GIT_REV][,config=PATH][,KEY=VALUE...]; "
+        "KEY=VALUE changes a brain setting, as in play --black."
+    ),
+)
 @click.option("--b", "spec_b", required=True, help="Candidate engine, same format. Without rev= the working tree.")
 @click.option(
     "--positions",

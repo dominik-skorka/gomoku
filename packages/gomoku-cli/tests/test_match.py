@@ -36,7 +36,9 @@ class TestEngineSpec:
         with pytest.raises(ValueError, match="does not exist"):
             EngineSpec.parse(f"brain=threat,config={tmp_path / 'missing.toml'}")
 
-    @pytest.mark.parametrize("text", ["rev=master", "brain=", "brain=x,depth=3", ""])
+    @pytest.mark.parametrize(
+        "text", ["rev=master", "brain=", "brain=x,depth", "x,y", "brain=x,brain=y", "x,fallback=1,fallback.depth=2", ""]
+    )
     def test_invalid_specs_are_rejected(self, text: str):
         with pytest.raises(ValueError, match="Invalid engine spec"):
             EngineSpec.parse(text)
