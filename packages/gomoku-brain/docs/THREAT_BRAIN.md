@@ -127,6 +127,7 @@ function VCF(board, attacker, depth):
         board' = board + attack
 
         if attack creates five → return attack        # Win!
+        if opponent can complete five now: continue
         if attack is live-four → return attack         # Unblockable!
 
         board'' = board' + defence                     # Forced block
@@ -195,13 +196,8 @@ function VCT(board, attacker, depth):
         for each defence in defences:
             board'' = board' + defence
 
-            if opponent has unblockable counter-four:
-                proven = false; break
-
-            if opponent has blockable counter-fours:
-                block them all (costs extra depth)
-
-            if VCT(board_after, attacker, depth - 2 - cost) = None:
+            # Attacker moves next, with the defender's stone on the board.
+            if VCT(board'', attacker, depth - 2) = None:
                 proven = false; break
 
         if proven: return attack
