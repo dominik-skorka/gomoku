@@ -73,6 +73,9 @@ class _NodeType(Enum):
 # ---------------------------------------------------------------------------
 
 
+Cell = tuple[int, int]  # (row, col): how moves are kept inside the search
+
+
 class _PNSNode:
     """A single position in the proof-number search graph.
 
@@ -96,13 +99,86 @@ class _PNSNode:
         self.node_type = node_type
         self.expanded = False
         self.children: list[_PNSNode] = []
-        self.moves: list[Move] = []
+        self.moves: list[Cell] = []
         # Initial proof/disproof: 1/1 for unknown nodes
         self.proof = 1
         self.disproof = 1
         # Index of the most-proving child, cached by ``_update_ancestors``
         # so ``_select_mpn`` walks the graph in O(depth).
         self.best_index = -1
+
+
+# ---------------------------------------------------------------------------
+# Fast detection for the search loop
+# ---------------------------------------------------------------------------
+#
+# Inside the search, moves are plain (row, col) tuples and the JIT kernels
+# are called directly on the node's scan context: building a validated
+# ``Move`` per threat and going through the detector wrappers was a large
+# share of PNS's time.  Each helper returns the same cells, in the same
+# order, as the wrapper it replaces; without a context (JIT off) it falls
+# back to the wrapper.
+
+_KERNELS: tuple | None = None
+
+
+def _kernels() -> tuple:
+    global _KERNELS
+    if _KERNELS is None:
+        from gomoku_brain.evaluate_jit import (
+            check_winner_grid,
+            find_four_threats_grid,
+            find_three_threats_grid,
+            find_winning_move_grid,
+        )
+
+        _KERNELS = (find_four_threats_grid, find_three_threats_grid, find_winning_move_grid, check_winner_grid)
+    return _KERNELS
+
+
+def _win_cell(state: SearchState, stone: Stone, ctx: _ScanCtx | None) -> Cell | None:
+    """A cell where *stone* completes five now, or None (``_find_winning_move``)."""
+    if ctx is None:
+        move = _find_winning_move(state, stone, ctx)
+        return None if move is None else (move.row, move.col)
+    grid, size, candidates, dirs = ctx
+    found = _kernels()[2](grid, size, candidates, int(stone), dirs)
+    return None if found.shape[0] == 0 else (int(found[0, 0]), int(found[0, 1]))
+
+
+def _is_five(state: SearchState, row: int, col: int, ctx: _ScanCtx | None) -> bool:
+    """Does the stone at (row, col) complete five (``_state_is_win``)?"""
+    if ctx is None:
+        return _state_is_win(state, row, col)
+    return bool(_kernels()[3](state.grid, state.size, row, col, 5, ctx[3]))
+
+
+def _attack_cells(state: SearchState, attacker: Stone, ctx: _ScanCtx | None, space: ThreatSpace) -> list[Cell]:
+    """The attacker's threat moves, fours first (unblockable ones first),
+    then threes (most lines first), as ``_find_four_threats`` and
+    ``_find_three_threats`` order them; repeats are left to the caller."""
+    cells: list[Cell] = []
+    if ctx is None:
+        if space.fours:
+            cells += [(a.row, a.col) for a, _d in _find_four_threats(state, attacker, ctx, space.split_fours)]
+        if space.threes:
+            cells += [(a.row, a.col) for a, _d in _find_three_threats(state, attacker, ctx, space.split_threes)]
+        return cells
+    grid, size, candidates, dirs = ctx
+    four_kernel, three_kernel, _win, _five = _kernels()
+    if space.fours:
+        rows = four_kernel(grid, size, candidates, int(attacker), dirs, space.split_fours).tolist()
+        cells += [(r[0], r[1]) for r in rows if r[2] < 0]
+        cells += [(r[0], r[1]) for r in rows if r[2] >= 0]
+    if space.threes:
+        rows = three_kernel(grid, size, candidates, int(attacker), dirs, space.split_threes).tolist()
+        threes = [(r[0], r[1]) for r in rows]
+        degree: dict[Cell, int] = {}
+        for cell in threes:
+            degree[cell] = degree.get(cell, 0) + 1
+        threes.sort(key=lambda cell: -degree[cell])
+        cells += threes
+    return cells
 
 
 # ---------------------------------------------------------------------------
@@ -141,12 +217,12 @@ def _evaluate_leaf(
     defender = attacker.opponent()
 
     if node.node_type is _NodeType.OR:
-        if _find_winning_move(state, attacker, ctx) is not None:
+        if _win_cell(state, attacker, ctx) is not None:
             node.proof = 0
             node.disproof = INF
             return
     else:
-        if _find_winning_move(state, defender, ctx) is not None:
+        if _win_cell(state, defender, ctx) is not None:
             node.proof = INF
             node.disproof = 0
             return
@@ -166,6 +242,16 @@ def _pns_defence_moves(
     ctx: _ScanCtx | None = None,
     space: ThreatSpace = DEFAULT_THREAT_SPACE,
 ) -> list[Move]:
+    """:func:`_pns_defence_cells` as ``Move`` objects."""
+    return [Move(row=r, col=c) for r, c in _pns_defence_cells(state, attacker, ctx, space)]
+
+
+def _pns_defence_cells(
+    state: SearchState,
+    attacker: Stone,
+    ctx: _ScanCtx | None = None,
+    space: ThreatSpace = DEFAULT_THREAT_SPACE,
+) -> list[Cell]:
     """Compute defender moves for an AND node: blocks + counter-threats.
 
     Includes, each when its *space* field is on:
@@ -262,7 +348,7 @@ def _pns_defence_moves(
     if space.unblockable_four_defences:
         cells |= _unblockable_four_defences(state, attacker, ctx, space.split_fours)
 
-    return [Move(row=r, col=c) for r, c in sorted(cells) if state.is_empty(r, c)]
+    return sorted(cell for cell in cells if state.is_empty(*cell))
 
 
 def _unblockable_four_defences(
@@ -319,7 +405,7 @@ def _child_at(state: SearchState, node_type: _NodeType, table: _NodeTable) -> tu
     return child, True
 
 
-def _link(node: _PNSNode, child: _PNSNode, move: Move) -> None:
+def _link(node: _PNSNode, child: _PNSNode, move: Cell) -> None:
     node.children.append(child)
     node.moves.append(move)
 
@@ -351,15 +437,15 @@ def _expand(
         # Attacker moves: four-threats and three-threats only.
 
         # Immediate win — the node is proved without materialising a child.
-        if _find_winning_move(state, attacker, ctx) is not None:
+        if _win_cell(state, attacker, ctx) is not None:
             _mark(node, True)
             return 0
 
         # If defender has an immediate win, attacker must block it.
-        def_win = _find_winning_move(state, defender, ctx)
+        def_win = _win_cell(state, defender, ctx)
         if def_win is not None:
-            if state.is_empty(def_win.row, def_win.col):
-                state.make(def_win.row, def_win.col, attacker)
+            if state.is_empty(*def_win):
+                state.make(def_win[0], def_win[1], attacker)
                 try:
                     child, is_new = _child_at(state, _NodeType.AND, table)
                     if is_new:
@@ -375,23 +461,16 @@ def _expand(
 
         # Four-threats first (stronger), then live-three threats; a cell
         # that is both is tried once.
-        attacks = (
-            [atk for atk, _defence in _find_four_threats(state, attacker, ctx, space.split_fours)]
-            if space.fours
-            else []
-        )
-        if space.threes:
-            attacks.extend(atk for atk, _defs in _find_three_threats(state, attacker, ctx, space.split_threes))
-        seen_moves: set[tuple[int, int]] = set()
-        for attack in attacks:
-            key = (attack.row, attack.col)
-            if key in seen_moves:
+        seen_moves: set[Cell] = set()
+        for attack in _attack_cells(state, attacker, ctx, space):
+            if attack in seen_moves:
                 continue
-            seen_moves.add(key)
+            seen_moves.add(attack)
+            row, col = attack
 
-            state.make(attack.row, attack.col, attacker)
+            state.make(row, col, attacker)
             try:
-                if _state_is_win(state, attack.row, attack.col):
+                if _is_five(state, row, col, ctx):
                     child, is_new = _child_at(state, _NodeType.AND, table)
                     created += is_new
                     _mark(child, True)
@@ -419,17 +498,17 @@ def _expand(
         # If attacker can win immediately, defender MUST block at that cell.
         # If attacker has multiple winning cells (e.g. live four), the
         # node is effectively proved — defender can only block one.
-        atk_win = _find_winning_move(state, attacker, ctx)
+        atk_win = _win_cell(state, attacker, ctx)
         if atk_win is not None:
-            state.make(atk_win.row, atk_win.col, defender)
+            state.make(atk_win[0], atk_win[1], defender)
             try:
-                if _find_winning_move(state, attacker, ctx) is not None:
+                if _win_cell(state, attacker, ctx) is not None:
                     # Multiple winning cells — defender can't block all → proved
                     _mark(node, True)
                     return 0
                 child, is_new = _child_at(state, _NodeType.OR, table)
                 created += is_new
-                if _state_is_win(state, atk_win.row, atk_win.col):
+                if _is_five(state, atk_win[0], atk_win[1], ctx):
                     # Defender's block itself completes five for defender
                     # (rare but possible: defender had own 4-in-a-row through
                     # the block cell).  Disprove this OR-child.
@@ -442,7 +521,7 @@ def _expand(
             finally:
                 state.unmake()
 
-        defences = _pns_defence_moves(state, attacker, ctx, space)
+        defences = _pns_defence_cells(state, attacker, ctx, space)
 
         if not defences:
             # No blocks or counter-threats -> attacker's threat is unanswerable
@@ -450,11 +529,11 @@ def _expand(
             return 0
 
         for cand in defences:
-            state.make(cand.row, cand.col, defender)
+            state.make(cand[0], cand[1], defender)
             try:
                 child, is_new = _child_at(state, _NodeType.OR, table)
                 created += is_new
-                if _state_is_win(state, cand.row, cand.col):
+                if _is_five(state, cand[0], cand[1], ctx):
                     _mark(child, False)
                     _link(node, child, cand)
                     _update_ancestors(node)
@@ -514,7 +593,7 @@ def _update_ancestors(node: _PNSNode) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _select_mpn(node: _PNSNode) -> tuple[_PNSNode, list[_PNSNode], list[Move]]:
+def _select_mpn(node: _PNSNode) -> tuple[_PNSNode, list[_PNSNode], list[Cell]]:
     """Walk from root to the most-proving leaf.
 
     Returns ``(leaf, path, moves)`` where ``moves[i]`` is the edge from
@@ -525,7 +604,7 @@ def _select_mpn(node: _PNSNode) -> tuple[_PNSNode, list[_PNSNode], list[Move]]:
     refreshes the whole path, so the next walk is exact.
     """
     path = [node]
-    moves: list[Move] = []
+    moves: list[Cell] = []
     current = node
     while current.expanded and current.children:
         i = current.best_index
@@ -618,7 +697,7 @@ def pns_threat_status(
         #    path[i] is played by the side to move at path[i].
         for parent, move in zip(path, moves, strict=False):
             who = attacker if parent.node_type is _NodeType.OR else defender
-            state.make(move.row, move.col, who)
+            state.make(move[0], move[1], who)
 
         try:
             # 3) Expand the leaf (state is already at its position).  A
@@ -638,7 +717,7 @@ def pns_threat_status(
         # Root is OR -> return the move to a proved child.
         for child, move in zip(root.children, root.moves, strict=True):
             if child.proof == 0:
-                return PNSStatus.PROVED, move
+                return PNSStatus.PROVED, Move(row=move[0], col=move[1])
     if root.disproof == 0:
         return PNSStatus.DISPROVED, None
     return PNSStatus.UNKNOWN, None
