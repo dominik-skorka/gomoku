@@ -40,7 +40,6 @@ from gomoku_brain.threat_detect import (
     _find_four_threats,
     _find_three_threats,
     _find_winning_move,
-    _has_unblockable_four,
     _scan_context,
     _ScanCtx,
 )
@@ -111,8 +110,7 @@ def _vcf_state(
     """Recursive VCF worker operating on a mutable :class:`SearchState`.
 
     *space* chooses the attacker's fours (``fours``, ``split_fours``) and
-    the defender's replies (``block_fours``, ``counter_fours``,
-    ``split_counter_fours``); *cache* must only ever see one *space*.
+    whether the defender blocks a four (``block_fours``); *cache* must only ever see one *space*.
 
     ``state`` is mutated via make/unmake during the search; on return the
     undo stack is always restored to the ply count at entry.  The public
@@ -153,10 +151,8 @@ def _vcf_state(
                 cache[zh] = (True, depth, attack)
                 return attack
 
-            # Defender must not have a live-four refutation elsewhere.
-            if space.counter_fours and _has_unblockable_four(state, opp, ctx, space.split_counter_fours):
-                continue
-
+            # Only this block prevents five. Any counter-threat it actually
+            # creates is present when we search the attacker's next turn.
             state.make(defence.row, defence.col, opp)
             try:
                 if _vcf_state(state, stone, depth - 2, cache=cache, space=space) is not None:
@@ -213,24 +209,17 @@ def classify_vcf_breakers(
 ) -> tuple[list[Move], list[Move]]:
     """Classify VCF breakers as (durable, all).
 
-    *space* is the opponent's VCF space; our counter-fours follow its
-    defence fields (``counter_fours``, ``split_counter_fours``).
+    *space* is the opponent's VCF space; ``counter_fours`` enables the
+    additional durability check when our move threatens five.
 
     A *breaker* is any candidate move that makes the opponent's VCF
     disappear when we play it.  A breaker is *durable* when the opponent
     cannot restore the VCF via their forced reply to any counter four-
     threat we happen to create.
 
-    Specifically, after we play ``move``:
-
-    1. If we have no four-threat ourselves, the VCF is genuinely broken
-       and ``move`` is durable.
-    2. Otherwise we enumerate our four-threats.  For each with a forced
-       blocking cell, we simulate the forced block and re-check the
-       opponent's VCF.  If any forced block restores the VCF, ``move``
-       is only a *temporary* breaker (the counter-threat was just a
-       distraction).  Unblockable fours (``defence is None``) are wins
-       for us and count as durable.
+    If our move already threatens five, play the forced block, then see
+    whether we can keep the VCF broken on our next turn. Without a
+    forced block there is no such continuation to check.
 
     ``cache`` is an optional shared VCF transposition table — when
     multiple VCF calls within one decision visit overlapping
@@ -254,27 +243,26 @@ def classify_vcf_breakers(
                 continue
             breakers.append(move)
 
-            our_threats = (
-                _find_four_threats(state, stone, split=space.split_counter_fours) if space.counter_fours else []
-            )
-            if not our_threats:
+            block = _find_winning_move(state, stone) if space.counter_fours else None
+            if block is None:
                 durable.append(move)
                 continue
 
-            is_durable = True
-            for _attack, defence in our_threats:
-                if defence is None:
-                    # Unblockable four — we win, so the VCF concern is moot.
+            state.make(block.row, block.col, opp)
+            try:
+                if state.occ_count == state.size**2 or _find_winning_move(state, stone) is not None:
+                    durable.append(move)
                     continue
-                state.make(defence.row, defence.col, opp)
-                try:
-                    if _vcf_state(state, opp, vcf_depth, cache=cache, space=space) is not None:
-                        is_durable = False
-                        break
-                finally:
-                    state.unmake()
-            if is_durable:
-                durable.append(move)
+                for reply in get_candidate_moves(state):
+                    state.make(reply.row, reply.col, stone)
+                    try:
+                        if _vcf_state(state, opp, vcf_depth, cache=cache, space=space) is None:
+                            durable.append(move)
+                            break
+                    finally:
+                        state.unmake()
+            finally:
+                state.unmake()
         finally:
             state.unmake()
 
@@ -370,41 +358,6 @@ def _vct_defence_moves(board: Board, attack_move: Move, stone: Stone) -> list[Mo
     return _vct_defence_moves_state(state, attack_move, stone)
 
 
-def _defence_is_refuted(
-    state: SearchState,
-    stone: Stone,
-    depth: int,
-    vct_cache: _ThreatCache,
-    vcf_cache: _ThreatCache,
-    space: ThreatSpace = DEFAULT_THREAT_SPACE,
-) -> bool:
-    """Return True if the defender's reply (just played) still loses to VCT.
-
-    ``state`` is positioned right after a defence move.  If that move
-    created counter four-threats for the defender, the attacker must
-    neutralise them first: an unblockable counter-four, or two distinct
-    forced block cells, refute the attack outright; a single forced
-    block is played and the search continues below it.
-    """
-    opp = stone.opponent()
-    opponent_fours = _find_four_threats(state, opp, split=space.split_counter_fours) if space.counter_fours else []
-    if not opponent_fours:
-        return _vct_state(state, stone, depth - 2, vct_cache, vcf_cache, space) is not None
-    if any(d is None for _, d in opponent_fours):
-        return False
-    unique_blocks = {(m.row, m.col) for _, m in opponent_fours if m is not None}
-    if len(unique_blocks) >= 2:
-        return False
-    _, block_move = opponent_fours[0]
-    if block_move is None or not state.is_empty(block_move.row, block_move.col):
-        return False
-    state.make(block_move.row, block_move.col, stone)
-    try:
-        return _vct_state(state, stone, depth - 2, vct_cache, vcf_cache, space) is not None
-    finally:
-        state.unmake()
-
-
 def _vct_state(
     state: SearchState,
     stone: Stone,
@@ -463,7 +416,7 @@ def _vct_state(
                     continue
                 state.make(defence.row, defence.col, opp)
                 try:
-                    if not _defence_is_refuted(state, stone, depth, vct_cache, vcf_cache, space):
+                    if _vct_state(state, stone, depth - 2, vct_cache, vcf_cache, space) is None:
                         all_refuted = False
                         break
                 finally:
