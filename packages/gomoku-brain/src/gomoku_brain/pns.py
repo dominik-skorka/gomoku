@@ -525,9 +525,12 @@ def _expand(
         defences = _pns_defence_cells(state, attacker, ctx, space)
 
         if not defences:
-            # No blocks or counter-threats -> attacker's threat is unanswerable
-            _mark(node, True)
-            return 0
+            # A quiet reply can still refute the attack. With no tactical
+            # candidates, try every legal reply before claiming a proof.
+            defences = [(r, c) for r in range(state.size) for c in range(state.size) if state.is_empty(r, c)]
+            if not defences:
+                _mark(node, False)  # Full board without five: draw.
+                return 0
 
         for cand in defences:
             state.make(cand[0], cand[1], defender)
