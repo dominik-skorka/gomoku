@@ -75,15 +75,25 @@ def _positions(seed: int, count: int):
         yield size, cells, to_move
 
 
+# The breaker probe's root extension (the moves breaking an incoming VCF)
+# adds root moves outside the threat space; it must stay sound.
+_ROOT_CHECKS = {"check_root_counterattacks": True, "vcf_depth": 20}
+
+
+@pytest.mark.parametrize(
+    ("options", "count"),
+    [({}, 200), (_ROOT_CHECKS, 1000)],
+    ids=["plain", "root-checks"],
+)
 @pytest.mark.parametrize("use_jit", [True, False])
-def test_every_pns_proof_is_a_real_win(use_jit, monkeypatch):
+def test_every_pns_proof_is_a_real_win(use_jit, options, count, monkeypatch):
     monkeypatch.setattr(evaluate, "_use_jit", use_jit)
     monkeypatch.setattr(threat_detect, "_SCAN_KIT", None)
     proofs = 0
     false_proofs = []
-    for size, cells, to_move in _positions(seed=7, count=200):
+    for size, cells, to_move in _positions(seed=7, count=count):
         board = Board(size=size, grid=[[Stone(cells[r * size + c]) for c in range(size)] for r in range(size)])
-        status, move = pns_threat_status(board, Stone(to_move), max_nodes=20_000, max_time_s=10.0)
+        status, move = pns_threat_status(board, Stone(to_move), max_nodes=20_000, max_time_s=10.0, **options)
         if status is not PNSStatus.PROVED:
             continue
         proofs += 1

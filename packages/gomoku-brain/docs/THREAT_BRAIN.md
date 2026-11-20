@@ -260,11 +260,23 @@ the refutations all-candidate expansion would find.
 > by taking an end of the would-be four.  The threat brain then played
 > those false wins and lost games it was ahead in.
 
+When `_probe_breakers()` asks PNS to validate a candidate, the root **OR node**
+also checks whether the defender already has a VCF.  If so, the attacker must
+answer it before continuing the proof, so the VCF breakers replace the normal
+four- and three-threat children.  This covers defensive moves that are quiet in
+the attacker's threat space but start a winning counterattack, such as the
+`G5` / `G8` regression.  Ordinary PNS calls leave this extra check disabled.
+
+> Quiet root moves that only *set up* a VCT (Black's `G8` after White's `I7`
+> or `J9` in the same game) are not covered: the defender moves after such a
+> move, so proving it needs every legal reply searched.  Tried in PR #69/#70,
+> it cost 27% think time for no measurable strength.
+
 ### Node types
 
 | Node type | Who moves | Children | Win condition |
 |-----------|-----------|----------|---------------|
-| **OR**  (attacker) | Attacker | Four-threats + three-threats | *Any* child proved |
+| **OR**  (attacker) | Attacker | Four-threats + three-threats; bounded root counterattacks during breaker validation | *Any* child proved |
 | **AND** (defender) | Defender | Blocks + counter-threats | *Every* child proved |
 
 ### How proof numbers work

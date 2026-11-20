@@ -1,5 +1,6 @@
 """Tests for the Proof-Number Search (PNS) threat-space algorithm."""
 
+import pytest
 from gomoku.board import Board
 from gomoku.models import Move, Stone
 from gomoku_brain.pns import pns_threat_search
@@ -315,6 +316,90 @@ class TestPnsStatus:
         assert pns_threat_search(board, Stone.BLACK, max_nodes=20) is None
         status, _ = pns_threat_status(board, Stone.BLACK, max_nodes=100_000, max_time_s=60.0)
         assert status is PNSStatus.PROVED
+
+    @pytest.mark.parametrize("use_jit", [False, True])
+    def test_vcf_breaker_can_start_the_attackers_win(self, use_jit, monkeypatch):
+        """A forced VCF defence may also start the attacker's win.
+
+        White's G5 creates a VCF starting at G4. Black cannot ignore it,
+        but G8 both breaks that VCF and starts Black's forced win. OR-node
+        expansion must include such breakers even when they are not an
+        attacking threat before being played.
+        """
+        from gomoku_brain import evaluate, threat_detect
+        from gomoku_brain.pns import PNSStatus, pns_threat_status
+
+        monkeypatch.setattr(evaluate, "_use_jit", use_jit)
+        monkeypatch.setattr(threat_detect, "_SCAN_KIT", None)
+
+        board = Board(size=15)
+        for name, stone in (
+            ("H8", Stone.BLACK),
+            ("G7", Stone.WHITE),
+            ("I9", Stone.BLACK),
+            ("G6", Stone.WHITE),
+            ("H9", Stone.BLACK),
+            ("G5", Stone.WHITE),
+        ):
+            move = Move(row=int(name[1:]) - 1, col=ord(name[0]) - ord("A"))
+            board = board.place_stone(move, stone)
+
+        status, _ = pns_threat_status(
+            board,
+            Stone.BLACK,
+            max_nodes=120_000,
+            max_time_s=10.0,
+            check_root_counterattacks=True,
+        )
+
+        # The configured budget need not finish the much wider proof, but
+        # the position is no longer falsely disproved (and therefore no
+        # longer treated as a safe breaker by ThreatBrain).
+        assert status is not PNSStatus.DISPROVED
+
+    def test_vcf_breaker_without_a_counterattack_stays_disproved(self):
+        from gomoku_brain.pns import PNSStatus, pns_threat_status
+
+        board = Board(size=15)
+        for name, stone in (
+            ("A1", Stone.BLACK),
+            ("G5", Stone.WHITE),
+            ("C1", Stone.BLACK),
+            ("G6", Stone.WHITE),
+            ("A3", Stone.BLACK),
+            ("G7", Stone.WHITE),
+        ):
+            move = Move(row=int(name[1:]) - 1, col=ord(name[0]) - ord("A"))
+            board = board.place_stone(move, stone)
+
+        assert (
+            pns_threat_status(board, Stone.BLACK, max_nodes=10_000, check_root_counterattacks=True)[0]
+            is PNSStatus.DISPROVED
+        )
+
+    def test_incoming_vcf_adds_its_breakers_to_the_root(self):
+        from gomoku_brain.pns import _expand, _NodeType, _PNSNode
+        from gomoku_brain.search_state import SearchState
+
+        board = Board(size=15)
+        for name, stone in (
+            ("H8", Stone.BLACK),
+            ("G7", Stone.WHITE),
+            ("I9", Stone.BLACK),
+            ("G6", Stone.WHITE),
+            ("H9", Stone.BLACK),
+            ("G5", Stone.WHITE),
+        ):
+            move = Move(row=int(name[1:]) - 1, col=ord(name[0]) - ord("A"))
+            board = board.place_stone(move, stone)
+
+        state = SearchState.from_board(board, Stone.BLACK)
+        root = _PNSNode(_NodeType.OR)
+        table = {state.zobrist: root}
+
+        _expand(root, state, Stone.BLACK, table, check_root_counterattacks=True)
+
+        assert Move(row=7, col=6) in [Move(row=row, col=col) for row, col in root.moves]  # G8
 
 
 # ---------------------------------------------------------------------------
