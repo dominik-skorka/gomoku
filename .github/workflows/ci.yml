@@ -9,6 +9,15 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.14t (free-threaded, no GIL) is the project's interpreter, see
+        # .python-version; plain 3.14 must keep working too.
+        python: ["3.14t", "3.14"]
+    name: test (${{ matrix.python }})
+    env:
+      UV_PYTHON: ${{ matrix.python }}
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5

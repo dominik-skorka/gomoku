@@ -164,9 +164,16 @@ def run() -> None:
     Defers the uvicorn import so that ``gomoku_fastapi`` is cheap to
     import in test contexts that don't actually want to start a server.
     """
+    import sysconfig
+
     import uvicorn
 
-    uvicorn.run("gomoku_fastapi.main:app", host="127.0.0.1", port=8000, reload=False)
+    # On a free-threaded Python, use the pure-Python h11 parser: httptools
+    # (uvicorn's default when installed) has not declared it can run
+    # without the GIL, so importing it would switch the GIL back on for
+    # the whole process, brain threads included.
+    http = "h11" if sysconfig.get_config_var("Py_GIL_DISABLED") else "auto"
+    uvicorn.run("gomoku_fastapi.main:app", host="127.0.0.1", port=8000, reload=False, http=http)
 
 
 __all__ = ["app", "create_app", "run"]
