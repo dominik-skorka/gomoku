@@ -161,6 +161,106 @@ class TestDetection:
         assert review.blunders == []
 
 
+class TestUnconvertedWin:
+    """A claimed forced win must hold to the end of the game.
+
+    Black (engine A) plays plies 2, 4 and 6; White plays 3, 5 and 7.  No
+    five is ever on the board: the games end on the move limit unless a
+    test says otherwise.
+    """
+
+    MOVES = ((7, 7), (0, 0), (7, 8), (14, 14), (3, 3), (4, 4), (5, 5), (6, 6))
+    WIN = (7, 9)  # the oracle's winning move, when it proves one
+
+    def _oracle(self, status: str) -> FakeOracle:
+        """*status* for Black before each of its moves; White has no win."""
+        table = {
+            (tuple(self.MOVES[:p]), None): (status, self.WIN if status == "PROVED" else None) for p in (2, 4, 6, 8)
+        }
+        return FakeOracle(table, screen_default="PROVED")
+
+    def _review(self, paths, oracle, *, reason="move limit", winner=None, escalate=False, slots=None):
+        record = _record(list(self.MOVES), reason=reason, paths=paths)
+        record.winner = winner
+        return review_game(0, record, 2, oracle, slots or {}, SIZE, escalate=escalate)
+
+    def test_claim_dropped_while_the_win_is_still_there_is_tuning(self):
+        slot = FakeSlot({"repeat": self.WIN})
+        review = self._review(
+            ["pns_win", None, None, None, None, None], self._oracle("PROVED"), escalate=True, slots={"a": slot}
+        )
+        [blunder] = review.blunders
+        assert (blunder.kind, blunder.ply, blunder.claim_ply, blunder.better) == ("unconverted_win", 4, 2, self.WIN)
+        assert blunder.verdict == "tuning"  # asked again, the brain finds the win
+        assert "move 3" in blunder.detail and "move 5 was no win" in blunder.detail
+
+    def test_claim_dropped_and_no_setting_finds_the_win_is_a_bug(self):
+        slot = FakeSlot({"repeat": (1, 1)})
+        review = self._review(
+            ["pns_win", None, None, None, None, None], self._oracle("PROVED"), escalate=True, slots={"a": slot}
+        )
+        [blunder] = review.blunders
+        assert (blunder.kind, blunder.verdict) == ("unconverted_win", "bug")
+
+    def test_oracle_cannot_tell_is_unclassified(self):
+        review = self._review(["pns_win", None, None, None, None, None], self._oracle("UNKNOWN"))
+        [blunder] = review.blunders
+        assert (blunder.kind, blunder.ply, blunder.verdict) == ("unconverted_win", 4, "unclassified")
+
+    def test_claims_kept_to_the_end_of_an_unfinished_game_are_reported(self):
+        paths = ["pns_win", None, "vcf_win", None, "pns_win", None]
+        review = self._review(paths, self._oracle("UNKNOWN"))
+        [blunder] = review.blunders
+        assert (blunder.kind, blunder.ply) == ("unconverted_win", 6)  # the last own move
+        assert "ended without its five (move limit)" in blunder.detail
+
+    def test_opponent_five_after_a_claim(self):
+        paths = ["pns_win", None, "pns_win", None, "pns_win", None]
+        review = self._review(paths, self._oracle("UNKNOWN"), reason="five in a row", winner="b")
+        [blunder] = review.blunders
+        assert blunder.kind == "unconverted_win" and "opponent completed five" in blunder.detail
+
+    def test_a_claim_ending_in_its_own_five_is_fine(self):
+        moves = [(7, 7), (0, 0), (7, 3), (0, 2), (7, 4), (0, 4), (7, 5), (0, 6), (7, 6)]  # Black's five at ply 8
+        table = {(tuple(moves[:p]), None): ("UNKNOWN", None) for p in range(2, 9)}
+        record = _record(moves, reason="five in a row", paths=["pns_win", None, "pns_win", None, "vcf_win", None, None])
+        record.winner = "a"
+        review = review_game(0, record, 2, FakeOracle(table), {}, SIZE, escalate=False)
+        assert [b.kind for b in review.blunders if b.engine == "a"] == []
+
+    def test_forced_block_inside_the_chain_is_fine(self):
+        # After Black's claim White makes a four (row 0, open only at (0, 4));
+        # Black's block there is part of the proof, then Black wins.
+        moves = [(7, 7), (9, 9), (7, 3), (0, 0), (7, 4), (0, 1), (8, 8), (0, 2), (6, 6), (0, 3)]
+        moves += [(0, 4), (12, 12), (7, 5), (13, 13), (7, 6)]  # Black blocks, then completes five
+        table = {(tuple(moves[:p]), None): ("UNKNOWN", None) for p in range(2, len(moves) + 1)}
+        paths = [None] * (len(moves) - 2)
+        paths[2 - 2] = "pns_win"  # Black's first engine move claims the win
+        for ply in (4, 6, 8, 12):
+            paths[ply - 2] = "pns_win"
+        record = _record(moves, reason="five in a row", paths=paths)
+        record.winner = "a"
+        review = review_game(0, record, 2, FakeOracle(table), {}, SIZE, escalate=False)
+        assert [b.kind for b in review.blunders if b.engine == "a"] == []
+
+    def test_no_claim_no_report(self):
+        review = self._review([None] * 6, self._oracle("UNKNOWN"))
+        assert review.blunders == []
+
+    def test_a_disproved_claim_is_reported_once(self):
+        # The oracle disproves the claim where it is made: unsound_proof
+        # explains the chain, so no second blunder for it.
+        review = self._review(["pns_win", None, None, None, None, None], FakeOracle())
+        assert [b.kind for b in review.blunders if b.engine == "a"] == ["unsound_proof"]
+
+    def test_report_draws_the_claim_and_the_break(self):
+        review = self._review(["pns_win", None, None, None, None, None], self._oracle("UNKNOWN"))
+        text = format_report(EngineSpec("threat"), EngineSpec("threat"), [review])
+        assert "unconverted win 1" in text
+        assert "when the win was claimed (move 3, ! played)" in text
+        assert "where the claim broke (move 5)" in text
+
+
 class TestEscalation:
     @staticmethod
     def _blunder(kind: str = "missed_block", better=(7, 2)) -> Blunder:

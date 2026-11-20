@@ -472,7 +472,8 @@ worker process (`match_worker.py`), optionally from another git revision
   difference with a 95% interval, and think time.
 - **`gomoku review`** plays a few games and checks every move with a
   proof-number search oracle (missed wins, missed blocks, losing moves,
-  unsound proofs), retries each blunder with larger settings to tell
+  unsound proofs), follows each claimed forced win to the end of the game
+  (unconverted wins), retries each blunder with larger settings to tell
   tuning issues from bugs, and draws each blunder's position.
 
 CI runs `review` on every pull request that touches the engine and `match`

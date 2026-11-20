@@ -208,8 +208,12 @@ everything with the working tree's search.  It flags:
 | `missed_block` | The opponent threatened five on a single cell and the mover played elsewhere |
 | `losing_move` | After the move the opponent has a proven forced win; the report shows a move that held |
 | `unsound_proof` | The brain claimed a forced win the oracle disproves, or the oracle's own proof failed after it was followed |
+| `unconverted_win` | The brain claimed a forced win (`vcf_win`, `pns_win`, `vct_win`), but a later move of its own was no win, or the game ended without its five.  Needs no oracle to spot; the report draws the position of the claim and of the break |
 
-Each blunder (except `unsound_proof`, which is always a bug) is then
+An `unconverted_win` where the oracle disproves the win at the break is a
+bug (the claim was unsound); one where the oracle still proves it is
+treated like a missed win.  Each blunder (except `unsound_proof`, which is
+always a bug) is then
 replayed with the same engine: once unchanged, then with larger
 settings, cheapest first — for the threat brain a 10× PNS budget, one
 more fallback ply, a doubled fallback width, and all of them together.

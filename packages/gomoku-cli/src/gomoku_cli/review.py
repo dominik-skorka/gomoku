@@ -11,7 +11,8 @@ mistakes.
 Each position before an engine move gets one oracle verdict for the side
 to move — ``PROVED`` (it has a forced win), ``DISPROVED`` (no forced
 win in threat space) or ``UNKNOWN`` (budget ran out).  Comparing
-neighbouring verdicts finds five kinds of blunder:
+neighbouring verdicts finds four kinds of blunder, and following the
+brain's own claims through the game a fifth:
 
 ``missed_win``
     The mover could complete five, or had a proven forced win, and after
@@ -26,8 +27,18 @@ neighbouring verdicts finds five kinds of blunder:
     The brain claimed a forced win the oracle disproves, or the oracle
     proved a win, its own move was played, and after the reply the win
     was disproved.  Always a bug in a proof search.
+``unconverted_win``
+    The brain claimed a forced win (``vcf_win``, ``pns_win``,
+    ``vct_win``), but a later move of its own was no win (neither a
+    claimed win nor a forced block of the opponent's five), or the game
+    ended without its five.  A claimed win must hold to the end of the
+    game, so this needs no oracle to spot.  The oracle only tells the two
+    causes apart: if the win was still there when the chain broke, the
+    brain failed to find it again (escalated like a missed win); if the
+    oracle disproves it there, the claim was unsound (a bug).
 
-For every blunder except ``unsound_proof`` the engine is asked the same
+For every blunder except ``unsound_proof`` (and a disproved
+``unconverted_win``) the engine is asked the same
 position again, first unchanged and then with larger settings (a bigger
 PNS budget, one more ply, a wider fallback, all of them together).  If
 one of those finds a good move, the blunder is a *tuning* matter and the
@@ -72,12 +83,13 @@ WIN_PATHS = CLAIMED_WIN_PATHS | {"immediate_win", "instant_win"}
 # --oracle-rev value that runs the oracle from the working tree.
 WORKTREE = "worktree"
 
-KINDS = ("missed_win", "missed_block", "losing_move", "unsound_proof")
+KINDS = ("missed_win", "missed_block", "losing_move", "unsound_proof", "unconverted_win")
 _KIND_TEXT = {
     "missed_win": "missed win",
     "missed_block": "missed block",
     "losing_move": "losing move",
     "unsound_proof": "unsound proof",
+    "unconverted_win": "unconverted win",
 }
 
 Cell = tuple[int, int]
@@ -115,6 +127,8 @@ class Blunder:
     attempts: list[Attempt] = field(default_factory=list)
     verdict: str = "bug"  # "tuning", "bug" or "disputed"
     remedy: str = ""
+    # unconverted_win: the ply whose move first claimed the win.
+    claim_ply: int | None = None
 
 
 @dataclass
@@ -390,8 +404,16 @@ def review_game(
                     "check by hand which search is wrong"
                 )
 
+    blunders += _unconverted_wins(index, record, opening_len, statuses, blunders, size)
+
     for blunder in blunders:
         if blunder.verdict == "disputed":
+            continue
+        if blunder.kind == "unconverted_win" and blunder.better is None:
+            if blunder.verdict == "bug":
+                blunder.remedy = "the claimed win did not exist (the oracle disproves it): a proof search is unsound"
+            else:
+                blunder.remedy = "the oracle cannot tell whether the win was still there; check by hand"
             continue
         if blunder.kind == "unsound_proof":
             blunder.verdict, blunder.remedy = "bug", "a proof search is unsound; fix it before tuning anything"
@@ -400,6 +422,93 @@ def review_game(
         else:
             blunder.verdict, blunder.remedy = "unclassified", "escalation disabled"
     return GameReview(index=index, record=record, statuses=statuses, blunders=blunders, size=size)
+
+
+def _unconverted_wins(
+    index: int,
+    record: GameRecord,
+    opening_len: int,
+    statuses: list[tuple[str, Cell | None] | None],
+    found: list[Blunder],
+    size: int,
+) -> list[Blunder]:
+    """Claimed forced wins the game did not bear out, one per engine.
+
+    From an engine's first move with a claimed-win decision path, every
+    later move of its own must also be a win (a claim, or completing
+    five) or block the opponent's only five (a counter-four the proof
+    allows for: the attacker blocks it and goes on), and the game must
+    end with its five.  The first own move that
+    breaks the chain, or the last one if the game simply ended, is
+    reported.  A chain already explained by another blunder of the same
+    engine (say a ``missed_win`` at the break) is not reported twice.
+    """
+    moves = record.moves
+    paths = record.paths
+    if not paths:
+        return []
+    won = record.reason == "five in a row"
+
+    def path_at(ply: int) -> str | None:
+        k = ply - opening_len
+        return paths[k] if 0 <= k < len(paths) else None
+
+    def engine_at(ply: int) -> str:
+        return "a" if (_stone_at(ply) is Stone.BLACK) == record.a_is_black else "b"
+
+    out = []
+    for engine in ("a", "b"):
+        claim = next(
+            (p for p in range(opening_len, len(moves)) if engine_at(p) == engine and path_at(p) in CLAIMED_WIN_PATHS),
+            None,
+        )
+        if claim is None:
+            continue
+        breaks = None
+        detail = ""
+        ply = claim + 2
+        while ply < len(moves):
+            if won and ply == len(moves) - 1:
+                break  # this move completes five: the claim held
+            forced_block = five_cells(list(moves[:ply]), _stone_at(ply).opponent(), size) == [moves[ply]]
+            if path_at(ply) not in WIN_PATHS and not forced_block:
+                breaks = ply
+                detail = f"its move {ply + 1} was no win ({path_at(ply) or 'no decision path'})"
+                break
+            ply += 2
+        if breaks is None and not (won and record.winner == engine):
+            last = ply - 2 if ply - 2 >= claim else claim
+            breaks = last
+            detail = "the opponent completed five" if won else f"the game ended without its five ({record.reason})"
+        if breaks is None:
+            continue
+        if any(b.engine == engine and claim <= b.ply <= breaks for b in found):
+            continue
+        k = breaks - opening_len
+        status, oracle_move = statuses[k] if 0 <= k < len(statuses) and statuses[k] is not None else ("UNKNOWN", None)
+        ms_list = record.a_ms if engine == "a" else record.b_ms
+        own_index = k // 2
+        blunder = Blunder(
+            game=index,
+            ply=breaks,
+            engine=engine,
+            stone=_stone_at(breaks).name.lower(),
+            kind="unconverted_win",
+            played=moves[breaks],
+            better=oracle_move if status == "PROVED" else None,
+            detail=f"claimed a forced win at move {claim + 1} ({path_at(claim)}); {detail}",
+            path=path_at(breaks),
+            ms=ms_list[own_index] if own_index < len(ms_list) else 0.0,
+            claim_ply=claim,
+        )
+        if status == "PROVED":
+            blunder.detail += f"; the oracle still wins with {cell_name(oracle_move)}"
+        elif status == "DISPROVED":
+            blunder.verdict = "bug"
+        else:
+            blunder.verdict = "unclassified"
+        out.append(blunder)
+    return out
 
 
 def _classify(
@@ -484,7 +593,7 @@ def _escalate(
     def is_good(move: Cell, path: str | None) -> bool | None:
         if blunder.kind == "missed_block":
             return move == blunder.better
-        if blunder.kind == "missed_win":
+        if blunder.kind in ("missed_win", "unconverted_win"):
             if move == blunder.better or move in five_cells(history, stone, size):
                 return True
             return path in WIN_PATHS
@@ -707,6 +816,12 @@ def format_blunder(blunder: Blunder, labels: dict[str, str], moves: list[Cell] |
         marks = {tuple(blunder.played): "!"}
         if blunder.better is not None:
             marks[tuple(blunder.better)] = "*"
+        if blunder.claim_ply is not None and blunder.claim_ply != blunder.ply:
+            claim = blunder.claim_ply
+            lines.append(f"    when the win was claimed (move {claim + 1}, ! played):")
+            claimed = [tuple(m) for m in moves[:claim]]
+            lines.append(render_board(claimed, {tuple(moves[claim]): "!"}, size, indent="    "))
+            lines.append(f"    where the claim broke (move {blunder.ply + 1}):")
         history = [tuple(m) for m in moves[: blunder.ply]]
         lines.append(render_board(history, marks, size, indent="    "))
     return "\n".join(lines)
