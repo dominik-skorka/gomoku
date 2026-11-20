@@ -66,34 +66,6 @@ class AlphaBetaBrain(Brain[AlphaBetaBrainSettings], name="alphabeta"):
     def __init__(self, settings: AlphaBetaBrainSettings | None = None, /, **overrides: Any) -> None:
         super().__init__(settings, **overrides)
         s = self.settings
-        self.depth = s.depth
-        # PNS budget for checking that a root VCF breaker leaves the
-        # opponent no other forced win (0: pick by evaluation only).
-        self.vcf_breaker_pns_nodes = s.vcf_breaker_pns_nodes
-        self.vcf_breaker_time_s = s.vcf_breaker_time_s
-        # Threads probing those breakers in parallel (gomoku_brain.probe).
-        self.probe_threads = s.probe_threads
-        self.vcf_depth = s.vcf_depth
-        self.qs_vcf_depth = s.qs_vcf_depth
-        self.threat_ordering = s.threat_ordering
-        self.threat_extensions = s.threat_extensions
-        self.null_move_pruning = s.null_move_pruning
-        self.null_move_reduction = s.null_move_reduction
-        self.lmr = s.lmr
-        self.lmr_threshold = s.lmr_threshold
-        self.lmr_min_depth = s.lmr_min_depth
-        self.early_game_radius = s.early_game_radius
-        self.early_game_threshold = s.early_game_threshold
-        self.early_game_max_candidates = s.early_game_max_candidates
-        self.early_game_lmr_threshold = s.early_game_lmr_threshold
-        self.early_game_futility_margin = s.early_game_futility_margin
-        # Branching cap and futility margin after the early game.
-        self.max_candidates = s.max_candidates
-        self.futility_margin = s.futility_margin
-        # Nodes at least this deep rank candidates by a full evaluation
-        # of each move; shallower nodes use the one-kernel pattern prior.
-        self.eval_ordering_depth = s.eval_ordering_depth
-        self.time_limit_s = s.time_limit_s
         # Benchmark instrumentation — reset on each get_move, updated inside
         # _alphabeta / _quiesce.  Read by bench_alphabeta.py.  Zero overhead
         # when ignored (one int increment per node).
@@ -137,14 +109,14 @@ class AlphaBetaBrain(Brain[AlphaBetaBrainSettings], name="alphabeta"):
             return book_move
 
         # -- Root-level VCF pre-check ------------------------------------
-        if self.vcf_depth > 0:
+        if self.settings.vcf_depth > 0:
             vcf_move = root_vcf(
                 board,
                 stone,
-                self.vcf_depth,
-                self.vcf_breaker_pns_nodes,
-                self.vcf_breaker_time_s,
-                self.probe_threads,
+                self.settings.vcf_depth,
+                self.settings.vcf_breaker_pns_nodes,
+                self.settings.vcf_breaker_time_s,
+                self.settings.probe_threads,
             )
             if vcf_move is not None:
                 if diag is not None:
@@ -152,7 +124,7 @@ class AlphaBetaBrain(Brain[AlphaBetaBrainSettings], name="alphabeta"):
                     # vcf_breaker, vcf_block_no_breaker); keep it.
                     diag.decision_path = diag.decision_path or "vcf_precheck"
                     diag.chosen_move = vcf_move
-                    diag.notes.append(f"VCF found at depth {self.vcf_depth}")
+                    diag.notes.append(f"VCF found at depth {self.settings.vcf_depth}")
                 return vcf_move
 
         # -- Build the mutable SearchState used throughout the search ---
@@ -169,14 +141,14 @@ class AlphaBetaBrain(Brain[AlphaBetaBrainSettings], name="alphabeta"):
         # History table shared across all ID iterations so it accumulates.
         history: HistoryTable = {}
         eval_cache: EvalCache = {}
-        self._qs_ctx = QuiesceCtx(qs_vcf_depth=self.qs_vcf_depth, eval_cache=eval_cache)
+        self._qs_ctx = QuiesceCtx(qs_vcf_depth=self.settings.qs_vcf_depth, eval_cache=eval_cache)
         prev_score: float | None = None
         aspiration_resets = 0
 
         # Time management: 0 means unlimited.  Deadline is independent
         # of the brain_session timer because it gates the search itself
         # (not just diagnostics reporting).
-        deadline = (time.monotonic() + self.time_limit_s) if self.time_limit_s > 0 else 0.0
+        deadline = (time.monotonic() + self.settings.time_limit_s) if self.settings.time_limit_s > 0 else 0.0
 
         # Static eval before the move (for diagnostics).
         if diag is not None:
@@ -185,7 +157,7 @@ class AlphaBetaBrain(Brain[AlphaBetaBrainSettings], name="alphabeta"):
         # Iterative deepening: search at increasing depths so that each
         # pass seeds the TT with best-move info for the next, deeper pass.
         depth_reached = 0
-        for d in range(1, self.depth + 1):
+        for d in range(1, self.settings.depth + 1):
             # Fresh killers each iteration — they are depth-relative.
             killers: dict[int, list[Move]] = {}
 
@@ -205,7 +177,7 @@ class AlphaBetaBrain(Brain[AlphaBetaBrainSettings], name="alphabeta"):
                         tt,
                         history,
                         eval_cache,
-                        self.threat_extensions,
+                        self.settings.threat_extensions,
                         deadline=deadline,
                     )
                     # Re-search on fail-low or fail-high.
@@ -221,7 +193,7 @@ class AlphaBetaBrain(Brain[AlphaBetaBrainSettings], name="alphabeta"):
                             tt,
                             history,
                             eval_cache,
-                            self.threat_extensions,
+                            self.settings.threat_extensions,
                             deadline=deadline,
                         )
                 else:
@@ -235,14 +207,14 @@ class AlphaBetaBrain(Brain[AlphaBetaBrainSettings], name="alphabeta"):
                         tt,
                         history,
                         eval_cache,
-                        self.threat_extensions,
+                        self.settings.threat_extensions,
                         deadline=deadline,
                     )
             except _SearchTimeout:
                 logfire.info(
                     "ID depth {d}/{max_d}: time limit reached, using best from depth {prev_d}",
                     d=d,
-                    max_d=self.depth,
+                    max_d=self.settings.depth,
                     prev_d=d - 1,
                 )
                 break
@@ -252,11 +224,11 @@ class AlphaBetaBrain(Brain[AlphaBetaBrainSettings], name="alphabeta"):
             if move is not None:
                 best_move = move
             if diag is not None:
-                diag.notes.append(f"ID d={d}/{self.depth}: score={score}, move={move}, tt={len(tt)}")
+                diag.notes.append(f"ID d={d}/{self.settings.depth}: score={score}, move={move}, tt={len(tt)}")
             logfire.info(
                 "ID depth {d}/{max_d}: score={score}, move={move}, tt_size={tt_size}",
                 d=d,
-                max_d=self.depth,
+                max_d=self.settings.depth,
                 score=score,
                 move=str(move),
                 tt_size=len(tt),
@@ -442,7 +414,7 @@ class AlphaBetaBrain(Brain[AlphaBetaBrainSettings], name="alphabeta"):
 
         # 3. Threat-tier (optional): moves that create a four or five for us,
         #    or block one for the opponent.  Cheap inline scan.
-        if self.threat_ordering:
+        if self.settings.threat_ordering:
             threat_moves, non_threat = _split_threats(state, rest, stone, include_forks=True)
         else:
             threat_moves = []
@@ -565,7 +537,13 @@ class AlphaBetaBrain(Brain[AlphaBetaBrainSettings], name="alphabeta"):
         # free move, prune this branch.
         # Guards: enabled, not consecutive (allow_null), sufficient depth,
         # non-PV node (zero-window), and board has enough pieces.
-        if self.null_move_pruning and allow_null and depth >= 3 and (beta - alpha) == 1 and state.occ_count >= 4:
+        if (
+            self.settings.null_move_pruning
+            and allow_null
+            and depth >= 3
+            and (beta - alpha) == 1
+            and state.occ_count >= 4
+        ):
             # Use cached static eval when available.
             if zh in eval_cache:
                 null_eval = eval_cache[zh]
@@ -574,7 +552,7 @@ class AlphaBetaBrain(Brain[AlphaBetaBrainSettings], name="alphabeta"):
                 eval_cache[zh] = null_eval
 
             if null_eval >= beta:
-                r = self.null_move_reduction
+                r = self.settings.null_move_reduction
                 null_depth = max(depth - 1 - r, 0)
                 # Pass the turn: flip the Zobrist side-to-move bit only.
                 # We toggle it on the state in place and restore it after
@@ -612,8 +590,8 @@ class AlphaBetaBrain(Brain[AlphaBetaBrainSettings], name="alphabeta"):
 
         # -- Candidate generation --------------------------------------------
         occ_count = state.occ_count
-        is_early = occ_count <= self.early_game_threshold
-        radius = self.early_game_radius if is_early else 2
+        is_early = occ_count <= self.settings.early_game_threshold
+        radius = self.settings.early_game_radius if is_early else 2
         candidates = get_candidate_moves(state, radius=radius)
         if not candidates:
             return 0.0, None
@@ -623,9 +601,9 @@ class AlphaBetaBrain(Brain[AlphaBetaBrainSettings], name="alphabeta"):
             candidates = deduplicate_by_symmetry(state, candidates)
 
         # Resolve early-game adaptive parameters once.
-        futility_margin = self.early_game_futility_margin if is_early else self.futility_margin
-        lmr_threshold = self.early_game_lmr_threshold if is_early else self.lmr_threshold
-        lmr_min_depth = 2 if is_early else self.lmr_min_depth
+        futility_margin = self.settings.early_game_futility_margin if is_early else self.settings.futility_margin
+        lmr_threshold = self.settings.early_game_lmr_threshold if is_early else self.settings.lmr_threshold
+        lmr_min_depth = 2 if is_early else self.settings.lmr_min_depth
 
         # Fast path: check for an instant win or a forced block before the
         # expensive evaluation-based sort.  When urgent is found, play it
@@ -641,7 +619,7 @@ class AlphaBetaBrain(Brain[AlphaBetaBrainSettings], name="alphabeta"):
                 return 100_000.0 + depth, urgent
             # It's a block — promote it to head but still search alternatives
             candidates = [urgent, *(m for m in candidates if m != urgent)]
-        elif depth >= self.eval_ordering_depth:
+        elif depth >= self.settings.eval_ordering_depth:
             candidates = self._order_moves(state, candidates, stone, depth, killers, tt_move, history, eval_cache)
         else:
             # Shallow nodes are the bulk of the tree, so they get a cheap
@@ -652,7 +630,7 @@ class AlphaBetaBrain(Brain[AlphaBetaBrainSettings], name="alphabeta"):
             candidates = self._prior_order(state, candidates, stone, depth, killers, tt_move)
 
         # Cap branching factor to avoid combinatorial explosion.
-        cap = self.early_game_max_candidates if is_early else self.max_candidates
+        cap = self.settings.early_game_max_candidates if is_early else self.settings.max_candidates
         candidates = candidates[:cap]
 
         best_score = float("-inf")
@@ -692,7 +670,7 @@ class AlphaBetaBrain(Brain[AlphaBetaBrainSettings], name="alphabeta"):
                 child_depth = depth - 1
                 child_ext = ext_left
                 is_threat = False
-                if (ext_left > 0 or self.lmr) and depth >= 2:
+                if (ext_left > 0 or self.settings.lmr) and depth >= 2:
                     is_threat = _is_four_threat_move(state, move, stone)
                     if is_threat and ext_left > 0:
                         child_depth = depth  # extend: don't decrement
@@ -732,7 +710,7 @@ class AlphaBetaBrain(Brain[AlphaBetaBrainSettings], name="alphabeta"):
                     # at full depth via the normal PVS fail-high path below.
                     lmr_reduced = False
                     scout_depth = child_depth
-                    if self.lmr and depth >= lmr_min_depth and i >= lmr_threshold and not is_tactical:
+                    if self.settings.lmr and depth >= lmr_min_depth and i >= lmr_threshold and not is_tactical:
                         scout_depth = max(child_depth - 1, 1)
                         lmr_reduced = True
 

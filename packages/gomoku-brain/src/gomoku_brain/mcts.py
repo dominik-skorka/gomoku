@@ -29,7 +29,7 @@ or occupied-set copies.
 
 import math
 import random as _random
-from typing import Any, override
+from typing import override
 
 import logfire
 from gomoku.board import Board
@@ -158,15 +158,6 @@ class _Node:
 class MCTSBrain(Brain[MCTSBrainSettings], name="mcts"):
     """Player using Monte Carlo Tree Search with PUCT."""
 
-    def __init__(self, settings: MCTSBrainSettings | None = None, /, **overrides: Any) -> None:
-        super().__init__(settings, **overrides)
-        s = self.settings
-        self.iterations = s.iterations
-        self.exploration = s.exploration
-        self.dirichlet_alpha = s.dirichlet_alpha
-        self.dirichlet_weight = s.dirichlet_weight
-        self.vcf_depth = s.vcf_depth
-
     # -- Public interface ----------------------------------------------------
 
     @override
@@ -198,13 +189,13 @@ class MCTSBrain(Brain[MCTSBrainSettings], name="mcts"):
         # the semantics enforced in AlphaBeta and ThreatBrain via
         # :func:`classify_vcf_breakers`.
         vcf_gated = False
-        if self.vcf_depth > 0:
+        if self.settings.vcf_depth > 0:
             from gomoku_brain.threat import _vcf
 
-            opp_vcf = _vcf(board, stone.opponent(), self.vcf_depth)
+            opp_vcf = _vcf(board, stone.opponent(), self.settings.vcf_depth)
             if opp_vcf is not None:
                 durable, breakers = classify_vcf_breakers(
-                    board, candidates, stone, self.vcf_depth
+                    board, candidates, stone, self.settings.vcf_depth
                 )
                 restricted = durable if durable else breakers
                 if restricted:
@@ -239,11 +230,11 @@ class MCTSBrain(Brain[MCTSBrainSettings], name="mcts"):
         # on a VCF-gated root — the candidate set is tiny and every move
         # is a near-mandatory defence, so uniform noise only dilutes the
         # heuristic signal.
-        if not vcf_gated and self.dirichlet_alpha > 0 and self.dirichlet_weight > 0:
+        if not vcf_gated and self.settings.dirichlet_alpha > 0 and self.settings.dirichlet_weight > 0:
             root_priors = _apply_dirichlet_noise(
                 root_priors,
-                self.dirichlet_alpha,
-                self.dirichlet_weight,
+                self.settings.dirichlet_alpha,
+                self.settings.dirichlet_weight,
             )
 
         root = _Node(
@@ -254,7 +245,7 @@ class MCTSBrain(Brain[MCTSBrainSettings], name="mcts"):
             untried_priors=root_priors,
         )
 
-        for _ in range(self.iterations):
+        for _ in range(self.settings.iterations):
             self._run_iteration(root, state, stone)
 
         best = max(root.children, key=lambda c: c.visits)
@@ -279,7 +270,7 @@ class MCTSBrain(Brain[MCTSBrainSettings], name="mcts"):
             )
             diag.chosen_move = chosen
             diag.search_stats = SearchStats(
-                iterations=self.iterations,
+                iterations=self.settings.iterations,
                 nodes_searched=root.visits,
                 time_ms=search_ms,
             )
@@ -326,7 +317,7 @@ class MCTSBrain(Brain[MCTSBrainSettings], name="mcts"):
 
         # 1. Selection — descend using PUCT, replaying moves into state.
         while not node.has_untried() and not node.is_leaf():
-            node = node.best_child(self.exploration)
+            node = node.best_child(self.settings.exploration)
             r, c = node.move  # type: ignore[misc]
             state.make(r, c, node.stone)
             depth += 1
