@@ -1,4 +1,5 @@
 # Gomoku
+![Gomoku — Five in a Row, powered by Python](assets/gomoku-banner.png)
 
 A **Gomoku (Five in a Row)** engine with multiple AI brains, a terminal
 interface, game recording, diagnostics, and opening book support.
