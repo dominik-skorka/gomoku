@@ -4,7 +4,7 @@ import { Board } from "./components/Board";
 import { Controls, Matchup } from "./components/Controls";
 import { GameStatus } from "./components/GameStatus";
 import { MoveList } from "./components/MoveList";
-import { MoveNav } from "./components/MoveNav";
+import { FIRST, MoveNav } from "./components/MoveNav";
 import { NewGameDialog } from "./components/NewGameDialog";
 import { ResignDialog } from "./components/ResignDialog";
 import { Button, Card } from "./components/ui";
@@ -96,7 +96,7 @@ export function App() {
       if (e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey) return;
       const target = e.target as Element | null;
       if (target?.closest("[role=application], dialog, input, textarea, select")) return;
-      const to = { Home: 0, ArrowLeft: shownPly - 1, ArrowRight: shownPly + 1, End: total }[e.key];
+      const to = { Home: FIRST, ArrowLeft: shownPly - 1, ArrowRight: shownPly + 1, End: total }[e.key];
       if (to === undefined) return;
       e.preventDefault();
       goTo(to);

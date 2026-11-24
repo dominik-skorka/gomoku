@@ -155,11 +155,16 @@ test("move navigation: view earlier positions without changing the game", async 
   await expect(nav).toContainText("Viewing 2/3");
   await expect(page.getByRole("heading", { name: /Moves \(3\)/ })).toBeVisible();
 
+  // First move: the position after move 1, not the empty board.
   await nav.getByRole("button", { name: "First move" }).click();
-  await expect(nav).toContainText("Viewing 0/3");
+  await expect(nav).toContainText("Viewing 1/3");
+  await expect(page.getByRole("button", { name: /^1\.\s*H8/ })).toHaveAttribute("aria-current", "step");
   await expect(nav.getByRole("button", { name: "Previous move" })).toBeDisabled();
+  await expect(nav.getByRole("button", { name: "First move" })).toBeDisabled();
 
   // Clicking a move in the list shows the position after it.
+  await page.getByRole("button", { name: /^2\.\s*G7/ }).click();
+  await expect(nav).toContainText("Viewing 2/3");
   await page.getByRole("button", { name: /^1\.\s*H8/ }).click();
   await expect(nav).toContainText("Viewing 1/3");
   await expect(page.getByRole("button", { name: /^1\.\s*H8/ })).toHaveAttribute("aria-current", "step");
@@ -184,7 +189,6 @@ test("move list follows the game and keeps the move on view visible", async ({ p
 
   // Back to the first move: the list scrolls up to show it.
   await page.getByRole("button", { name: "First move" }).filter({ visible: true }).click();
-  await page.getByRole("button", { name: "Next move" }).filter({ visible: true }).click();
   const first = page.getByRole("button", { name: /^1\.\s*A1/ });
   await expect(first).toHaveAttribute("aria-current", "step");
   await expect(first).toBeInViewport();

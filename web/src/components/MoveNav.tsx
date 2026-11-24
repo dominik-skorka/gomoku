@@ -4,31 +4,30 @@ import { FirstIcon, LastIcon, NextIcon, PrevIcon } from "./icons";
 import { Button } from "./ui";
 
 /**
- * ⏮ ◀ ▶ ⏭ through the game.  `ply` is the number of moves shown (0 = empty
- * board); `total` the moves played.  Viewing an earlier position never
- * changes the game: it goes on, and ⏭ catches up with it.
+ * ⏮ ◀ ▶ ⏭ through the game.  `ply` is the number of moves shown; `total`
+ * the moves played.  ⏮ goes to the first move (not the empty board before
+ * it).  Viewing an earlier position never changes the game: it goes on, and
+ * ⏭ catches up with it.
  */
+/** The earliest position navigation shows: after the first move. */
+export const FIRST = 1;
+
 export function MoveNav({ ply, total, onGo }: { ply: number; total: number; onGo: (ply: number) => void }) {
   const live = ply === total;
+  const atFirst = ply <= FIRST;
   return (
     <div className="flex w-full items-center gap-2" role="toolbar" aria-label={t.navLabel}>
       <div className="flex gap-1">
         <Button
           icon
-          onClick={() => onGo(0)}
-          disabled={ply === 0}
+          onClick={() => onGo(FIRST)}
+          disabled={atFirst}
           aria-label={t.navFirst}
           title={`${t.navFirst} (Home)`}
         >
           <FirstIcon />
         </Button>
-        <Button
-          icon
-          onClick={() => onGo(ply - 1)}
-          disabled={ply === 0}
-          aria-label={t.navPrev}
-          title={`${t.navPrev} (←)`}
-        >
+        <Button icon onClick={() => onGo(ply - 1)} disabled={atFirst} aria-label={t.navPrev} title={`${t.navPrev} (←)`}>
           <PrevIcon />
         </Button>
         <Button icon onClick={() => onGo(ply + 1)} disabled={live} aria-label={t.navNext} title={`${t.navNext} (→)`}>
