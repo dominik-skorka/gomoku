@@ -1,14 +1,16 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { requestMove } from "./api/client";
 import { Board } from "./components/Board";
 import { Controls, Matchup } from "./components/Controls";
 import { GameStatus } from "./components/GameStatus";
 import { MoveList } from "./components/MoveList";
+import { MoveNav } from "./components/MoveNav";
 import { NewGameDialog } from "./components/NewGameDialog";
+import { ResignDialog } from "./components/ResignDialog";
 import { Button, Card } from "./components/ui";
 import { presetById } from "./game/presets";
 import type { Cell } from "./game/rules";
-import { canUndo, type GameSettings, isHumanTurn, migrateSettings, sideToMove } from "./game/state";
+import { canResign, canUndo, type GameSettings, isHumanTurn, migrateSettings, replay, sideToMove } from "./game/state";
 import { useGame } from "./game/useGame";
 import { t } from "./lib/i18n";
 import { useTheme } from "./lib/theme";
@@ -57,7 +59,16 @@ function ThemeIcon({ choice }: { choice: "system" | "light" | "dark" }) {
 
 export function App() {
   const [initial] = useState(loadSettings);
-  const { state, engine, play, newGame, undo, retry, paused, togglePause, step, speed, setSpeed } = useGame(initial);
+  const { state, engine, play, newGame, undo, resign, retry, paused, togglePause, step, speed, setSpeed } =
+    useGame(initial);
+  const [resignOpen, setResignOpen] = useState(false);
+  // Position on view: null follows the game; a number shows the board after
+  // that many moves without changing the game (D6: view only).
+  const [viewPly, setViewPly] = useState<number | null>(null);
+  const total = state.moves.length;
+  const shownPly = viewPly === null ? total : Math.min(viewPly, total);
+  const viewing = shownPly < total;
+  const goTo = useCallback((ply: number) => setViewPly(ply >= total ? null : Math.max(0, ply)), [total]);
   const { choice, cycle } = useTheme();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [hint, setHint] = useState<Cell | null>(null);
@@ -65,8 +76,34 @@ export function App() {
 
   const humanTurn = isHumanTurn(state);
   const side = sideToMove(state);
-  const last = state.moves.at(-1) ?? null;
-  const winLine = state.outcome?.kind === "win" ? state.outcome.line : null;
+  const shownGrid = useMemo(
+    () => (viewing ? replay(state.settings, state.moves.slice(0, shownPly)) : state.grid),
+    [viewing, state.settings, state.moves, shownPly, state.grid],
+  );
+  const last = state.moves[shownPly - 1] ?? null;
+  const winLine = !viewing && state.outcome?.kind === "win" ? state.outcome.line : null;
+
+  // A new game or an undo past the viewed move returns to the live position.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: reset on a new game only
+  useEffect(() => {
+    setViewPly(null);
+  }, [state.gameId]);
+
+  // Home / ← / → / End anywhere but on the board (whose arrows move its cursor)
+  // or in a dialog.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey) return;
+      const target = e.target as Element | null;
+      if (target?.closest("[role=application], dialog, input, textarea, select")) return;
+      const to = { Home: 0, ArrowLeft: shownPly - 1, ArrowRight: shownPly + 1, End: total }[e.key];
+      if (to === undefined) return;
+      e.preventDefault();
+      goTo(to);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [shownPly, total, goTo]);
 
   // A hint is only valid for the position it was asked for.
   // biome-ignore lint/correctness/useExhaustiveDependencies: reset whenever the position changes
@@ -108,12 +145,14 @@ export function App() {
   const controls = {
     state,
     canUndo: canUndo(state),
-    canHint: humanTurn && !hintLoading,
+    canHint: humanTurn && !hintLoading && !viewing,
+    canResign: canResign(state),
     paused,
     speed,
     onNewGame: () => setDialogOpen(true),
     onUndo: undo,
     onHint: askHint,
+    onResign: () => setResignOpen(true),
     onTogglePause: togglePause,
     onStep: step,
     onSpeed: setSpeed,
@@ -144,15 +183,18 @@ export function App() {
             <GameStatus state={state} engine={engine} onRetry={retry} />
             <Matchup state={state} />
           </div>
-          <div className="aspect-square w-full max-w-[min(100%,calc(100dvh-13rem))] rounded-[1.25rem] shadow-[var(--shadow)] lg:max-w-[min(100%,calc(100dvh-8rem))]">
-            <Board
-              grid={state.grid}
-              turn={humanTurn ? side : null}
-              last={last}
-              winLine={winLine}
-              hint={hint}
-              onPlay={play}
-            />
+          <div className="flex w-full max-w-[min(100%,calc(100dvh-16rem))] flex-col gap-3 lg:max-w-[min(100%,calc(100dvh-12rem))]">
+            <div className="aspect-square w-full rounded-[1.25rem] shadow-[var(--shadow)]">
+              <Board
+                grid={shownGrid}
+                turn={humanTurn && !viewing ? side : null}
+                last={last}
+                winLine={winLine}
+                hint={viewing ? null : hint}
+                onPlay={play}
+              />
+            </div>
+            <MoveNav ply={shownPly} total={total} onGo={goTo} />
           </div>
           <div className="w-full lg:hidden">
             <Controls {...controls} />
@@ -169,7 +211,7 @@ export function App() {
             <h2 className="mb-3 text-sm font-semibold text-muted">
               {t.moves} <span className="tabular-nums">({state.moves.length})</span>
             </h2>
-            <MoveList moves={state.moves} />
+            <MoveList moves={state.moves} viewPly={shownPly} onGo={goTo} />
           </Card>
         </aside>
       </main>
@@ -177,6 +219,15 @@ export function App() {
       <footer className="mx-auto w-full max-w-6xl px-4 pb-4 text-xs text-muted">
         {t.version} {__APP_VERSION__} ({__GIT_SHA__})
       </footer>
+
+      <ResignDialog
+        open={resignOpen}
+        onResign={() => {
+          resign();
+          setResignOpen(false);
+        }}
+        onClose={() => setResignOpen(false)}
+      />
 
       <NewGameDialog
         open={dialogOpen}

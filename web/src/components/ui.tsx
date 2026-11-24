@@ -1,7 +1,7 @@
 import { clsx } from "clsx";
 import type { ButtonHTMLAttributes, ReactNode } from "react";
 
-type Variant = "primary" | "secondary" | "ghost";
+type Variant = "primary" | "secondary" | "ghost" | "danger";
 
 export function Button({
   variant = "secondary",
@@ -20,6 +20,7 @@ export function Button({
         variant === "primary" && "bg-accent text-accent-fg shadow-sm hover:brightness-110",
         variant === "secondary" && "border border-line bg-surface-strong hover:bg-surface",
         variant === "ghost" && "hover:bg-surface",
+        variant === "danger" && "bg-red-600 text-white shadow-sm hover:bg-red-700 dark:hover:bg-red-500",
         className,
       )}
       {...props}

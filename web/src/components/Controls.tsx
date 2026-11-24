@@ -3,17 +3,20 @@ import { BLACK, type Player } from "../game/rules";
 import { type GameState, modeOf, type SideSettings, soleHuman } from "../game/state";
 import { SPEEDS, type Speed } from "../game/useGame";
 import { t } from "../lib/i18n";
+import { WhiteFlagIcon } from "./icons";
 import { Button, StoneIcon } from "./ui";
 
 export interface ControlsProps {
   state: GameState;
   canUndo: boolean;
   canHint: boolean;
+  canResign: boolean;
   paused: boolean;
   speed: Speed;
   onNewGame: () => void;
   onUndo: () => void;
   onHint: () => void;
+  onResign: () => void;
   onTogglePause: () => void;
   onStep: () => void;
   onSpeed: (s: Speed) => void;
@@ -23,15 +26,15 @@ export interface ControlsProps {
 
 /**
  * The buttons under (phone) or beside (desktop) the board.  A game with a
- * human has New game / Undo / Hint; engine vs engine has New game / Pause /
- * Step plus a speed switch.
+ * human has New game / Undo / Hint / Resign; engine vs engine has New game /
+ * Pause / Step plus a speed switch.
  */
 export function Controls(p: ControlsProps) {
   const selfPlay = modeOf(p.state.settings) === "engine-engine";
   const over = p.state.outcome !== null;
   return (
     <div className="flex w-full flex-col gap-2">
-      <div className={clsx("grid gap-2", p.wide ? "grid-cols-2" : "grid-cols-3")}>
+      <div className={clsx("grid gap-2", p.wide || !selfPlay ? "grid-cols-2" : "grid-cols-3")}>
         <Button variant="primary" className={p.wide ? "col-span-2" : undefined} onClick={p.onNewGame}>
           {t.newGame}
         </Button>
@@ -51,6 +54,14 @@ export function Controls(p: ControlsProps) {
             </Button>
             <Button onClick={p.onHint} disabled={!p.canHint}>
               {t.hint}
+            </Button>
+            <Button
+              className={p.wide ? "col-span-2" : "col-start-2 row-start-1"}
+              onClick={p.onResign}
+              disabled={!p.canResign}
+            >
+              <WhiteFlagIcon />
+              {t.resign}
             </Button>
           </>
         )}

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { BLACK, WHITE } from "./rules";
 import {
+  canResign,
   canUndo,
   type GameSettings,
   type GameState,
@@ -11,6 +12,7 @@ import {
   migrateSettings,
   modeOf,
   type PlayerKind,
+  replay,
   sideToMove,
 } from "./state";
 
@@ -87,6 +89,38 @@ describe("gameReducer", () => {
     expect(isEngineTurn(s)).toBe(true);
     expect(canUndo(s)).toBe(false);
     expect(gameReducer(s, { type: "undo" })).toBe(s);
+  });
+
+  it("resign: the side to move gives up, only on a human turn, and it is final", () => {
+    let s = initialState(hve);
+    s = play(s, 4, 4, "human");
+    // Engine's turn: the human cannot resign now.
+    expect(canResign(s)).toBe(false);
+    expect(gameReducer(s, { type: "resign" })).toBe(s);
+    s = play(s, 3, 3, "engine");
+    s = gameReducer(s, { type: "resign" });
+    expect(s.outcome).toEqual({ kind: "resign", winner: WHITE });
+    expect(isEngineTurn(s)).toBe(false);
+    expect(canUndo(s)).toBe(false);
+    expect(gameReducer(s, { type: "undo" })).toBe(s);
+    // Engines never resign.
+    const e = initialState(eve);
+    expect(gameReducer(e, { type: "resign" })).toBe(e);
+  });
+
+  it("human vs human: whoever is to move resigns", () => {
+    let s = initialState(hvh);
+    s = play(s, 4, 4, "human");
+    s = gameReducer(s, { type: "resign" });
+    expect(s.outcome).toEqual({ kind: "resign", winner: BLACK });
+  });
+
+  it("replays any prefix of the game", () => {
+    let s = initialState(hvh);
+    s = play(s, 4, 4, "human");
+    s = play(s, 3, 3, "human");
+    expect(replay(s.settings, s.moves.slice(0, 1))[3]?.[3]).toBe(0);
+    expect(replay(s.settings, s.moves)).toEqual(s.grid);
   });
 
   it("starts a new game with a fresh id", () => {

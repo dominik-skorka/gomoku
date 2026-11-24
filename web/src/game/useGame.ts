@@ -83,6 +83,7 @@ export function useGame(initial: GameSettings) {
     dispatch({ type: "new", settings });
   }, []);
   const undo = useCallback(() => dispatch({ type: "undo" }), []);
+  const resign = useCallback(() => dispatch({ type: "resign" }), []);
   const retry = useCallback(() => setAttempt((n) => n + 1), []);
   const togglePause = useCallback(() => {
     setSteps(0);
@@ -90,5 +91,5 @@ export function useGame(initial: GameSettings) {
   }, []);
   const step = useCallback(() => setSteps((n) => (n === 0 ? 1 : n)), []);
 
-  return { state, engine, play, newGame, undo, retry, paused, togglePause, step, speed, setSpeed };
+  return { state, engine, play, newGame, undo, resign, retry, paused, togglePause, step, speed, setSpeed };
 }

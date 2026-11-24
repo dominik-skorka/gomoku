@@ -75,6 +75,17 @@ export function GameStatus({
         {text}
       </span>
     );
+  } else if (outcome?.kind === "resign") {
+    key = "resign";
+    const loser = outcome.winner === BLACK ? 2 : BLACK;
+    const won = you !== null && outcome.winner === you;
+    const text = you === null ? t.resigned(colour(loser)) : won ? t.youWon : t.youResigned;
+    content = (
+      <span className={won ? "text-accent" : undefined}>
+        <StoneIcon stone={outcome.winner} className="mr-2 align-[-2px]" />
+        {text}
+      </span>
+    );
   } else if (outcome?.kind === "draw") {
     key = "draw";
     content = t.draw;

@@ -97,6 +97,13 @@ between moves (none, 0.5 s, 1.5 s) so a game can be followed.  When the
 API rate-limits a fast game (`429`), the client waits for `Retry-After`
 and retries by itself.
 
+**Resign** ends the game for the human whose turn it is (in human vs
+human: the side to move), after a confirmation, and cannot be undone.
+**Move navigation** (⏮ ◀ ▶ ⏭, Home / ← / → / End, or a click in the move
+list) only *shows* earlier positions: the game, an engine thinking in the
+background included, goes on, and ⏭ catches up with it.  Playing from an
+earlier position is what Undo is for.
+
 ### ADR-2: A static SPA, not a server-rendered framework
 
 **Decision.** React + Vite, built to static files.  No Next.js/SSR.

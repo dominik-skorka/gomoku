@@ -114,3 +114,58 @@ test("rate limited: says so, counts down and retries by itself", async ({ page }
   await expect(status(page)).toHaveText(/Your move/, { timeout: 5000 });
   expect(calls).toBe(2);
 });
+
+test("resign: asks first, then the engine wins and the game is over", async ({ page }) => {
+  await stubEngine(page, [
+    [0, 0],
+    [0, 1],
+  ]);
+  await startGame(page, "Human", "Engine");
+  await tap(page, 7, 7);
+  await expect(status(page)).toHaveText(/Your move/);
+
+  const resign = page.getByRole("button", { name: "Resign" }).filter({ visible: true });
+  await resign.click();
+  const dialog = page.getByRole("dialog", { name: "Resign the game?" });
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole("button", { name: "Keep playing" }).click();
+  await expect(dialog).toBeHidden();
+  await expect(status(page)).toHaveText(/Your move/);
+
+  await resign.click();
+  await dialog.getByRole("button", { name: "Resign" }).click();
+  await expect(page.getByText("You resigned — the engine wins").filter({ visible: true })).toBeVisible();
+  await expect(resign).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Undo" }).filter({ visible: true })).toBeDisabled();
+});
+
+test("move navigation: view earlier positions without changing the game", async ({ page }) => {
+  await stubEngine(page, [[0, 0]]);
+  await startGame(page, "Human", "Human");
+  await tap(page, 7, 7);
+  await tap(page, 6, 6);
+  await tap(page, 5, 5);
+  const nav = page.getByRole("toolbar", { name: "Move navigation" });
+  await expect(nav).toContainText("3 moves");
+
+  await nav.getByRole("button", { name: "Previous move" }).click();
+  await expect(nav).toContainText("Viewing 2 / 3");
+  // The board is read-only while viewing.
+  await tap(page, 1, 1);
+  await expect(nav).toContainText("Viewing 2 / 3");
+  await expect(page.getByRole("heading", { name: /Moves \(3\)/ })).toBeVisible();
+
+  await nav.getByRole("button", { name: "First move" }).click();
+  await expect(nav).toContainText("Viewing 0 / 3");
+  await expect(nav.getByRole("button", { name: "Previous move" })).toBeDisabled();
+
+  // Clicking a move in the list shows the position after it.
+  await page.getByRole("button", { name: /^1\.\s*H8/ }).click();
+  await expect(nav).toContainText("Viewing 1 / 3");
+  await expect(page.getByRole("button", { name: /^1\.\s*H8/ })).toHaveAttribute("aria-current", "step");
+
+  // Keyboard: End catches up with the game.
+  await page.locator("body").press("End");
+  await expect(nav).toContainText("3 moves");
+  await expect(status(page)).toHaveText(/White to move/);
+});

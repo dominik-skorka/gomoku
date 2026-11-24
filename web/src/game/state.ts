@@ -47,6 +47,7 @@ export interface MoveRecord extends Cell {
 
 export type Outcome =
   | { readonly kind: "win"; readonly winner: Player; readonly line: readonly Cell[] }
+  | { readonly kind: "resign"; readonly winner: Player }
   | { readonly kind: "draw" };
 
 export interface GameState {
@@ -61,7 +62,8 @@ export interface GameState {
 export type GameAction =
   | { type: "new"; settings: GameSettings }
   | { type: "play"; gameId: number; ply: number; cell: Cell; by: PlayerKind; thinkMs?: number }
-  | { type: "undo" };
+  | { type: "undo" }
+  | { type: "resign" };
 
 export const DEFAULT_SETTINGS: GameSettings = {
   size: 15,
@@ -110,7 +112,8 @@ export function isHumanTurn(state: GameState): boolean {
   return turnKind(state) === "human";
 }
 
-function replay(settings: GameSettings, moves: readonly MoveRecord[]): Grid {
+/** The grid after `moves`, from an empty board. */
+export function replay(settings: GameSettings, moves: readonly MoveRecord[]): Grid {
   return moves.reduce((g, m) => placeStone(g, m, m.stone), emptyGrid(settings.size));
 }
 
@@ -137,6 +140,11 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
       return { ...state, grid, moves: [...state.moves, record], outcome };
     }
 
+    case "resign": {
+      if (!canResign(state)) return state;
+      return { ...state, outcome: { kind: "resign", winner: opponent(sideToMove(state)) } };
+    }
+
     case "undo": {
       // Take back to the previous human turn: drop engine replies, then the
       // last human move.  Human vs human: one move.  Human vs engine: the
@@ -153,7 +161,13 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
 }
 
 export function canUndo(state: GameState): boolean {
-  return state.moves.some((m) => m.by === "human");
+  // A resignation is final; a finished five-in-a-row can still be taken back.
+  return state.outcome?.kind !== "resign" && state.moves.some((m) => m.by === "human");
+}
+
+/** Only a human, on their own turn, while the game is on. */
+export function canResign(state: GameState): boolean {
+  return isHumanTurn(state);
 }
 
 /**
