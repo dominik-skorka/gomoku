@@ -150,6 +150,11 @@ export function Board({ grid, turn, last, winLine, hint, onPlay }: BoardProps) {
           <stop offset="0.7" stopColor="#e9ebef" />
           <stop offset="1" stopColor="#b9bec8" />
         </radialGradient>
+        <radialGradient id={`${uid}-gold`} cx="35%" cy="30%" r="80%">
+          <stop offset="0" stopColor="#fff7c2" />
+          <stop offset="0.45" stopColor="#facc15" />
+          <stop offset="1" stopColor="#b7791f" />
+        </radialGradient>
         <filter id={`${uid}-shadow`} x="-50%" y="-50%" width="200%" height="200%">
           <feDropShadow dx="0.05" dy="0.09" stdDeviation="0.07" floodOpacity="0.45" />
         </filter>
@@ -231,35 +236,36 @@ export function Board({ grid, turn, last, winLine, hint, onPlay }: BoardProps) {
         />
       )}
 
-      {winLine && winLine.length > 1 && (
+      {winLine && (
+        // The winning stones turn gold, one after another along the line,
+        // and keep a soft glow; the stones' own colours fade out beneath.
         <g pointerEvents="none">
-          {(() => {
-            const a = winLine[0] as Cell;
-            const b = winLine[winLine.length - 1] as Cell;
-            const common = { x1: x(a.col), y1: x(a.row), x2: x(b.col), y2: x(b.row), strokeLinecap: "round" as const };
-            return (
-              <>
-                <motion.line
-                  {...common}
-                  stroke="var(--win)"
-                  strokeWidth="0.32"
-                  opacity="0.55"
-                  filter={`url(#${uid}-glow)`}
-                  initial={{ pathLength: 0 }}
-                  animate={{ pathLength: 1 }}
-                  transition={{ duration: reduceMotion ? 0 : 0.6, ease: "easeOut" }}
-                />
-                <motion.line
-                  {...common}
-                  stroke="var(--win)"
-                  strokeWidth="0.1"
-                  initial={{ pathLength: 0 }}
-                  animate={{ pathLength: 1 }}
-                  transition={{ duration: reduceMotion ? 0 : 0.6, ease: "easeOut" }}
-                />
-              </>
-            );
-          })()}
+          {winLine.map((c, i) => (
+            <g key={`win-${c.row}-${c.col}`}>
+              <motion.circle
+                cx={x(c.col)}
+                cy={x(c.row)}
+                r={R * 1.12}
+                fill="var(--win)"
+                filter={`url(#${uid}-glow)`}
+                initial={{ opacity: 0 }}
+                animate={{ opacity: reduceMotion ? 0.45 : [0, 0.6, 0.35] }}
+                transition={{ duration: reduceMotion ? 0 : 0.5, delay: reduceMotion ? 0 : i * 0.08 }}
+              />
+              <motion.circle
+                cx={x(c.col)}
+                cy={x(c.row)}
+                r={R}
+                fill={`url(#${uid}-gold)`}
+                stroke="#8a5a00"
+                strokeWidth="0.03"
+                data-testid="winning-stone"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ duration: reduceMotion ? 0 : 0.35, delay: reduceMotion ? 0 : i * 0.08 }}
+              />
+            </g>
+          ))}
         </g>
       )}
 
