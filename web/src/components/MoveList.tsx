@@ -41,7 +41,7 @@ export function MoveList({
       box.scrollTop = top + item.offsetHeight - box.clientHeight;
   }, [viewPly, moves.length]);
 
-  if (moves.length === 0) return <p className="text-sm text-muted">{t.noMoves}</p>;
+  if (moves.length === 0) return null;
   return (
     <ol
       aria-label={t.moves}

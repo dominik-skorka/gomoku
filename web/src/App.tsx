@@ -1,3 +1,4 @@
+import { clsx } from "clsx";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { requestMove } from "./api/client";
 import { Board } from "./components/Board";
@@ -200,7 +201,7 @@ export function App() {
                 // Before the first game: nothing moves until New game → Start.
                 <div className="absolute inset-0 grid place-items-center rounded-[1.25rem] bg-black/10 backdrop-blur-[1px]">
                   <div className="flex flex-col items-center gap-3 rounded-2xl border border-line bg-surface-strong px-6 py-5 text-center shadow-xl">
-                    <span className="text-sm text-muted">{t.notStarted}</span>
+                    <span className="text-sm text-muted">{t.pressToStart}</span>
                     <Button variant="primary" className="px-6" onClick={() => setDialogOpen(true)}>
                       {t.newGame}
                     </Button>
@@ -223,7 +224,8 @@ export function App() {
           <Card className="hidden flex-col gap-4 lg:flex">
             <Controls {...controls} wide />
           </Card>
-          <Card className="flex flex-col gap-3">
+          {/* Phones: the card holds only the move list, so hide it while empty. */}
+          <Card className={clsx("flex-col gap-3", total > 0 ? "flex" : "hidden lg:flex")}>
             <div className="hidden lg:block">
               <MoveNav ply={shownPly} total={total} onGo={goTo} />
             </div>
