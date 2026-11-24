@@ -15,24 +15,18 @@ export function MoveNav({ ply, total, onGo }: { ply: number; total: number; onGo
   const live = ply === total;
   const atFirst = ply <= FIRST;
   return (
-    <div className="flex w-full items-center gap-2" role="toolbar" aria-label={t.navLabel}>
-      <div className="flex gap-1">
-        <Button
-          icon
-          onClick={() => onGo(FIRST)}
-          disabled={atFirst}
-          aria-label={t.navFirst}
-          title={`${t.navFirst} (Home)`}
-        >
+    <div className="w-full" role="toolbar" aria-label={t.navLabel}>
+      <div className="grid grid-cols-4 gap-1">
+        <Button onClick={() => onGo(FIRST)} disabled={atFirst} aria-label={t.navFirst} title={`${t.navFirst} (Home)`}>
           <FirstIcon />
         </Button>
-        <Button icon onClick={() => onGo(ply - 1)} disabled={atFirst} aria-label={t.navPrev} title={`${t.navPrev} (←)`}>
+        <Button onClick={() => onGo(ply - 1)} disabled={atFirst} aria-label={t.navPrev} title={`${t.navPrev} (←)`}>
           <PrevIcon />
         </Button>
-        <Button icon onClick={() => onGo(ply + 1)} disabled={live} aria-label={t.navNext} title={`${t.navNext} (→)`}>
+        <Button onClick={() => onGo(ply + 1)} disabled={live} aria-label={t.navNext} title={`${t.navNext} (→)`}>
           <NextIcon />
         </Button>
-        <Button icon onClick={() => onGo(total)} disabled={live} aria-label={t.navLast} title={`${t.navLast} (End)`}>
+        <Button onClick={() => onGo(total)} disabled={live} aria-label={t.navLast} title={`${t.navLast} (End)`}>
           <LastIcon />
         </Button>
       </div>
