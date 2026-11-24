@@ -53,6 +53,15 @@ class TestVersionsEndpoint:
 
 
 class TestVersionHeader:
+    def test_version_found_behind_a_root_path(self):
+        # uvicorn --root-path /api (the API mounted under /api by a proxy)
+        # reports the full path; the version is the segment after /api.
+        with TestClient(create_app(), root_path="/api") as behind_proxy:
+            r = behind_proxy.get("/api/v1/brains")
+            assert r.status_code == 200
+            assert r.headers["API-Version"] == "v1"
+            assert behind_proxy.get("/api/v9/brains").status_code == 404
+
     def test_success_response_carries_version(self, client):
         r = client.get("/v1/brains")
         assert r.status_code == 200
