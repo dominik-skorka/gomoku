@@ -99,7 +99,7 @@ and retries by itself.
 
 **Resign** ends the game for the human whose turn it is (in human vs
 human: the side to move), after a confirmation, and cannot be undone.
-**Move navigation** (⏮ ◀ ▶ ⏭ above the move list, Home / ← / → / End, or a click in the move
+**Move navigation** (⏮ ◀ ▶ ⏭ under the board on phones and tablets, above the move list on desktop; Home / ← / → / End, or a click in the move
 list) only *shows* earlier positions: the game, an engine thinking in the
 background included, goes on, and ⏭ catches up with it.  Playing from an
 earlier position is what Undo is for.

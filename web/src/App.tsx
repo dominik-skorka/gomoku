@@ -195,6 +195,10 @@ export function App() {
               />
             </div>
           </div>
+          {/* Phone/tablet: navigation right under the board; desktop: above the move list. */}
+          <div className="w-full lg:hidden">
+            <MoveNav ply={shownPly} total={total} onGo={goTo} />
+          </div>
           <div className="w-full lg:hidden">
             <Controls {...controls} />
           </div>
@@ -207,7 +211,9 @@ export function App() {
             <Controls {...controls} wide />
           </Card>
           <Card className="flex flex-col gap-3">
-            <MoveNav ply={shownPly} total={total} onGo={goTo} />
+            <div className="hidden lg:block">
+              <MoveNav ply={shownPly} total={total} onGo={goTo} />
+            </div>
             <h2 className="text-sm font-semibold text-muted">
               {t.moves} <span className="tabular-nums">({state.moves.length})</span>
             </h2>
