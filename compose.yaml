@@ -1,0 +1,74 @@
+# Gomoku: the whole site on one machine.
+#
+#   docker compose up --build          # http://localhost:8080
+#   docker compose up -d --scale api=3 # three engine replicas behind the edge
+#
+# Each service is its own image and can be rebuilt, replaced or restarted
+# alone:  docker compose up -d --build web   /   docker compose restart api
+name: gomoku
+
+x-restart: &restart
+  restart: unless-stopped
+
+services:
+  api:
+    <<: *restart
+    build:
+      context: .
+      dockerfile: deploy/api/Dockerfile
+      args:
+        VERSION: ${GOMOKU_VERSION:-dev}
+        REVISION: ${GOMOKU_REVISION:-unknown}
+    image: ${GOMOKU_REGISTRY:-ghcr.io/dominik-skorka}/gomoku-api:${GOMOKU_VERSION:-dev}
+    environment:
+      # The edge strips /api, so the interactive docs live at /api/docs.
+      UVICORN_ROOT_PATH: /api
+      GOMOKU_API__RATE_LIMIT_DEFAULT: ${GOMOKU_RATE_LIMIT_DEFAULT:-240/minute}
+      GOMOKU_API__RATE_LIMIT_COMPUTE: ${GOMOKU_RATE_LIMIT_COMPUTE:-60/minute}
+      GOMOKU_API__MAX_TIME_LIMIT_S: ${GOMOKU_MAX_TIME_LIMIT_S:-10}
+      LOGFIRE_TOKEN: ${LOGFIRE_TOKEN:-}
+    labels:
+      autoheal: "true"
+    # No published port: only the edge can reach the engine.
+
+  web:
+    <<: *restart
+    build:
+      context: web
+      args:
+        VERSION: ${GOMOKU_WEB_VERSION:-}
+        REVISION: ${GOMOKU_REVISION:-unknown}
+    image: ${GOMOKU_REGISTRY:-ghcr.io/dominik-skorka}/gomoku-web:${GOMOKU_WEB_VERSION:-dev}
+    labels:
+      autoheal: "true"
+
+  edge:
+    <<: *restart
+    image: caddy:2.11-alpine
+    ports:
+      - "${HTTP_PORT:-8080}:80"
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:-:80}
+    volumes:
+      - ./deploy/edge/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+    depends_on:
+      api:
+        condition: service_healthy
+      web:
+        condition: service_healthy
+
+  # Docker restarts a container when its process exits, but not when its
+  # healthcheck turns "unhealthy".  autoheal closes that gap for every
+  # container labelled autoheal=true (needs read access to the Docker socket).
+  autoheal:
+    <<: *restart
+    image: willfarrell/autoheal:1.2.0
+    environment:
+      AUTOHEAL_CONTAINER_LABEL: autoheal
+      AUTOHEAL_INTERVAL: 10
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+
+volumes:
+  caddy-data:
