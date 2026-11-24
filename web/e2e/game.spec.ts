@@ -149,23 +149,53 @@ test("move navigation: view earlier positions without changing the game", async 
   await expect(nav).toContainText("3 moves");
 
   await nav.getByRole("button", { name: "Previous move" }).click();
-  await expect(nav).toContainText("Viewing 2 / 3");
+  await expect(nav).toContainText("Viewing 2/3");
   // The board is read-only while viewing.
   await tap(page, 1, 1);
-  await expect(nav).toContainText("Viewing 2 / 3");
+  await expect(nav).toContainText("Viewing 2/3");
   await expect(page.getByRole("heading", { name: /Moves \(3\)/ })).toBeVisible();
 
   await nav.getByRole("button", { name: "First move" }).click();
-  await expect(nav).toContainText("Viewing 0 / 3");
+  await expect(nav).toContainText("Viewing 0/3");
   await expect(nav.getByRole("button", { name: "Previous move" })).toBeDisabled();
 
   // Clicking a move in the list shows the position after it.
   await page.getByRole("button", { name: /^1\.\s*H8/ }).click();
-  await expect(nav).toContainText("Viewing 1 / 3");
+  await expect(nav).toContainText("Viewing 1/3");
   await expect(page.getByRole("button", { name: /^1\.\s*H8/ })).toHaveAttribute("aria-current", "step");
 
   // Keyboard: End catches up with the game.
   await page.locator("body").press("End");
   await expect(nav).toContainText("3 moves");
   await expect(status(page)).toHaveText(/White to move/);
+});
+
+test("move list follows the game and keeps the move on view visible", async ({ page }) => {
+  await stubEngine(page, [[0, 0]]);
+  await startGame(page, "Human", "Human");
+  // 30 moves, no five in a row: every third column, shifted per row.
+  for (let k = 0; k < 30; k++) {
+    const row = Math.floor(k / 5);
+    await tap(page, row, ((k % 5) * 3 + row) % 15);
+  }
+  const list = page.getByRole("list").filter({ visible: true }).last();
+  const atBottom = () => list.evaluate((el) => Math.abs(el.scrollHeight - el.clientHeight - el.scrollTop) < 2);
+  await expect.poll(atBottom).toBe(true);
+
+  // Back to the first move: the list scrolls up to show it.
+  await page.getByRole("button", { name: "First move" }).filter({ visible: true }).click();
+  await page.getByRole("button", { name: "Next move" }).filter({ visible: true }).click();
+  const first = page.getByRole("button", { name: /^1\.\s*A1/ });
+  await expect(first).toHaveAttribute("aria-current", "step");
+  await expect(first).toBeInViewport();
+  const visibleInList = await first.evaluate((el) => {
+    const box = el.closest("ol")?.getBoundingClientRect();
+    const r = el.getBoundingClientRect();
+    return !!box && r.top >= box.top && r.bottom <= box.bottom;
+  });
+  expect(visibleInList).toBe(true);
+
+  // Catch up: back to the bottom.
+  await page.getByRole("button", { name: "Latest move" }).filter({ visible: true }).click();
+  await expect.poll(atBottom).toBe(true);
 });

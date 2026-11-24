@@ -24,12 +24,18 @@ export function MoveList({
   // Keep the move on view visible inside the list.  Only the list scrolls:
   // scrollIntoView() would also scroll the page, pulling a phone's screen
   // away from the board after every move.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: follow the move on view
   useEffect(() => {
     const box = list.current;
     const item = current.current;
     if (!box || !item) return;
-    const top = item.offsetTop - box.offsetTop;
+    // Latest move: all the way down, padding included.
+    if (viewPly === moves.length) {
+      box.scrollTop = box.scrollHeight;
+      return;
+    }
+    // The list is the items' offsetParent (position: relative), so offsetTop
+    // is already measured from the top of the list's content.
+    const top = item.offsetTop;
     if (top < box.scrollTop) box.scrollTop = top;
     else if (top + item.offsetHeight > box.scrollTop + box.clientHeight)
       box.scrollTop = top + item.offsetHeight - box.clientHeight;
@@ -39,7 +45,7 @@ export function MoveList({
   return (
     <ol
       ref={list}
-      className="relative grid max-h-64 grid-cols-2 gap-x-3 gap-y-1 overflow-y-auto pr-1 text-sm tabular-nums lg:max-h-[40dvh]"
+      className="relative grid max-h-64 grid-cols-2 gap-x-3 gap-y-1 overflow-y-auto p-0.5 text-sm tabular-nums lg:max-h-[40dvh]"
     >
       {moves.map((m, i) => (
         <li key={`${m.row}-${m.col}`} ref={i === viewPly - 1 ? current : undefined}>
@@ -51,7 +57,7 @@ export function MoveList({
               "flex w-full items-center gap-2 rounded-lg px-2 py-1 text-left transition",
               "focus-visible:outline-2 focus-visible:outline-accent",
               i === viewPly - 1
-                ? "bg-accent/15 ring-1 ring-accent"
+                ? "bg-accent/15 ring-1 ring-accent ring-inset"
                 : i % 2 === 0
                   ? "bg-black/[0.03] hover:bg-black/[0.06] dark:bg-white/[0.03] dark:hover:bg-white/[0.06]"
                   : "hover:bg-black/[0.04] dark:hover:bg-white/[0.04]",

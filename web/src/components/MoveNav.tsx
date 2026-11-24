@@ -1,3 +1,4 @@
+import { clsx } from "clsx";
 import { t } from "../lib/i18n";
 import { FirstIcon, LastIcon, NextIcon, PrevIcon } from "./icons";
 import { Button } from "./ui";
@@ -38,7 +39,7 @@ export function MoveNav({ ply, total, onGo }: { ply: number; total: number; onGo
         </Button>
       </div>
       <span
-        className={live ? "text-sm text-muted tabular-nums" : "text-sm font-semibold text-accent tabular-nums"}
+        className={clsx("whitespace-nowrap text-sm tabular-nums", live ? "text-muted" : "font-semibold text-accent")}
         aria-live="polite"
       >
         {live ? t.navLive(total) : t.navViewing(ply, total)}
