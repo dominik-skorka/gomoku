@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <title>Gomoku</title>
+  <defs>
+    <radialGradient id="b" cx="35%" cy="30%" r="70%"><stop offset="0" stop-color="#5b6170"/><stop offset="1" stop-color="#0b0d12"/></radialGradient>
+    <radialGradient id="w" cx="35%" cy="30%" r="75%"><stop offset="0" stop-color="#fff"/><stop offset="1" stop-color="#cfd3da"/></radialGradient>
+  </defs>
+  <rect width="64" height="64" rx="14" fill="#d9a865"/>
+  <path d="M8 22h48M8 42h48M22 8v48M42 8v48" stroke="#7a5428" stroke-width="2" opacity=".55"/>
+  <circle cx="22" cy="22" r="10" fill="url(#b)"/>
+  <circle cx="42" cy="42" r="10" fill="url(#w)"/>
+</svg>

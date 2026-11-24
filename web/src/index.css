@@ -1,0 +1,101 @@
+@import "tailwindcss";
+@import "@fontsource-variable/inter";
+
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+/* Design tokens.  Light by default, dark via the OS or an explicit choice. */
+:root {
+  color-scheme: light;
+  --bg: #f4efe6;
+  --bg-glow: #fff8ec;
+  --surface: rgb(255 255 255 / 0.72);
+  --surface-strong: #ffffff;
+  --border: rgb(60 40 20 / 0.12);
+  --fg: #1d1a16;
+  --muted: #6d655b;
+  --accent: #c2410c;
+  --accent-fg: #ffffff;
+  --board-a: #e9bf7f;
+  --board-b: #d69c55;
+  --grid: rgb(84 52 18 / 0.62);
+  --label: rgb(84 52 18 / 0.7);
+  --win: #f97316;
+  --shadow: 0 20px 50px -20px rgb(80 50 10 / 0.45);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #0f1115;
+    --bg-glow: #1b1f2a;
+    --surface: rgb(28 32 42 / 0.72);
+    --surface-strong: #1c202a;
+    --border: rgb(255 255 255 / 0.09);
+    --fg: #eef0f4;
+    --muted: #9aa1ae;
+    --accent: #fb923c;
+    --accent-fg: #1a0e05;
+    --board-a: #3a3f4c;
+    --board-b: #2a2e38;
+    --grid: rgb(220 226 240 / 0.28);
+    --label: rgb(220 226 240 / 0.45);
+    --win: #fb923c;
+    --shadow: 0 24px 60px -24px rgb(0 0 0 / 0.8);
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0f1115;
+  --bg-glow: #1b1f2a;
+  --surface: rgb(28 32 42 / 0.72);
+  --surface-strong: #1c202a;
+  --border: rgb(255 255 255 / 0.09);
+  --fg: #eef0f4;
+  --muted: #9aa1ae;
+  --accent: #fb923c;
+  --accent-fg: #1a0e05;
+  --board-a: #3a3f4c;
+  --board-b: #2a2e38;
+  --grid: rgb(220 226 240 / 0.28);
+  --label: rgb(220 226 240 / 0.45);
+  --win: #fb923c;
+  --shadow: 0 24px 60px -24px rgb(0 0 0 / 0.8);
+}
+
+@theme inline {
+  --font-sans: "Inter Variable", ui-sans-serif, system-ui, sans-serif;
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-strong: var(--surface-strong);
+  --color-line: var(--border);
+  --color-fg: var(--fg);
+  --color-muted: var(--muted);
+  --color-accent: var(--accent);
+  --color-accent-fg: var(--accent-fg);
+}
+
+html,
+body {
+  background: radial-gradient(1200px 600px at 20% -10%, var(--bg-glow), transparent 60%), var(--bg);
+  background-color: var(--bg);
+  color: var(--fg);
+  min-height: 100%;
+  -webkit-tap-highlight-color: transparent;
+}
+
+dialog::backdrop {
+  background: rgb(0 0 0 / 0.45);
+  backdrop-filter: blur(4px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    /* biome-ignore lint/complexity/noImportantStyles: reduced motion must win over every component style */
+    animation-duration: 0.01ms !important;
+    /* biome-ignore lint/complexity/noImportantStyles: reduced motion must win over every component style */
+    transition-duration: 0.01ms !important;
+  }
+}
