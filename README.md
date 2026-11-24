@@ -46,6 +46,8 @@ uv run gomoku play --black threat --white alphabeta --record
 uv run gomoku playback recordings/gomoku_20260405_143012.json
 ```
 
+![Brain vs brain — Gomoku gameplay](assets/brain_vs_brain.png)
+
 ---
 
 ## Features
