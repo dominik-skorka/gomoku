@@ -1,4 +1,3 @@
-import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { type KeyboardEvent, type PointerEvent, useCallback, useId, useMemo, useRef, useState } from "react";
 import { BLACK, type Cell, EMPTY, type Grid, isLegal, type Player, positionLabel } from "../game/rules";
 import { t } from "../lib/i18n";
@@ -52,7 +51,6 @@ export function Board({ grid, turn, last, winLine, hint, onPlay }: BoardProps) {
   const [preview, setPreview] = useState<Cell | null>(null);
   const [cursor, setCursor] = useState<Cell>({ row: Math.floor(size / 2), col: Math.floor(size / 2) });
   const [keyboard, setKeyboard] = useState(false);
-  const reduceMotion = useReducedMotion();
   const uid = useId();
 
   const stones = useMemo(() => {
@@ -127,7 +125,6 @@ export function Board({ grid, turn, last, winLine, hint, onPlay }: BoardProps) {
 
   const ghost = preview ?? hover;
   const x = (c: number) => PAD + c;
-  const spring = reduceMotion ? { duration: 0 } : { type: "spring" as const, stiffness: 520, damping: 26 };
   const fontSize = 0.34;
 
   return (
@@ -205,7 +202,8 @@ export function Board({ grid, turn, last, winLine, hint, onPlay }: BoardProps) {
       </g>
 
       {hint && (
-        <motion.circle
+        <circle
+          className="svg-pulse"
           cx={x(hint.col)}
           cy={x(hint.row)}
           r={R * 0.8}
@@ -213,29 +211,27 @@ export function Board({ grid, turn, last, winLine, hint, onPlay }: BoardProps) {
           stroke="var(--accent)"
           strokeWidth="0.07"
           strokeDasharray="0.2 0.12"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: [0.4, 1, 0.4] }}
-          transition={{ duration: 1.6, repeat: Number.POSITIVE_INFINITY }}
         />
       )}
 
+      {/*
+        Stones are fully visible by default; the drop-in is a CSS animation
+        *from* a hidden state (index.css, .stone-in).  If a browser does not
+        run it (Safari on iPadOS did not finish the earlier JS-driven
+        opacity animation on SVG), the stone is still drawn.
+      */}
       <g filter={`url(#${uid}-shadow)`}>
-        <AnimatePresence initial={false}>
-          {stones.map((s) => (
-            <motion.circle
-              key={`${s.row}-${s.col}`}
-              cx={x(s.col)}
-              cy={x(s.row)}
-              r={R}
-              fill={`url(#${uid}-${s.stone === BLACK ? "black" : "white"})`}
-              initial={{ scale: 1.35, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.6, opacity: 0 }}
-              transition={spring}
-              style={{ transformOrigin: `${x(s.col)}px ${x(s.row)}px`, transformBox: "view-box" }}
-            />
-          ))}
-        </AnimatePresence>
+        {stones.map((s) => (
+          <circle
+            key={`${s.row}-${s.col}`}
+            className="stone-in"
+            data-testid="stone"
+            cx={x(s.col)}
+            cy={x(s.row)}
+            r={R}
+            fill={`url(#${uid}-${s.stone === BLACK ? "black" : "white"})`}
+          />
+        ))}
       </g>
 
       {last && !winLine && (
@@ -254,17 +250,19 @@ export function Board({ grid, turn, last, winLine, hint, onPlay }: BoardProps) {
         <g pointerEvents="none">
           {winLine.map((c, i) => (
             <g key={`win-${c.row}-${c.col}`}>
-              <motion.circle
+              <circle
+                className="fade-in"
+                style={{ animationDelay: `${i * 80}ms` }}
                 cx={x(c.col)}
                 cy={x(c.row)}
                 r={R * 1.12}
                 fill="var(--win)"
+                opacity={0.4}
                 filter={`url(#${uid}-glow)`}
-                initial={{ opacity: 0 }}
-                animate={{ opacity: reduceMotion ? 0.45 : [0, 0.6, 0.35] }}
-                transition={{ duration: reduceMotion ? 0 : 0.5, delay: reduceMotion ? 0 : i * 0.08 }}
               />
-              <motion.circle
+              <circle
+                className="fade-in"
+                style={{ animationDelay: `${i * 80}ms` }}
                 cx={x(c.col)}
                 cy={x(c.row)}
                 r={R}
@@ -272,9 +270,6 @@ export function Board({ grid, turn, last, winLine, hint, onPlay }: BoardProps) {
                 stroke="#1e3a8a"
                 strokeWidth="0.03"
                 data-testid="winning-stone"
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                transition={{ duration: reduceMotion ? 0 : 0.35, delay: reduceMotion ? 0 : i * 0.08 }}
               />
             </g>
           ))}
@@ -292,7 +287,8 @@ export function Board({ grid, turn, last, winLine, hint, onPlay }: BoardProps) {
           />
           {preview && (
             // Unmistakably not a placed stone: a dashed ring that pulses.
-            <motion.circle
+            <circle
+              className="svg-pulse"
               cx={x(ghost.col)}
               cy={x(ghost.row)}
               r={R + 0.08}
@@ -300,8 +296,6 @@ export function Board({ grid, turn, last, winLine, hint, onPlay }: BoardProps) {
               stroke="var(--accent)"
               strokeWidth="0.07"
               strokeDasharray="0.18 0.12"
-              animate={reduceMotion ? undefined : { opacity: [1, 0.35, 1] }}
-              transition={{ duration: 1.1, repeat: Number.POSITIVE_INFINITY }}
             />
           )}
         </g>

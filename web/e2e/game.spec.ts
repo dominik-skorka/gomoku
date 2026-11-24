@@ -243,3 +243,19 @@ test("touch: one tap places on a tablet; a phone previews first", async ({ brows
     await context.close();
   }
 });
+
+test("stones are drawn even when the browser runs no animations", async ({ page }) => {
+  await stubEngine(page, [[0, 0]]);
+  await page.goto("/");
+  // Simulate a browser that never runs (or never finishes) animations.
+  await page.addStyleTag({
+    content: "*, *::before, *::after { animation: none !important; transition: none !important; }",
+  });
+  await tap(page, 7, 7);
+  const stones = page.getByTestId("stone");
+  await expect(stones).toHaveCount(2); // the move and the engine's reply
+  for (const stone of await stones.all()) {
+    await expect(stone).toBeVisible();
+    expect(await stone.evaluate((el) => getComputedStyle(el).opacity)).toBe("1");
+  }
+});
