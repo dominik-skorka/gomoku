@@ -1,18 +1,19 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { requestMove } from "./api/client";
 import { Board } from "./components/Board";
-import { Controls, Matchup } from "./components/Controls";
-import { GameStatus } from "./components/GameStatus";
+import { Controls } from "./components/Controls";
 import { MoveList } from "./components/MoveList";
 import { FIRST, MoveNav } from "./components/MoveNav";
 import { NewGameDialog } from "./components/NewGameDialog";
+import { PlayerBar } from "./components/PlayerBar";
 import { ResignDialog } from "./components/ResignDialog";
 import { Button, Card } from "./components/ui";
 import { presetById } from "./game/presets";
-import type { Cell } from "./game/rules";
+import { BLACK, type Cell, WHITE } from "./game/rules";
 import { canResign, canUndo, type GameSettings, isHumanTurn, migrateSettings, replay, sideToMove } from "./game/state";
 import { useGame } from "./game/useGame";
 import { t } from "./lib/i18n";
+import { statusText } from "./lib/status";
 import { useTheme } from "./lib/theme";
 
 const SETTINGS_KEY = "gomoku.settings";
@@ -179,11 +180,13 @@ export function App() {
 
       <main className="mx-auto grid w-full max-w-6xl flex-1 gap-4 px-4 py-4 sm:gap-6 sm:py-6 lg:grid-cols-[minmax(0,1fr)_20rem] lg:items-start">
         <section className="flex flex-col items-center gap-3">
-          <div className="flex w-full flex-col gap-1 lg:hidden">
-            <GameStatus state={state} engine={engine} onRetry={retry} />
-            <Matchup state={state} />
-          </div>
-          <div className="flex w-full max-w-[min(100%,calc(100dvh-13rem))] flex-col gap-3 lg:max-w-[min(100%,calc(100dvh-8rem))]">
+          {/* What happens next, for screen readers; the player bars show it visually. */}
+          <p className="sr-only" aria-live="polite" data-testid="game-status">
+            {statusText(state, engine)}
+          </p>
+          {/* Chess-style: White's bar above the board, Black's below, each with its clock. */}
+          <div className="flex w-full max-w-[min(100%,calc(100dvh-17rem))] flex-col gap-2 lg:max-w-[min(100%,calc(100dvh-19rem))]">
+            <PlayerBar player={WHITE} state={state} engine={engine} onRetry={retry} />
             <div className="aspect-square w-full rounded-[1.25rem] shadow-[var(--shadow)]">
               <Board
                 grid={shownGrid}
@@ -194,6 +197,7 @@ export function App() {
                 onPlay={play}
               />
             </div>
+            <PlayerBar player={BLACK} state={state} engine={engine} onRetry={retry} />
           </div>
           {/* Phone/tablet: navigation right under the board; desktop: above the move list. */}
           <div className="w-full lg:hidden">
@@ -206,8 +210,6 @@ export function App() {
 
         <aside className="flex flex-col gap-4">
           <Card className="hidden flex-col gap-4 lg:flex">
-            <GameStatus state={state} engine={engine} onRetry={retry} />
-            <Matchup state={state} />
             <Controls {...controls} wide />
           </Card>
           <Card className="flex flex-col gap-3">

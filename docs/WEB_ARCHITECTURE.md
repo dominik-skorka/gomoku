@@ -104,6 +104,14 @@ list) only *shows* earlier positions: the game, an engine thinking in the
 background included, goes on, and ⏭ catches up with it.  Playing from an
 earlier position is what Undo is for.
 
+**Player bars** frame the board chess-style: White above, Black below,
+each with an avatar frame (a placeholder until avatars exist), the
+player's name, what they are doing (thinking, paused, an API error with
+Retry, the result) and a clock.  The clock counts the time a player has
+spent in the game, chess-style: a human's from the start of each turn,
+an engine's only while its request is in flight, so pauses and errors do
+not count.  Undo takes the time of the undone moves back.
+
 ### ADR-2: A static SPA, not a server-rendered framework
 
 **Decision.** React + Vite, built to static files.  No Next.js/SSR.

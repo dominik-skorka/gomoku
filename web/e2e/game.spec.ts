@@ -39,7 +39,9 @@ async function tap(page: Page, row: number, col: number) {
 const moveItems = (page: Page) =>
   page.getByRole("list", { name: "Moves" }).filter({ visible: true }).getByRole("listitem");
 
-const status = (page: Page) => page.getByText(/Your move|to move|thinking|won|wins|Paused/).filter({ visible: true });
+/** The game status line for screen readers (the player bars show it visually). */
+const status = (page: Page) => page.getByTestId("game-status");
+const bar = (page: Page, colour: "black" | "white") => page.getByTestId(`player-${colour}`);
 
 test("human vs engine: five in a row wins and turns blue", async ({ page }) => {
   await stubEngine(page, [
@@ -58,6 +60,8 @@ test("human vs engine: five in a row wins and turns blue", async ({ page }) => {
   }
   await expect(moveItems(page)).toHaveCount(9);
   await expect(status(page)).toHaveText(/You won!/);
+  await expect(bar(page, "black")).toContainText("Wins");
+  await expect(bar(page, "white")).not.toContainText("Wins");
   await expect(page.getByTestId("winning-stone")).toHaveCount(5);
 });
 
@@ -84,6 +88,9 @@ test("engine vs engine: plays itself, pauses, steps one move at a time", async (
 
   await page.getByRole("button", { name: "Pause" }).filter({ visible: true }).click();
   await expect(status(page)).toHaveText(/Paused/);
+  await expect(
+    page.getByTestId("player-black").or(page.getByTestId("player-white")).filter({ hasText: "Paused" }),
+  ).toHaveCount(1);
   const before = requests.length;
   await page.waitForTimeout(500);
   expect(requests.length).toBe(before);
@@ -115,8 +122,9 @@ test("rate limited: says so, counts down and retries by itself", async ({ page }
     }
   });
   await startGame(page, "Engine", "Human");
-  await expect(page.getByText("Too many requests.").filter({ visible: true })).toBeVisible();
-  await expect(page.getByText(/Retrying in \d s/).filter({ visible: true })).toBeVisible();
+  // The error shows in the bar of the engine whose move failed (Black).
+  await expect(bar(page, "black").getByText("Too many requests.")).toBeVisible();
+  await expect(bar(page, "black").getByText(/Retrying in \d s/)).toBeVisible();
   await expect(status(page)).toHaveText(/Your move/, { timeout: 5000 });
   expect(calls).toBe(2);
 });
@@ -140,7 +148,9 @@ test("resign: asks first, then the engine wins and the game is over", async ({ p
 
   await resign.click();
   await dialog.getByRole("button", { name: "Resign" }).click();
-  await expect(page.getByText("You resigned — the engine wins").filter({ visible: true })).toBeVisible();
+  await expect(status(page)).toHaveText("You resigned — the engine wins");
+  await expect(bar(page, "white")).toContainText("Wins");
+  await expect(bar(page, "black")).toContainText("Resigned");
   await expect(resign).toBeDisabled();
   await expect(page.getByRole("button", { name: "Undo" }).filter({ visible: true })).toBeDisabled();
 });
@@ -240,4 +250,28 @@ test("stones are drawn even when the browser runs no animations", async ({ page 
     await expect(stone).toBeVisible();
     expect(await stone.evaluate((el) => getComputedStyle(el).opacity)).toBe("1");
   }
+});
+
+test("player bars: White above the board, Black below, clocks run on their own turn", async ({ page }) => {
+  const requests = await stubEngine(page, [[0, 0]]);
+  await startGame(page, "Human", "Human");
+  const board = await page.getByRole("application").boundingBox();
+  const white = await bar(page, "white").boundingBox();
+  const black = await bar(page, "black").boundingBox();
+  if (!board || !white || !black) throw new Error("layout not visible");
+  expect(white.y + white.height).toBeLessThanOrEqual(board.y);
+  expect(black.y).toBeGreaterThanOrEqual(board.y + board.height);
+
+  // Black to move: Black's clock runs, White's stands at 0:00.
+  await expect(bar(page, "black")).toHaveAttribute("data-active", "true");
+  await expect(bar(page, "black").getByTestId("clock")).toHaveText("0:01", { timeout: 3000 });
+  await expect(bar(page, "white").getByTestId("clock")).toHaveText("0:00");
+  await tap(page, 7, 7);
+  await expect(bar(page, "white")).toHaveAttribute("data-active", "true");
+  const blackAfter = await bar(page, "black").getByTestId("clock").textContent();
+  await page.waitForTimeout(1200);
+  // Black's clock stopped; White's is running.
+  await expect(bar(page, "black").getByTestId("clock")).toHaveText(blackAfter ?? "");
+  await expect(bar(page, "white").getByTestId("clock")).not.toHaveText("0:00");
+  expect(requests).toHaveLength(0);
 });

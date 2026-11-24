@@ -23,7 +23,7 @@ export type Speed = (typeof SPEEDS)[number];
  * time (`step`) and slowed down (`speed`).
  */
 export function useGame(initial: GameSettings) {
-  const [state, dispatch] = useReducer(gameReducer, initial, (s) => initialState(s));
+  const [state, dispatch] = useReducer(gameReducer, initial, (s) => initialState(s, 1, Date.now()));
   const [engine, setEngine] = useState<EngineStatus>({ kind: "idle" });
   const [attempt, setAttempt] = useState(0);
   const [paused, setPaused] = useState(false);
@@ -54,11 +54,19 @@ export function useGame(initial: GameSettings) {
     const preset = presetById(presetId);
     let retryTimer: ReturnType<typeof setTimeout> | undefined;
     const timer = setTimeout(() => {
-      setEngine({ kind: "thinking", since: performance.now() });
+      setEngine({ kind: "thinking", since: Date.now() });
       requestMove({ grid, sideToMove: side, brain: preset.brain, overrides: preset.overrides }, controller.signal)
         .then((move) => {
           if (paused) setSteps((n) => Math.max(0, n - 1));
-          dispatch({ type: "play", gameId, ply, cell: move.cell, by: "engine", thinkMs: move.elapsedMs });
+          dispatch({
+            type: "play",
+            gameId,
+            ply,
+            cell: move.cell,
+            by: "engine",
+            thinkMs: move.elapsedMs,
+            at: Date.now(),
+          });
         })
         .catch((err: unknown) => {
           if (controller.signal.aborted) return;
@@ -76,14 +84,17 @@ export function useGame(initial: GameSettings) {
     };
   }, [engineTurn, gameId, ply, presetId, attempt, held, delay]);
 
-  const play = useCallback((cell: Cell) => dispatch({ type: "play", gameId, ply, cell, by: "human" }), [gameId, ply]);
+  const play = useCallback(
+    (cell: Cell) => dispatch({ type: "play", gameId, ply, cell, by: "human", at: Date.now() }),
+    [gameId, ply],
+  );
   const newGame = useCallback((settings: GameSettings) => {
     setPaused(false);
     setSteps(0);
-    dispatch({ type: "new", settings });
+    dispatch({ type: "new", settings, at: Date.now() });
   }, []);
-  const undo = useCallback(() => dispatch({ type: "undo" }), []);
-  const resign = useCallback(() => dispatch({ type: "resign" }), []);
+  const undo = useCallback(() => dispatch({ type: "undo", at: Date.now() }), []);
+  const resign = useCallback(() => dispatch({ type: "resign", at: Date.now() }), []);
   const retry = useCallback(() => setAttempt((n) => n + 1), []);
   const togglePause = useCallback(() => {
     setSteps(0);

@@ -43,11 +43,22 @@ export interface MoveRecord extends Cell {
   readonly by: PlayerKind;
   /** Round-trip time of the engine request, for engine moves. */
   readonly thinkMs?: number;
+  /**
+   * Time this move took, for the players' clocks: a human's from the start
+   * of their turn, an engine's from its request (pauses and the delay
+   * between engine moves do not count).
+   */
+  readonly spentMs: number;
 }
 
 export type Outcome =
   | { readonly kind: "win"; readonly winner: Player; readonly line: readonly Cell[] }
-  | { readonly kind: "resign"; readonly winner: Player }
+  | {
+      readonly kind: "resign";
+      readonly winner: Player;
+      /** Time the resigning player spent on the turn they resigned in. */
+      readonly spentMs: number;
+    }
   | { readonly kind: "draw" };
 
 export interface GameState {
@@ -57,13 +68,15 @@ export interface GameState {
   readonly grid: Grid;
   readonly moves: readonly MoveRecord[];
   readonly outcome: Outcome | null;
+  /** When the side to move started its turn (ms, `Date.now()` clock). */
+  readonly turnStartedAt: number;
 }
 
 export type GameAction =
-  | { type: "new"; settings: GameSettings }
-  | { type: "play"; gameId: number; ply: number; cell: Cell; by: PlayerKind; thinkMs?: number }
-  | { type: "undo" }
-  | { type: "resign" };
+  | { type: "new"; settings: GameSettings; at: number }
+  | { type: "play"; gameId: number; ply: number; cell: Cell; by: PlayerKind; thinkMs?: number; at: number }
+  | { type: "undo"; at: number }
+  | { type: "resign"; at: number };
 
 export const DEFAULT_SETTINGS: GameSettings = {
   size: 15,
@@ -89,8 +102,8 @@ export function soleHuman(settings: GameSettings): Player | null {
   return settings.black.kind === "human" ? BLACK : WHITE;
 }
 
-export function initialState(settings: GameSettings = DEFAULT_SETTINGS, gameId = 1): GameState {
-  return { gameId, settings, grid: emptyGrid(settings.size), moves: [], outcome: null };
+export function initialState(settings: GameSettings = DEFAULT_SETTINGS, gameId = 1, at = Date.now()): GameState {
+  return { gameId, settings, grid: emptyGrid(settings.size), moves: [], outcome: null, turnStartedAt: at };
 }
 
 /** Black always moves first. */
@@ -120,7 +133,7 @@ export function replay(settings: GameSettings, moves: readonly MoveRecord[]): Gr
 export function gameReducer(state: GameState, action: GameAction): GameState {
   switch (action.type) {
     case "new":
-      return initialState(action.settings, state.gameId + 1);
+      return initialState(action.settings, state.gameId + 1, action.at);
 
     case "play": {
       // Stale reply (new game, undo) or illegal move: ignore.
@@ -130,19 +143,24 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
       // A move must come from whoever plays this colour.
       if (sideSettings(state.settings, stone).kind !== action.by) return state;
       const grid = placeStone(state.grid, action.cell, stone);
-      const record: MoveRecord = { ...action.cell, stone, by: action.by, thinkMs: action.thinkMs };
+      const spentMs =
+        action.by === "engine" && action.thinkMs !== undefined
+          ? action.thinkMs
+          : Math.max(0, action.at - state.turnStartedAt);
+      const record: MoveRecord = { ...action.cell, stone, by: action.by, thinkMs: action.thinkMs, spentMs };
       const line = winningLine(grid, action.cell, state.settings.winLength);
       const outcome: Outcome | null = line
         ? { kind: "win", winner: stone, line }
         : isFull(grid)
           ? { kind: "draw" }
           : null;
-      return { ...state, grid, moves: [...state.moves, record], outcome };
+      return { ...state, grid, moves: [...state.moves, record], outcome, turnStartedAt: action.at };
     }
 
     case "resign": {
       if (!canResign(state)) return state;
-      return { ...state, outcome: { kind: "resign", winner: opponent(sideToMove(state)) } };
+      const spentMs = Math.max(0, action.at - state.turnStartedAt);
+      return { ...state, outcome: { kind: "resign", winner: opponent(sideToMove(state)), spentMs } };
     }
 
     case "undo": {
@@ -155,7 +173,7 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
         const m = moves.pop();
         if (m?.by === "human") break;
       }
-      return { ...state, grid: replay(state.settings, moves), moves, outcome: null };
+      return { ...state, grid: replay(state.settings, moves), moves, outcome: null, turnStartedAt: action.at };
     }
   }
 }
@@ -197,3 +215,35 @@ export function migrateSettings(raw: unknown): GameSettings {
 }
 
 export { opponent };
+
+/**
+ * A player's clock: the time they have spent in this game, counting up like
+ * a chess clock.  It runs while it is their turn: a human's from the start
+ * of the turn, an engine's only while its request is in flight
+ * (`engineSince`), so pauses and errors do not count.
+ */
+export function clockMs(
+  state: GameState,
+  player: Player,
+  now: number,
+  engineSince: number | null,
+): { readonly ms: number; readonly running: boolean } {
+  let ms = state.moves.reduce((sum, m) => (m.stone === player ? sum + m.spentMs : sum), 0);
+  const { outcome } = state;
+  if (outcome?.kind === "resign" && outcome.winner !== player) ms += outcome.spentMs;
+  if (outcome !== null || sideToMove(state) !== player) return { ms, running: false };
+  if (sideSettings(state.settings, player).kind === "human") {
+    return { ms: ms + Math.max(0, now - state.turnStartedAt), running: true };
+  }
+  if (engineSince !== null) return { ms: ms + Math.max(0, now - engineSince), running: true };
+  return { ms, running: false };
+}
+
+/** `m:ss`, or `h:mm:ss` from an hour. */
+export function formatClock(ms: number): string {
+  const total = Math.floor(ms / 1000);
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const sec = String(total % 60).padStart(2, "0");
+  return h > 0 ? `${h}:${String(m).padStart(2, "0")}:${sec}` : `${m}:${sec}`;
+}

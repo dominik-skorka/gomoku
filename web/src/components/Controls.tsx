@@ -1,10 +1,9 @@
 import { clsx } from "clsx";
-import { BLACK, type Player } from "../game/rules";
-import { type GameState, modeOf, type SideSettings, soleHuman } from "../game/state";
+import { type GameState, modeOf } from "../game/state";
 import { SPEEDS, type Speed } from "../game/useGame";
 import { t } from "../lib/i18n";
 import { WhiteFlagIcon } from "./icons";
-import { Button, StoneIcon } from "./ui";
+import { Button } from "./ui";
 
 export interface ControlsProps {
   state: GameState;
@@ -95,32 +94,6 @@ export function Controls(p: ControlsProps) {
           </div>
         </fieldset>
       )}
-    </div>
-  );
-}
-
-function SideLabel({ player, side, you }: { player: Player; side: SideSettings; you: Player | null }) {
-  const name = side.kind === "human" ? (you === player ? t.you : t.human) : t.presets[side.preset][0];
-  return (
-    <span className="inline-flex items-center gap-1.5">
-      <StoneIcon stone={player} className="size-3.5" />
-      <span className="font-medium text-fg">{name}</span>
-    </span>
-  );
-}
-
-/** "● You vs ○ Hard" — who plays which colour in this game. */
-export function Matchup({ state }: { state: GameState }) {
-  const { settings } = state;
-  const you = soleHuman(settings);
-  return (
-    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted">
-      <SideLabel player={BLACK} side={settings.black} you={you} />
-      <span>{t.vs}</span>
-      <SideLabel player={2} side={settings.white} you={you} />
-      <span>
-        · {settings.size}×{settings.size}
-      </span>
     </div>
   );
 }
