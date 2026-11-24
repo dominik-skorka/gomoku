@@ -8,6 +8,7 @@ moves. Architecture and decisions: [docs/WEB_ARCHITECTURE.md](../docs/WEB_ARCHIT
 pnpm install
 pnpm dev          # http://localhost:5173, proxies /api to 127.0.0.1:8000
 pnpm test         # unit tests (rules, game state)
+pnpm test:e2e     # browser tests (Playwright, stubbed API; desktop + phone)
 pnpm check        # Biome lint + format check, TypeScript
 pnpm build        # static files in dist/
 ```

@@ -2,7 +2,7 @@ import { clsx } from "clsx";
 import { useEffect, useRef, useState } from "react";
 import { PRESETS } from "../game/presets";
 import { BLACK, type Player, WHITE } from "../game/rules";
-import type { GameSettings } from "../game/state";
+import type { GameSettings, PlayerKind, SideSettings } from "../game/state";
 import { t } from "../lib/i18n";
 import { Button, StoneIcon } from "./ui";
 
@@ -13,6 +13,73 @@ interface Props {
   initial: GameSettings;
   onStart: (settings: GameSettings) => void;
   onClose: () => void;
+}
+
+const option = (active: boolean) =>
+  clsx(
+    "flex cursor-pointer items-center gap-3 rounded-xl border px-3 py-2.5 text-left transition",
+    "has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-accent",
+    active ? "border-accent bg-accent/10 ring-1 ring-accent" : "border-line hover:bg-surface",
+  );
+
+/** One colour: human or engine, and the engine's difficulty. */
+function SidePicker({
+  player,
+  value,
+  onChange,
+}: {
+  player: Player;
+  value: SideSettings;
+  onChange: (v: SideSettings) => void;
+}) {
+  const name = player === BLACK ? "black" : "white";
+  return (
+    <fieldset className="flex flex-col gap-2 rounded-2xl border border-line p-3">
+      <legend className="flex items-center gap-2 px-1 text-sm font-semibold">
+        <StoneIcon stone={player} />
+        {player === BLACK ? t.black : t.white}
+        {player === BLACK && <span className="font-normal text-muted">· {t.blackFirst}</span>}
+      </legend>
+      <div className="grid grid-cols-2 gap-2">
+        {(["human", "engine"] as PlayerKind[]).map((kind) => (
+          <label key={kind} className={clsx(option(value.kind === kind), "justify-center py-2")}>
+            <input
+              type="radio"
+              name={`${name}-kind`}
+              className="sr-only"
+              checked={value.kind === kind}
+              onChange={() => onChange({ ...value, kind })}
+            />
+            <span className="font-semibold">{kind === "human" ? t.human : t.engineKind}</span>
+          </label>
+        ))}
+      </div>
+      {value.kind === "engine" && (
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4" role="radiogroup" aria-label={t.difficulty}>
+          {PRESETS.map((p) => {
+            const [label, desc] = t.presets[p.id];
+            return (
+              <label
+                key={p.id}
+                className={clsx(option(value.preset === p.id), "flex-col items-start gap-0 py-2")}
+                title={desc}
+              >
+                <input
+                  type="radio"
+                  name={`${name}-preset`}
+                  className="sr-only"
+                  checked={value.preset === p.id}
+                  onChange={() => onChange({ ...value, preset: p.id })}
+                />
+                <span className="text-sm font-semibold">{label}</span>
+                <span className="text-xs tabular-nums text-muted">{t.seconds(p.typicalSeconds)}</span>
+              </label>
+            );
+          })}
+        </div>
+      )}
+    </fieldset>
+  );
 }
 
 /** Native <dialog>: focus trap, Esc and backdrop for free, works on every mobile browser. */
@@ -29,23 +96,17 @@ export function NewGameDialog({ open, initial, onStart, onClose }: Props) {
     } else if (!open && d.open) d.close();
   }, [open, initial]);
 
-  const option = (active: boolean) =>
-    clsx(
-      "flex cursor-pointer items-center gap-3 rounded-xl border px-3 py-2.5 text-left transition",
-      active ? "border-accent bg-accent/10 ring-1 ring-accent" : "border-line hover:bg-surface",
-    );
-
   return (
     <dialog
       ref={ref}
       onClose={onClose}
       onClick={(e) => e.target === ref.current && onClose()}
       onKeyDown={(e) => e.key === "Escape" && onClose()}
-      className="m-auto w-[min(100vw-2rem,28rem)] rounded-3xl border border-line bg-surface-strong p-0 text-fg shadow-2xl"
+      className="m-auto max-h-[calc(100dvh-2rem)] w-[min(100vw-2rem,30rem)] rounded-3xl border border-line bg-surface-strong p-0 text-fg shadow-2xl"
     >
       <form
         method="dialog"
-        className="flex flex-col gap-5 p-5 sm:p-6"
+        className="flex flex-col gap-4 p-5 sm:p-6"
         onSubmit={(e) => {
           e.preventDefault();
           onStart(settings);
@@ -53,50 +114,19 @@ export function NewGameDialog({ open, initial, onStart, onClose }: Props) {
       >
         <h2 className="text-xl font-bold tracking-tight">{t.newGame}</h2>
 
-        <fieldset className="flex flex-col gap-2">
-          <legend className="mb-2 text-sm font-semibold text-muted">{t.playAs}</legend>
-          <div className="grid grid-cols-2 gap-2">
-            {([BLACK, WHITE] as Player[]).map((p) => (
-              <label key={p} className={option(settings.human === p)}>
-                <input
-                  type="radio"
-                  name="human"
-                  className="sr-only"
-                  checked={settings.human === p}
-                  onChange={() => setSettings((s) => ({ ...s, human: p }))}
-                />
-                <StoneIcon stone={p} className="size-6" />
-                <span>
-                  <span className="block font-semibold">{p === BLACK ? t.black : t.white}</span>
-                  {p === BLACK && <span className="block text-xs text-muted">{t.blackFirst}</span>}
-                </span>
-              </label>
-            ))}
-          </div>
-        </fieldset>
-
-        <fieldset className="flex flex-col gap-2">
-          <legend className="mb-2 text-sm font-semibold text-muted">{t.difficulty}</legend>
-          {PRESETS.map((p) => {
-            const [name, desc] = t.presets[p.id];
-            return (
-              <label key={p.id} className={option(settings.preset === p.id)}>
-                <input
-                  type="radio"
-                  name="preset"
-                  className="sr-only"
-                  checked={settings.preset === p.id}
-                  onChange={() => setSettings((s) => ({ ...s, preset: p.id }))}
-                />
-                <span className="flex-1">
-                  <span className="block font-semibold">{name}</span>
-                  <span className="block text-xs text-muted">{desc}</span>
-                </span>
-                <span className="text-xs tabular-nums text-muted">{t.seconds(p.typicalSeconds)}</span>
-              </label>
-            );
-          })}
-        </fieldset>
+        <div className="flex flex-col gap-3">
+          <span className="text-sm font-semibold text-muted">{t.players}</span>
+          <SidePicker
+            player={BLACK}
+            value={settings.black}
+            onChange={(black) => setSettings((s) => ({ ...s, black }))}
+          />
+          <SidePicker
+            player={WHITE}
+            value={settings.white}
+            onChange={(white) => setSettings((s) => ({ ...s, white }))}
+          />
+        </div>
 
         <fieldset>
           <legend className="mb-2 text-sm font-semibold text-muted">{t.boardSize}</legend>

@@ -22,6 +22,8 @@ export class ApiError extends Error {
     readonly status: number | undefined,
     message: string,
     readonly requestId?: string | null,
+    /** Seconds to wait before retrying, from a 429's `Retry-After` header. */
+    readonly retryAfterS?: number,
   ) {
     super(message);
     this.name = "ApiError";
@@ -60,7 +62,14 @@ export async function requestMove(
   if (!data) {
     const kind: ApiErrorKind =
       response.status === 429 ? "rate_limited" : response.status >= 500 ? "unavailable" : "rejected";
-    throw new ApiError(kind, response.status, `The game server answered ${response.status}.`, requestId);
+    const retryAfter = Number.parseInt(response.headers.get("Retry-After") ?? "", 10);
+    throw new ApiError(
+      kind,
+      response.status,
+      `The game server answered ${response.status}.`,
+      requestId,
+      Number.isFinite(retryAfter) ? retryAfter : undefined,
+    );
   }
   return {
     cell: { row: data.move.row, col: data.move.col },

@@ -33,6 +33,10 @@ jobs:
       - run: pnpm run check
       - run: pnpm test
       - run: pnpm run build
+      - name: End-to-end tests (stubbed API)
+        run: |
+          pnpm exec playwright install --with-deps chromium
+          pnpm run test:e2e
 
   openapi:
     name: OpenAPI document is current

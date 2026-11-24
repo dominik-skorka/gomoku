@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useState } from "react";
 import { requestMove } from "./api/client";
 import { Board } from "./components/Board";
+import { Controls, Matchup } from "./components/Controls";
 import { GameStatus } from "./components/GameStatus";
 import { MoveList } from "./components/MoveList";
 import { NewGameDialog } from "./components/NewGameDialog";
 import { Button, Card } from "./components/ui";
 import { presetById } from "./game/presets";
 import type { Cell } from "./game/rules";
-import { canUndo, DEFAULT_SETTINGS, type GameSettings, sideToMove } from "./game/state";
+import { canUndo, type GameSettings, isHumanTurn, migrateSettings, sideToMove } from "./game/state";
 import { useGame } from "./game/useGame";
 import { t } from "./lib/i18n";
 import { useTheme } from "./lib/theme";
@@ -17,11 +18,11 @@ const SETTINGS_KEY = "gomoku.settings";
 function loadSettings(): GameSettings {
   try {
     const raw = localStorage.getItem(SETTINGS_KEY);
-    if (raw) return { ...DEFAULT_SETTINGS, ...(JSON.parse(raw) as Partial<GameSettings>) };
+    return migrateSettings(raw ? JSON.parse(raw) : null);
   } catch {
-    // ignore: fall back to defaults
+    // storage blocked or unreadable: fall back to defaults
+    return migrateSettings(null);
   }
-  return DEFAULT_SETTINGS;
 }
 
 function ThemeIcon({ choice }: { choice: "system" | "light" | "dark" }) {
@@ -56,13 +57,14 @@ function ThemeIcon({ choice }: { choice: "system" | "light" | "dark" }) {
 
 export function App() {
   const [initial] = useState(loadSettings);
-  const { state, engine, play, newGame, undo, retry } = useGame(initial);
+  const { state, engine, play, newGame, undo, retry, paused, togglePause, step, speed, setSpeed } = useGame(initial);
   const { choice, cycle } = useTheme();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [hint, setHint] = useState<Cell | null>(null);
   const [hintLoading, setHintLoading] = useState(false);
 
-  const humanTurn = state.outcome === null && sideToMove(state) === state.settings.human;
+  const humanTurn = isHumanTurn(state);
+  const side = sideToMove(state);
   const last = state.moves.at(-1) ?? null;
   const winLine = state.outcome?.kind === "win" ? state.outcome.line : null;
 
@@ -91,7 +93,7 @@ export function App() {
       const preset = presetById("hard");
       const move = await requestMove({
         grid: state.grid,
-        sideToMove: state.settings.human,
+        sideToMove: side,
         brain: preset.brain,
         overrides: preset.overrides,
       });
@@ -101,9 +103,21 @@ export function App() {
     } finally {
       setHintLoading(false);
     }
-  }, [state.grid, state.settings.human]);
+  }, [state.grid, side]);
 
-  const [presetName] = t.presets[state.settings.preset];
+  const controls = {
+    state,
+    canUndo: canUndo(state),
+    canHint: humanTurn && !hintLoading,
+    paused,
+    speed,
+    onNewGame: () => setDialogOpen(true),
+    onUndo: undo,
+    onHint: askHint,
+    onTogglePause: togglePause,
+    onStep: step,
+    onSpeed: setSpeed,
+  };
   const themeLabel = { system: t.themeSystem, light: t.themeLight, dark: t.themeDark }[choice];
 
   return (
@@ -126,50 +140,30 @@ export function App() {
 
       <main className="mx-auto grid w-full max-w-6xl flex-1 gap-4 px-4 py-4 sm:gap-6 sm:py-6 lg:grid-cols-[minmax(0,1fr)_20rem] lg:items-start">
         <section className="flex flex-col items-center gap-3">
-          <div className="w-full lg:hidden">
+          <div className="flex w-full flex-col gap-1 lg:hidden">
             <GameStatus state={state} engine={engine} onRetry={retry} />
+            <Matchup state={state} />
           </div>
           <div className="aspect-square w-full max-w-[min(100%,calc(100dvh-13rem))] rounded-[1.25rem] shadow-[var(--shadow)] lg:max-w-[min(100%,calc(100dvh-8rem))]">
             <Board
               grid={state.grid}
-              turn={humanTurn ? state.settings.human : null}
+              turn={humanTurn ? side : null}
               last={last}
               winLine={winLine}
               hint={hint}
               onPlay={play}
             />
           </div>
-          <div className="grid w-full grid-cols-3 gap-2 lg:hidden">
-            <Button variant="primary" onClick={() => setDialogOpen(true)}>
-              {t.newGame}
-            </Button>
-            <Button onClick={undo} disabled={!canUndo(state)}>
-              {t.undo}
-            </Button>
-            <Button onClick={askHint} disabled={!humanTurn || hintLoading}>
-              {t.hint}
-            </Button>
+          <div className="w-full lg:hidden">
+            <Controls {...controls} />
           </div>
         </section>
 
         <aside className="flex flex-col gap-4">
           <Card className="hidden flex-col gap-4 lg:flex">
             <GameStatus state={state} engine={engine} onRetry={retry} />
-            <div className="text-sm text-muted">
-              {t.difficulty}: <span className="font-medium text-fg">{presetName}</span> · {state.settings.size}×
-              {state.settings.size}
-            </div>
-            <div className="grid grid-cols-2 gap-2">
-              <Button variant="primary" className="col-span-2" onClick={() => setDialogOpen(true)}>
-                {t.newGame}
-              </Button>
-              <Button onClick={undo} disabled={!canUndo(state)}>
-                {t.undo}
-              </Button>
-              <Button onClick={askHint} disabled={!humanTurn || hintLoading}>
-                {t.hint}
-              </Button>
-            </div>
+            <Matchup state={state} />
+            <Controls {...controls} wide />
           </Card>
           <Card>
             <h2 className="mb-3 text-sm font-semibold text-muted">

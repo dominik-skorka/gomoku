@@ -84,6 +84,19 @@ TypeScript, unit-tested against the same cases as `gomoku.rules`).
 **Revisit when** accounts, saved games or multiplayer arrive: then
 sessions move to a shared store (Redis/Valkey) behind the existing API.
 
+### ADR-1a: Each colour is a human or an engine
+
+**Decision.** Game settings name a player kind per colour (`black`,
+`white`: `human` or `engine` at a difficulty preset).  Human vs engine,
+human vs human (one device, taking turns) and engine vs engine all follow
+from that one model; the engine loop simply asks `POST /v1/move` whenever
+an engine plays the side to move.
+
+**Engine vs engine** plays itself, with pause, single step and a delay
+between moves (none, 0.5 s, 1.5 s) so a game can be followed.  When the
+API rate-limits a fast game (`429`), the client waits for `Retry-After`
+and retries by itself.
+
 ### ADR-2: A static SPA, not a server-rendered framework
 
 **Decision.** React + Vite, built to static files.  No Next.js/SSR.
