@@ -19,7 +19,7 @@
   --board-b: #d69c55;
   --grid: rgb(84 52 18 / 0.62);
   --label: rgb(84 52 18 / 0.7);
-  --win: #facc15;
+  --win: #3b82f6;
   --shadow: 0 20px 50px -20px rgb(80 50 10 / 0.45);
 }
 
@@ -39,7 +39,7 @@
     --board-b: #2a2e38;
     --grid: rgb(220 226 240 / 0.28);
     --label: rgb(220 226 240 / 0.45);
-    --win: #facc15;
+    --win: #60a5fa;
     --shadow: 0 24px 60px -24px rgb(0 0 0 / 0.8);
   }
 }
@@ -59,7 +59,7 @@
   --board-b: #2a2e38;
   --grid: rgb(220 226 240 / 0.28);
   --label: rgb(220 226 240 / 0.45);
-  --win: #facc15;
+  --win: #60a5fa;
   --shadow: 0 24px 60px -24px rgb(0 0 0 / 0.8);
 }
 

@@ -150,10 +150,10 @@ export function Board({ grid, turn, last, winLine, hint, onPlay }: BoardProps) {
           <stop offset="0.7" stopColor="#e9ebef" />
           <stop offset="1" stopColor="#b9bec8" />
         </radialGradient>
-        <radialGradient id={`${uid}-gold`} cx="35%" cy="30%" r="80%">
-          <stop offset="0" stopColor="#fff7c2" />
-          <stop offset="0.45" stopColor="#facc15" />
-          <stop offset="1" stopColor="#b7791f" />
+        <radialGradient id={`${uid}-win`} cx="35%" cy="30%" r="80%">
+          <stop offset="0" stopColor="#dbeafe" />
+          <stop offset="0.45" stopColor="#3b82f6" />
+          <stop offset="1" stopColor="#1e3a8a" />
         </radialGradient>
         <filter id={`${uid}-shadow`} x="-50%" y="-50%" width="200%" height="200%">
           <feDropShadow dx="0.05" dy="0.09" stdDeviation="0.07" floodOpacity="0.45" />
@@ -237,7 +237,7 @@ export function Board({ grid, turn, last, winLine, hint, onPlay }: BoardProps) {
       )}
 
       {winLine && (
-        // The winning stones turn gold, one after another along the line,
+        // The winning stones turn blue, one after another along the line,
         // and keep a soft glow; the stones' own colours fade out beneath.
         <g pointerEvents="none">
           {winLine.map((c, i) => (
@@ -256,8 +256,8 @@ export function Board({ grid, turn, last, winLine, hint, onPlay }: BoardProps) {
                 cx={x(c.col)}
                 cy={x(c.row)}
                 r={R}
-                fill={`url(#${uid}-gold)`}
-                stroke="#8a5a00"
+                fill={`url(#${uid}-win)`}
+                stroke="#1e3a8a"
                 strokeWidth="0.03"
                 data-testid="winning-stone"
                 initial={{ opacity: 0 }}
