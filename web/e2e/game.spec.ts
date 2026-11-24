@@ -1,4 +1,4 @@
-import { expect, type Page, test } from "@playwright/test";
+import { devices, expect, type Page, test } from "@playwright/test";
 
 /** Engine stub: answers each move request with the next cell of `cells`. */
 async function stubEngine(page: Page, cells: [number, number][]) {
@@ -30,11 +30,16 @@ async function tap(page: Page, row: number, col: number) {
   const span = 16; // 15 points + 2 × 0.5 margin cells
   const x = box.x + ((1 + col) / span) * box.width;
   const y = box.y + ((1 + row) / span) * box.height;
-  // Touch needs a preview tap first, then a confirming tap.
+  // Touch on a phone (points closer than 40 px) needs a preview tap first,
+  // then a confirming tap; a tablet places with one tap.
   const isTouch = await page.evaluate(() => matchMedia("(pointer: coarse)").matches);
-  if (isTouch) await page.touchscreen.tap(x, y);
-  if (isTouch) await page.touchscreen.tap(x, y);
-  else await page.mouse.click(x, y);
+  const spacing = box.width / span;
+  if (!isTouch) await page.mouse.click(x, y);
+  else if (spacing >= 40) await page.touchscreen.tap(x, y);
+  else {
+    await page.touchscreen.tap(x, y);
+    await page.touchscreen.tap(x, y);
+  }
 }
 
 /** The moves in the move list (the visible one on this layout). */
@@ -210,4 +215,31 @@ test("move list follows the game and keeps the move on view visible", async ({ p
   // Catch up: back to the bottom.
   await page.getByRole("button", { name: "Latest move" }).filter({ visible: true }).click();
   await expect.poll(atBottom).toBe(true);
+});
+
+test("touch: one tap places on a tablet; a phone previews first", async ({ browser }) => {
+  for (const [device, taps] of [
+    ["iPad Pro 11", 1],
+    ["Pixel 7", 2],
+  ] as const) {
+    const context = await browser.newContext({ ...devices[device], locale: "en-US" });
+    const page = await context.newPage();
+    await stubEngine(page, [[0, 0]]);
+    await page.goto("/");
+    const board = page.getByRole("application");
+    const box = await board.boundingBox();
+    if (!box) throw new Error("board not visible");
+    const x = box.x + (8 / 16) * box.width;
+    const y = box.y + (8 / 16) * box.height;
+    await page.touchscreen.tap(x, y);
+    if (taps === 2) {
+      // Phone: only a preview so far, nothing played.
+      await expect(page.getByTestId("stone-preview")).toBeVisible();
+      await expect(moveItems(page)).toHaveCount(0);
+      await page.touchscreen.tap(x, y);
+    }
+    await expect(page.getByTestId("stone-preview")).toHaveCount(0);
+    await expect(moveItems(page)).toHaveCount(2); // the move and the engine's reply
+    await context.close();
+  }
 });

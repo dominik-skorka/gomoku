@@ -14,6 +14,14 @@ interface BoardProps {
 }
 
 const PAD = 1; // board margin, in cell units (room for coordinates)
+
+/**
+ * Touch: below this distance between points (CSS px) a tap only previews
+ * the stone and a second tap places it, so a fat finger on a phone cannot
+ * drop a stone on the wrong point.  At or above it (tablets: ~44-50 px on a
+ * 15x15 board, about Apple's 44 pt minimum touch target) one tap places it.
+ */
+export const CONFIRM_BELOW_PX = 40;
 const R = 0.45; // stone radius
 
 function starPoints(size: number): Cell[] {
@@ -31,8 +39,10 @@ const same = (a: Cell | null, b: Cell | null) => !!a && !!b && a.row === b.row &
 /**
  * The board as one SVG: crisp at any size, one pointer handler instead of
  * hundreds of hit targets.  Mouse: hover shows a ghost stone, click places.
- * Touch: the first tap previews, a second tap on the same point places
- * (fat-finger protection on a 15×15 grid).  Keyboard: arrows + Enter.
+ * Touch: one tap places on a tablet; on a phone, where points are close
+ * together, the first tap previews (a translucent stone with a dashed,
+ * pulsing ring) and a second tap on the same point places.
+ * Keyboard: arrows + Enter.
  */
 export function Board({ grid, turn, last, winLine, hint, onPlay }: BoardProps) {
   const size = grid.length;
@@ -83,7 +93,9 @@ export function Board({ grid, turn, last, winLine, hint, onPlay }: BoardProps) {
     if (!turn) return;
     const cell = cellAt(e);
     if (!cell || !isLegal(grid, cell)) return;
-    if (e.pointerType === "mouse" || same(cell, preview)) {
+    const spacing = e.currentTarget.getBoundingClientRect().width / span;
+    const oneTap = e.pointerType === "mouse" || spacing >= CONFIRM_BELOW_PX;
+    if (oneTap || same(cell, preview)) {
       setPreview(null);
       setHover(null);
       onPlay(cell);
@@ -270,16 +282,29 @@ export function Board({ grid, turn, last, winLine, hint, onPlay }: BoardProps) {
       )}
 
       {ghost && turn && (
-        <circle
-          cx={x(ghost.col)}
-          cy={x(ghost.row)}
-          r={R}
-          fill={`url(#${uid}-${turn === BLACK ? "black" : "white"})`}
-          opacity={preview ? 0.75 : 0.45}
-          stroke={preview ? "var(--accent)" : "none"}
-          strokeWidth="0.06"
-          pointerEvents="none"
-        />
+        <g pointerEvents="none" data-testid={preview ? "stone-preview" : undefined}>
+          <circle
+            cx={x(ghost.col)}
+            cy={x(ghost.row)}
+            r={R}
+            fill={`url(#${uid}-${turn === BLACK ? "black" : "white"})`}
+            opacity={0.45}
+          />
+          {preview && (
+            // Unmistakably not a placed stone: a dashed ring that pulses.
+            <motion.circle
+              cx={x(ghost.col)}
+              cy={x(ghost.row)}
+              r={R + 0.08}
+              fill="none"
+              stroke="var(--accent)"
+              strokeWidth="0.07"
+              strokeDasharray="0.18 0.12"
+              animate={reduceMotion ? undefined : { opacity: [1, 0.35, 1] }}
+              transition={{ duration: 1.1, repeat: Number.POSITIVE_INFINITY }}
+            />
+          )}
+        </g>
       )}
 
       {keyboard && (
