@@ -43,7 +43,7 @@ flowchart LR
 | Component | Image | Technology | Responsibility |
 |---|---|---|---|
 | `web` | `gomoku-web` | React 19, Vite 8, TypeScript 6, Tailwind CSS 4, Motion | The game UI; built once into static files served by Caddy |
-| `api` | `gomoku-api` | Python 3.14 free-threaded, FastAPI, uvicorn | Asks a brain for a move (`POST /v1/move`); stateless |
+| `api` | `gomoku-api` | Python 3.14 free-threaded, FastAPI, uvicorn (`packages/gomoku-fastapi/Dockerfile`) | Asks a brain for a move (`POST /v1/move`); stateless; Numba kernels precompiled in the image |
 | `edge` | `caddy` | Caddy 2.11 | The only published port: TLS (automatic certificates), `/api` routing, load balancing, security headers |
 | `autoheal` | `willfarrell/autoheal` | — | Restarts containers whose healthcheck turns `unhealthy` |
 
@@ -152,10 +152,17 @@ docker compose up --build
 Then open <http://localhost:8080>.  The API's interactive docs are at
 <http://localhost:8080/api/docs>.
 
-For frontend development with hot reload, run the API and Vite separately:
+For frontend development with hot reload, run the API (from source or in
+its container) and Vite separately:
 
 ```bash
 uv run gomoku-api
+```
+
+or
+
+```bash
+docker compose -f compose.yaml -f compose.dev.yaml up --build api
 ```
 
 ```bash
@@ -195,5 +202,5 @@ shared limit would need Redis.
 Both Dockerfiles accept an optional extra CA certificate as a build secret:
 
 ```bash
-docker build --secret id=extra_ca,src=/path/to/ca.pem -f deploy/api/Dockerfile .
+docker build --secret id=extra_ca,src=/path/to/ca.pem -f packages/gomoku-fastapi/Dockerfile .
 ```

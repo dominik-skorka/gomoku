@@ -2,9 +2,14 @@
 #
 #   docker compose up --build          # http://localhost:8080
 #   docker compose up -d --scale api=3 # three engine replicas behind the edge
+#   docker compose logs -f api         # tail one component's logs
+#   docker compose down                # stop + remove
 #
 # Each service is its own image and can be rebuilt, replaced or restarted
 # alone:  docker compose up -d --build web   /   docker compose restart api
+#
+# Working on the API alone (port 8000 on the host, no proxy prefix):
+#   docker compose -f compose.yaml -f compose.dev.yaml up --build api
 name: gomoku
 
 x-restart: &restart
@@ -15,7 +20,7 @@ services:
     <<: *restart
     build:
       context: .
-      dockerfile: deploy/api/Dockerfile
+      dockerfile: packages/gomoku-fastapi/Dockerfile
       args:
         VERSION: ${GOMOKU_VERSION:-dev}
         REVISION: ${GOMOKU_REVISION:-unknown}
@@ -23,13 +28,25 @@ services:
     environment:
       # The edge strips /api, so the interactive docs live at /api/docs.
       UVICORN_ROOT_PATH: /api
+      # Logfire: stdout only by default.  Set LOGFIRE_TOKEN in a .env file
+      # (gitignored) and GOMOKU_API__LOGFIRE_SEND=true to ship traces.
+      GOMOKU_API__LOGFIRE_CONSOLE: "true"
+      GOMOKU_API__LOGFIRE_SEND: ${GOMOKU_LOGFIRE_SEND:-false}
+      LOGFIRE_TOKEN: ${LOGFIRE_TOKEN:-}
+      # Rate limits, per IP and per replica; an empty string disables a tier.
       GOMOKU_API__RATE_LIMIT_DEFAULT: ${GOMOKU_RATE_LIMIT_DEFAULT:-240/minute}
       GOMOKU_API__RATE_LIMIT_COMPUTE: ${GOMOKU_RATE_LIMIT_COMPUTE:-60/minute}
+      # Upper bound on the search time of a single request, in seconds.
       GOMOKU_API__MAX_TIME_LIMIT_S: ${GOMOKU_MAX_TIME_LIMIT_S:-10}
-      LOGFIRE_TOKEN: ${LOGFIRE_TOKEN:-}
+    # volumes:
+    #   # Optional: the image ships the repository's gomoku.toml; mount a
+    #   # host-side copy read-only to change brain settings without
+    #   # rebuilding.
+    #   - ./gomoku.toml:/app/gomoku.toml:ro
     labels:
       autoheal: "true"
-    # No published port: only the edge can reach the engine.
+    # No published port: only the edge can reach the engine (which is also
+    # why the API may trust X-Forwarded-For).
 
   web:
     <<: *restart

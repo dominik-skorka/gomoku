@@ -1,0 +1,14 @@
+# Development overlay: the API on http://localhost:8000 without the /api
+# prefix, so `cd web && pnpm dev` (which proxies /api to 127.0.0.1:8000),
+# curl and the OpenAPI docs at /docs talk to the container directly.
+#
+#   docker compose -f compose.yaml -f compose.dev.yaml up --build api
+services:
+  api:
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      UVICORN_ROOT_PATH: ""
+      # Direct calls from the host bypass the proxy, so do not trust
+      # X-Forwarded-For from them.
+      FORWARDED_ALLOW_IPS: 127.0.0.1

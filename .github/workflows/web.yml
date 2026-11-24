@@ -57,7 +57,7 @@ jobs:
         uses: docker/build-push-action@v7
         with:
           context: .
-          file: deploy/api/Dockerfile
+          file: packages/gomoku-fastapi/Dockerfile
           push: false
           cache-from: type=gha,scope=api
           cache-to: type=gha,scope=api,mode=max

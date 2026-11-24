@@ -1,11 +1,64 @@
+# Anything not needed at build time should be excluded so the build
+# context stays small and source-edit cache invalidation is precise.
+
+# VCS
 .git
-.venv
+.gitignore
+.github
+
+# Python build artifacts.  A pattern without a leading **/ only matches at
+# the top of the build context, so nested __pycache__ directories (with
+# bytecode and compiled Numba kernels from the developer's machine) need
+# the prefix to stay out of the image.
 **/__pycache__
-**/.pytest_cache
+**/*.py[cod]
+**/*.nbi
+**/*.nbc
+*.so
+*.egg
+*.egg-info
+dist
+build
+*.whl
+
+# Virtual envs (we install fresh inside the image)
+.venv
+venv
+env
+
+# Tooling caches
+.uv
 **/.ruff_cache
+**/.pytest_cache
+htmlcov
+.coverage
+coverage.xml
+.mypy_cache
+
+# IDE / editor
+.idea
+.vscode
+*.swp
+*~
+
+# Test recordings + ad-hoc artifacts
 recordings
-web/node_modules
-web/dist
-web/test-results
-web/playwright-report
+gomoku_*.json
+gomoku_*.diag.jsonl
+*.md5sum
+
+# Docs / non-runtime
+docs
+*.md
+!packages/gomoku-fastapi/README.md
 .agents
+
+# Test files don't need to be in the image
+**/tests
+
+# The web UI has its own image and build context (web/Dockerfile)
+web
+
+# Deployment files are mounted at run time, not built in
+deploy
+compose*.yaml

@@ -13,7 +13,49 @@ uv run gomoku-api          # binds 127.0.0.1:8000
 # Liveness
 curl http://127.0.0.1:8000/healthz
 # {"status":"ok"}
+```
 
+### Docker
+
+```bash
+# From the repo root: the whole site (API + web UI + edge proxy),
+# http://localhost:8080, API under /api (docs at /api/docs).
+docker compose up --build
+
+# The API alone on http://localhost:8000 (docs at /docs):
+docker compose -f compose.yaml -f compose.dev.yaml up --build api
+
+# Or without Compose:
+docker build -t gomoku-api -f packages/gomoku-fastapi/Dockerfile .
+docker run --rm -p 8000:8000 gomoku-api
+
+# All [api] settings are configurable via env vars (see compose.yaml).
+docker run --rm -p 8000:8000 \
+  -e GOMOKU_API__RATE_LIMIT_COMPUTE="60/minute" \
+  -e LOGFIRE_TOKEN="$LOGFIRE_TOKEN" \
+  gomoku-api
+```
+
+The image runs the project's free-threaded interpreter (CPython 3.14t,
+installed by uv) and `uvicorn` directly, bypassing the `gomoku-api`
+console script, which deliberately binds to localhost.  It uses the
+pure-Python `h11` HTTP parser (`httptools` would re-enable the GIL) and
+trusts `X-Forwarded-For`, because in `compose.yaml` only the edge proxy
+can reach it.  The built-in `HEALTHCHECK` polls `/healthz`; `docker ps`
+shows the state.
+
+The image ships the repository's `gomoku.toml`, so the API serves the
+same brains and aliases as the CLI; mount an edited copy over
+`/app/gomoku.toml` to change them without rebuilding.  Numba kernels are
+compiled while the image is built, so the first move request is as fast
+as later ones (on a CPU that differs from the build machine's, Numba
+recompiles once on first use).
+
+How the API fits into the website: [docs/WEB_ARCHITECTURE.md](../../docs/WEB_ARCHITECTURE.md).
+
+### API examples
+
+```bash
 # List brains
 curl http://127.0.0.1:8000/v1/brains | jq '.brains[].name'
 
