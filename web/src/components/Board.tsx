@@ -14,13 +14,6 @@ interface BoardProps {
 
 const PAD = 1; // board margin, in cell units (room for coordinates)
 
-/**
- * Touch: below this distance between points (CSS px) a tap only previews
- * the stone and a second tap places it, so a fat finger on a phone cannot
- * drop a stone on the wrong point.  At or above it (tablets: ~44-50 px on a
- * 15x15 board, about Apple's 44 pt minimum touch target) one tap places it.
- */
-export const CONFIRM_BELOW_PX = 40;
 const R = 0.45; // stone radius
 
 function starPoints(size: number): Cell[] {
@@ -33,22 +26,21 @@ function starPoints(size: number): Cell[] {
   return out;
 }
 
-const same = (a: Cell | null, b: Cell | null) => !!a && !!b && a.row === b.row && a.col === b.col;
-
 /**
  * The board as one SVG: crisp at any size, one pointer handler instead of
  * hundreds of hit targets.  Mouse: hover shows a ghost stone, click places.
- * Touch: one tap places on a tablet; on a phone, where points are close
- * together, the first tap previews (a translucent stone with a dashed,
- * pulsing ring) and a second tap on the same point places.
- * Keyboard: arrows + Enter.
+ * Touch: one tap places (a two-tap confirmation was unreliable: iOS Safari
+ * swallows a quick second tap as a double-tap gesture); Undo fixes a
+ * mis-tap.  Keyboard: arrows + Enter.
+ *
+ * Drawn with plain shapes only: no SVG filters (WebKit failed to repaint a
+ * filtered group of stones as stones were added) and no transforms.
  */
 export function Board({ grid, turn, last, winLine, hint, onPlay }: BoardProps) {
   const size = grid.length;
   const span = size - 1 + PAD * 2;
   const svgRef = useRef<SVGSVGElement>(null);
   const [hover, setHover] = useState<Cell | null>(null);
-  const [preview, setPreview] = useState<Cell | null>(null);
   const [cursor, setCursor] = useState<Cell>({ row: Math.floor(size / 2), col: Math.floor(size / 2) });
   const [keyboard, setKeyboard] = useState(false);
   const uid = useId();
@@ -91,15 +83,8 @@ export function Board({ grid, turn, last, winLine, hint, onPlay }: BoardProps) {
     if (!turn) return;
     const cell = cellAt(e);
     if (!cell || !isLegal(grid, cell)) return;
-    const spacing = e.currentTarget.getBoundingClientRect().width / span;
-    const oneTap = e.pointerType === "mouse" || spacing >= CONFIRM_BELOW_PX;
-    if (oneTap || same(cell, preview)) {
-      setPreview(null);
-      setHover(null);
-      onPlay(cell);
-    } else {
-      setPreview(cell);
-    }
+    setHover(null);
+    onPlay(cell);
   };
 
   const onKeyDown = (e: KeyboardEvent<SVGSVGElement>) => {
@@ -123,7 +108,7 @@ export function Board({ grid, turn, last, winLine, hint, onPlay }: BoardProps) {
     }
   };
 
-  const ghost = preview ?? hover;
+  const ghost = hover;
   const x = (c: number) => PAD + c;
   const fontSize = 0.34;
 
@@ -131,7 +116,7 @@ export function Board({ grid, turn, last, winLine, hint, onPlay }: BoardProps) {
     <svg
       ref={svgRef}
       viewBox={`0 0 ${span} ${span}`}
-      className="block h-full w-full touch-manipulation select-none outline-none"
+      className="block h-full w-full touch-manipulation select-none outline-none [-webkit-touch-callout:none]"
       role="application"
       aria-label={`${t.boardLabel} ${size}×${size}`}
       // biome-ignore lint/a11y/noNoninteractiveTabindex: the board is an interactive widget (role=application)
@@ -164,12 +149,6 @@ export function Board({ grid, turn, last, winLine, hint, onPlay }: BoardProps) {
           <stop offset="0.45" stopColor="#3b82f6" />
           <stop offset="1" stopColor="#1e3a8a" />
         </radialGradient>
-        <filter id={`${uid}-shadow`} x="-50%" y="-50%" width="200%" height="200%">
-          <feDropShadow dx="0.05" dy="0.09" stdDeviation="0.07" floodOpacity="0.45" />
-        </filter>
-        <filter id={`${uid}-glow`} x="-50%" y="-50%" width="200%" height="200%">
-          <feGaussianBlur stdDeviation="0.12" />
-        </filter>
       </defs>
 
       <rect x="0" y="0" width={span} height={span} rx="0.35" fill={`url(#${uid}-wood)`} />
@@ -215,22 +194,23 @@ export function Board({ grid, turn, last, winLine, hint, onPlay }: BoardProps) {
       )}
 
       {/*
-        Stones are fully visible by default; the drop-in is a CSS animation
-        *from* a hidden state (index.css, .stone-in).  If a browser does not
-        run it (Safari on iPadOS did not finish the earlier JS-driven
-        opacity animation on SVG), the stone is still drawn.
+        Stones are fully visible by default; the fade-in is a CSS animation
+        *from* a hidden state (index.css, .stone-in), so a browser that does
+        not run it still draws every stone.
       */}
-      <g filter={`url(#${uid}-shadow)`}>
+      <g>
         {stones.map((s) => (
-          <circle
-            key={`${s.row}-${s.col}`}
-            className="stone-in"
-            data-testid="stone"
-            cx={x(s.col)}
-            cy={x(s.row)}
-            r={R}
-            fill={`url(#${uid}-${s.stone === BLACK ? "black" : "white"})`}
-          />
+          <g key={`${s.row}-${s.col}`} className="stone-in">
+            {/* Shadow: a plain offset circle, no filter. */}
+            <circle cx={x(s.col) + 0.05} cy={x(s.row) + 0.08} r={R} fill="#000" opacity={0.28} />
+            <circle
+              data-testid="stone"
+              cx={x(s.col)}
+              cy={x(s.row)}
+              r={R}
+              fill={`url(#${uid}-${s.stone === BLACK ? "black" : "white"})`}
+            />
+          </g>
         ))}
       </g>
 
@@ -255,10 +235,9 @@ export function Board({ grid, turn, last, winLine, hint, onPlay }: BoardProps) {
                 style={{ animationDelay: `${i * 80}ms` }}
                 cx={x(c.col)}
                 cy={x(c.row)}
-                r={R * 1.12}
+                r={R * 1.2}
                 fill="var(--win)"
-                opacity={0.4}
-                filter={`url(#${uid}-glow)`}
+                opacity={0.3}
               />
               <circle
                 className="fade-in"
@@ -277,7 +256,7 @@ export function Board({ grid, turn, last, winLine, hint, onPlay }: BoardProps) {
       )}
 
       {ghost && turn && (
-        <g pointerEvents="none" data-testid={preview ? "stone-preview" : undefined}>
+        <g pointerEvents="none">
           <circle
             cx={x(ghost.col)}
             cy={x(ghost.row)}
@@ -285,19 +264,6 @@ export function Board({ grid, turn, last, winLine, hint, onPlay }: BoardProps) {
             fill={`url(#${uid}-${turn === BLACK ? "black" : "white"})`}
             opacity={0.45}
           />
-          {preview && (
-            // Unmistakably not a placed stone: a dashed ring that pulses.
-            <circle
-              className="svg-pulse"
-              cx={x(ghost.col)}
-              cy={x(ghost.row)}
-              r={R + 0.08}
-              fill="none"
-              stroke="var(--accent)"
-              strokeWidth="0.07"
-              strokeDasharray="0.18 0.12"
-            />
-          )}
         </g>
       )}
 
