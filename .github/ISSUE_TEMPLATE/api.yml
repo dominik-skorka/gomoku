@@ -1,0 +1,18 @@
+name: REST API / infrastructure
+description: HTTP API, containers, deployment, health checks, monitoring.
+labels: ["area:api"]
+body:
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Kind
+      options: ["Bug", "Feature / improvement", "Outage / incident"]
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: Description
+      description: Include the X-Request-ID response header if you have one.
+    validations:
+      required: true

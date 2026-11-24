@@ -1,0 +1,19 @@
+name: Label PR by area
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  label:
+    runs-on: ubuntu-latest
+    steps:
+      # pull_request_target runs this workflow from the base branch; the
+      # labeler only reads the PR's file list, it never checks out PR code.
+      - uses: actions/labeler@v7
+        with:
+          sync-labels: true
