@@ -37,6 +37,10 @@ async function tap(page: Page, row: number, col: number) {
   else await page.mouse.click(x, y);
 }
 
+/** The moves in the move list (the visible one on this layout). */
+const moveItems = (page: Page) =>
+  page.getByRole("list", { name: "Moves" }).filter({ visible: true }).getByRole("listitem");
+
 const status = (page: Page) => page.getByText(/Your move|to move|thinking|won|wins|Paused/).filter({ visible: true });
 
 test("human vs engine: five in a row wins and turns blue", async ({ page }) => {
@@ -47,10 +51,14 @@ test("human vs engine: five in a row wins and turns blue", async ({ page }) => {
     [0, 3],
   ]);
   await startGame(page, "Human", "Engine");
-  for (let c = 3; c < 8; c++) {
-    await expect(status(page)).toHaveText(/Your move/);
-    await tap(page, 7, c);
+  for (let i = 0; i < 5; i++) {
+    // Wait for the engine's reply in the move list, not for the status
+    // text: while the status animates out, the previous "Your move" is
+    // still on screen, and a tap during the engine's turn is ignored.
+    await expect(moveItems(page)).toHaveCount(2 * i);
+    await tap(page, 7, 3 + i);
   }
+  await expect(moveItems(page)).toHaveCount(9);
   await expect(status(page)).toHaveText(/You won!/);
   await expect(page.getByTestId("winning-stone")).toHaveCount(5);
 });
@@ -62,9 +70,9 @@ test("human vs human: colours alternate on one device and undo takes back one mo
   await tap(page, 7, 7);
   await expect(status(page)).toHaveText(/White to move/);
   await tap(page, 6, 6);
-  await expect(page.getByRole("heading", { name: /Moves \(2\)/ })).toBeVisible();
+  await expect(moveItems(page)).toHaveCount(2);
   await page.getByRole("button", { name: "Undo" }).filter({ visible: true }).click();
-  await expect(page.getByRole("heading", { name: /Moves \(1\)/ })).toBeVisible();
+  await expect(moveItems(page)).toHaveCount(1);
   await expect(status(page)).toHaveText(/White to move/);
   expect(requests).toHaveLength(0); // no engine involved
 });
@@ -153,7 +161,7 @@ test("move navigation: view earlier positions without changing the game", async 
   // The board is read-only while viewing.
   await tap(page, 1, 1);
   await expect(nav).toContainText("Viewing 2/3");
-  await expect(page.getByRole("heading", { name: /Moves \(3\)/ })).toBeVisible();
+  await expect(moveItems(page)).toHaveCount(3);
 
   // First move: the position after move 1, not the empty board.
   await nav.getByRole("button", { name: "First move" }).click();

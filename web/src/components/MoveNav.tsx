@@ -1,4 +1,3 @@
-import { clsx } from "clsx";
 import { t } from "../lib/i18n";
 import { FirstIcon, LastIcon, NextIcon, PrevIcon } from "./icons";
 import { Button } from "./ui";
@@ -37,10 +36,8 @@ export function MoveNav({ ply, total, onGo }: { ply: number; total: number; onGo
           <LastIcon />
         </Button>
       </div>
-      <span
-        className={clsx("whitespace-nowrap text-sm tabular-nums", live ? "text-muted" : "font-semibold text-accent")}
-        aria-live="polite"
-      >
+      {/* No visible label (the highlighted move in the list says where you are); screen readers still hear it. */}
+      <span className="sr-only" aria-live="polite">
         {live ? t.navLive(total) : t.navViewing(ply, total)}
       </span>
     </div>

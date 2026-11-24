@@ -44,6 +44,7 @@ export function MoveList({
   if (moves.length === 0) return <p className="text-sm text-muted">{t.noMoves}</p>;
   return (
     <ol
+      aria-label={t.moves}
       ref={list}
       className="relative grid max-h-64 grid-cols-2 gap-x-3 gap-y-1 overflow-y-auto p-0.5 text-sm tabular-nums lg:max-h-[40dvh]"
     >

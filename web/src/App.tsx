@@ -214,9 +214,6 @@ export function App() {
             <div className="hidden lg:block">
               <MoveNav ply={shownPly} total={total} onGo={goTo} />
             </div>
-            <h2 className="text-sm font-semibold text-muted">
-              {t.moves} <span className="tabular-nums">({state.moves.length})</span>
-            </h2>
             <MoveList moves={state.moves} viewPly={shownPly} onGo={goTo} />
           </Card>
         </aside>
