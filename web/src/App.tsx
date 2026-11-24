@@ -183,7 +183,7 @@ export function App() {
             <GameStatus state={state} engine={engine} onRetry={retry} />
             <Matchup state={state} />
           </div>
-          <div className="flex w-full max-w-[min(100%,calc(100dvh-16rem))] flex-col gap-3 lg:max-w-[min(100%,calc(100dvh-12rem))]">
+          <div className="flex w-full max-w-[min(100%,calc(100dvh-13rem))] flex-col gap-3 lg:max-w-[min(100%,calc(100dvh-8rem))]">
             <div className="aspect-square w-full rounded-[1.25rem] shadow-[var(--shadow)]">
               <Board
                 grid={shownGrid}
@@ -194,7 +194,6 @@ export function App() {
                 onPlay={play}
               />
             </div>
-            <MoveNav ply={shownPly} total={total} onGo={goTo} />
           </div>
           <div className="w-full lg:hidden">
             <Controls {...controls} />
@@ -207,8 +206,9 @@ export function App() {
             <Matchup state={state} />
             <Controls {...controls} wide />
           </Card>
-          <Card>
-            <h2 className="mb-3 text-sm font-semibold text-muted">
+          <Card className="flex flex-col gap-3">
+            <MoveNav ply={shownPly} total={total} onGo={goTo} />
+            <h2 className="text-sm font-semibold text-muted">
               {t.moves} <span className="tabular-nums">({state.moves.length})</span>
             </h2>
             <MoveList moves={state.moves} viewPly={shownPly} onGo={goTo} />
