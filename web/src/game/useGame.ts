@@ -23,7 +23,7 @@ export type Speed = (typeof SPEEDS)[number];
  * time (`step`) and slowed down (`speed`).
  */
 export function useGame(initial: GameSettings) {
-  const [state, dispatch] = useReducer(gameReducer, initial, (s) => initialState(s, 1, Date.now()));
+  const [state, dispatch] = useReducer(gameReducer, initial, (s) => initialState(s, 1, Date.now(), false));
   const [engine, setEngine] = useState<EngineStatus>({ kind: "idle" });
   const [attempt, setAttempt] = useState(0);
   const [paused, setPaused] = useState(false);

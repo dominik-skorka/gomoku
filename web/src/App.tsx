@@ -187,7 +187,7 @@ export function App() {
           {/* Chess-style: White's bar above the board, Black's below, each with its clock. */}
           <div className="flex w-full max-w-[min(100%,calc(100dvh-17rem))] flex-col gap-2 lg:max-w-[min(100%,calc(100dvh-19rem))]">
             <PlayerBar player={WHITE} state={state} engine={engine} onRetry={retry} />
-            <div className="aspect-square w-full rounded-[1.25rem] shadow-[var(--shadow)]">
+            <div className="relative aspect-square w-full rounded-[1.25rem] shadow-[var(--shadow)]">
               <Board
                 grid={shownGrid}
                 turn={humanTurn && !viewing ? side : null}
@@ -196,6 +196,17 @@ export function App() {
                 hint={viewing ? null : hint}
                 onPlay={play}
               />
+              {!state.started && (
+                // Before the first game: nothing moves until New game → Start.
+                <div className="absolute inset-0 grid place-items-center rounded-[1.25rem] bg-black/10 backdrop-blur-[1px]">
+                  <div className="flex flex-col items-center gap-3 rounded-2xl border border-line bg-surface-strong px-6 py-5 text-center shadow-xl">
+                    <span className="text-sm text-muted">{t.notStarted}</span>
+                    <Button variant="primary" className="px-6" onClick={() => setDialogOpen(true)}>
+                      {t.newGame}
+                    </Button>
+                  </div>
+                </div>
+              )}
             </div>
             <PlayerBar player={BLACK} state={state} engine={engine} onRetry={retry} />
           </div>

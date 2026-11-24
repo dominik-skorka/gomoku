@@ -22,6 +22,7 @@ export function errorText(engine: Extract<EngineStatus, { kind: "error" }>): str
  */
 export function statusText(state: GameState, engine: EngineStatus): string {
   const { outcome, settings } = state;
+  if (!state.started) return t.notStarted;
   const you = soleHuman(settings);
   if (outcome?.kind === "win") {
     if (you === null) return t.wins(colourName(outcome.winner));

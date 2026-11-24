@@ -70,6 +70,11 @@ export interface GameState {
   readonly outcome: Outcome | null;
   /** When the side to move started its turn (ms, `Date.now()` clock). */
   readonly turnStartedAt: number;
+  /**
+   * False until a game is started from the New game dialog: the page opens
+   * on an empty board where nobody moves and no clock runs.
+   */
+  readonly started: boolean;
 }
 
 export type GameAction =
@@ -102,8 +107,13 @@ export function soleHuman(settings: GameSettings): Player | null {
   return settings.black.kind === "human" ? BLACK : WHITE;
 }
 
-export function initialState(settings: GameSettings = DEFAULT_SETTINGS, gameId = 1, at = Date.now()): GameState {
-  return { gameId, settings, grid: emptyGrid(settings.size), moves: [], outcome: null, turnStartedAt: at };
+export function initialState(
+  settings: GameSettings = DEFAULT_SETTINGS,
+  gameId = 1,
+  at = Date.now(),
+  started = true,
+): GameState {
+  return { gameId, settings, grid: emptyGrid(settings.size), moves: [], outcome: null, turnStartedAt: at, started };
 }
 
 /** Black always moves first. */
@@ -113,7 +123,7 @@ export function sideToMove(state: GameState): Player {
 
 /** Who plays the side to move, or null once the game is over. */
 export function turnKind(state: GameState): PlayerKind | null {
-  if (state.outcome !== null) return null;
+  if (!state.started || state.outcome !== null) return null;
   return sideSettings(state.settings, sideToMove(state)).kind;
 }
 
@@ -138,7 +148,7 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
     case "play": {
       // Stale reply (new game, undo) or illegal move: ignore.
       if (action.gameId !== state.gameId || action.ply !== state.moves.length) return state;
-      if (state.outcome !== null || !isLegal(state.grid, action.cell)) return state;
+      if (!state.started || state.outcome !== null || !isLegal(state.grid, action.cell)) return state;
       const stone = sideToMove(state);
       // A move must come from whoever plays this colour.
       if (sideSettings(state.settings, stone).kind !== action.by) return state;
@@ -231,7 +241,7 @@ export function clockMs(
   let ms = state.moves.reduce((sum, m) => (m.stone === player ? sum + m.spentMs : sum), 0);
   const { outcome } = state;
   if (outcome?.kind === "resign" && outcome.winner !== player) ms += outcome.spentMs;
-  if (outcome !== null || sideToMove(state) !== player) return { ms, running: false };
+  if (turnKind(state) === null || sideToMove(state) !== player) return { ms, running: false };
   if (sideSettings(state.settings, player).kind === "human") {
     return { ms: ms + Math.max(0, now - state.turnStartedAt), running: true };
   }

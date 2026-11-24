@@ -14,12 +14,18 @@ async function stubEngine(page: Page, cells: [number, number][]) {
 
 async function startGame(page: Page, black: "Human" | "Engine", white: "Human" | "Engine") {
   await page.goto("/");
-  await page.getByRole("button", { name: "New game" }).filter({ visible: true }).click();
+  await page.getByRole("button", { name: "New game" }).filter({ visible: true }).first().click();
   const dialog = page.getByRole("dialog");
   await dialog.getByRole("group", { name: /Black/ }).getByText(black, { exact: true }).click();
   await dialog.getByRole("group", { name: /White/ }).getByText(white, { exact: true }).click();
   await dialog.getByRole("button", { name: "Start" }).click();
   await expect(dialog).toBeHidden();
+}
+
+/** Start a game with the saved (default) settings: New game, then Start. */
+async function startDefault(page: Page) {
+  await page.getByRole("button", { name: "New game" }).filter({ visible: true }).first().click();
+  await page.getByRole("dialog").getByRole("button", { name: "Start" }).click();
 }
 
 /** Click the intersection at (row, col) of a 15×15 board. */
@@ -226,6 +232,7 @@ test("touch: one tap places a stone on tablets and phones", async ({ browser }) 
     const page = await context.newPage();
     await stubEngine(page, [[0, 0]]);
     await page.goto("/");
+    await startDefault(page);
     const box = await page.getByRole("application").boundingBox();
     if (!box) throw new Error("board not visible");
     await page.touchscreen.tap(box.x + (8 / 16) * box.width, box.y + (8 / 16) * box.height);
@@ -239,6 +246,7 @@ test("touch: one tap places a stone on tablets and phones", async ({ browser }) 
 test("stones are drawn even when the browser runs no animations", async ({ page }) => {
   await stubEngine(page, [[0, 0]]);
   await page.goto("/");
+  await startDefault(page);
   // Simulate a browser that never runs (or never finishes) animations.
   await page.addStyleTag({
     content: "*, *::before, *::after { animation: none !important; transition: none !important; }",
@@ -274,4 +282,36 @@ test("player bars: White above the board, Black below, clocks run on their own t
   await expect(bar(page, "black").getByTestId("clock")).toHaveText(blackAfter ?? "");
   await expect(bar(page, "white").getByTestId("clock")).not.toHaveText("0:00");
   expect(requests).toHaveLength(0);
+});
+
+test("loading or reloading the page does not start a game; New game → Start does", async ({ page }) => {
+  const requests = await stubEngine(page, [[7, 7]]);
+  // Engine plays Black, so a started game would make it move at once.
+  await page.goto("/");
+  await page.evaluate(() =>
+    localStorage.setItem(
+      "gomoku.settings",
+      JSON.stringify({
+        size: 15,
+        winLength: 5,
+        black: { kind: "engine", preset: "hard" },
+        white: { kind: "human", preset: "hard" },
+      }),
+    ),
+  );
+  for (const load of [() => page.reload(), () => page.goto("/")]) {
+    await load();
+    await expect(status(page)).toHaveText("Press New game to start.");
+    await page.waitForTimeout(1200);
+    expect(requests).toHaveLength(0);
+    await expect(bar(page, "black").getByTestId("clock")).toHaveText("0:00");
+    await expect(bar(page, "white").getByTestId("clock")).toHaveText("0:00");
+    // The board ignores taps before the game starts.
+    await tap(page, 3, 3);
+    await expect(moveItems(page)).toHaveCount(0);
+  }
+  await startDefault(page);
+  await expect(moveItems(page)).toHaveCount(1);
+  expect(requests).toHaveLength(1);
+  await expect(status(page)).toHaveText(/Your move/);
 });

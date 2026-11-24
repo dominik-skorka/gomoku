@@ -125,6 +125,18 @@ describe("gameReducer", () => {
     expect(replay(s.settings, s.moves)).toEqual(s.grid);
   });
 
+  it("before New game: nobody moves, no clock runs, a new game starts it", () => {
+    const idle = initialState(hve, 1, 0, false);
+    expect(isHumanTurn(idle)).toBe(false);
+    expect(isEngineTurn(idle)).toBe(false);
+    expect(canResign(idle)).toBe(false);
+    expect(play(idle, 4, 4, "human")).toBe(idle);
+    expect(clockMs(idle, BLACK, 60_000, null)).toEqual({ ms: 0, running: false });
+    const s = gameReducer(idle, { type: "new", settings: hve, at: 1_000 });
+    expect(s.started).toBe(true);
+    expect(isHumanTurn(s)).toBe(true);
+  });
+
   it("starts a new game with a fresh id", () => {
     const s = initialState(hve);
     const n = gameReducer(s, { type: "new", settings: { ...hve, size: 15 }, at: 0 });

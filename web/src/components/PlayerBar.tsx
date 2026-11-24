@@ -1,7 +1,7 @@
 import { clsx } from "clsx";
 import { useEffect, useState } from "react";
 import { BLACK, type Player } from "../game/rules";
-import { clockMs, formatClock, type GameState, sideSettings, sideToMove, soleHuman } from "../game/state";
+import { clockMs, formatClock, type GameState, sideSettings, sideToMove, soleHuman, turnKind } from "../game/state";
 import type { EngineStatus } from "../game/useGame";
 import { t } from "../lib/i18n";
 import { errorText } from "../lib/status";
@@ -103,7 +103,7 @@ export function PlayerBar({
 }) {
   const side = sideSettings(state.settings, player);
   const isEngine = side.kind === "engine";
-  const toMove = state.outcome === null && sideToMove(state) === player;
+  const toMove = turnKind(state) !== null && sideToMove(state) === player;
   const engineSince = toMove && isEngine && engine.kind === "thinking" ? engine.since : null;
   const running = toMove && (!isEngine || engineSince !== null);
   const now = useNow(running);

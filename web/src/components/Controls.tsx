@@ -30,7 +30,7 @@ export interface ControlsProps {
  */
 export function Controls(p: ControlsProps) {
   const selfPlay = modeOf(p.state.settings) === "engine-engine";
-  const over = p.state.outcome !== null;
+  const over = !p.state.started || p.state.outcome !== null;
   return (
     <div className="flex w-full flex-col gap-2">
       <div className={clsx("grid gap-2", p.wide || !selfPlay ? "grid-cols-2" : "grid-cols-3")}>
