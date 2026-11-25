@@ -294,3 +294,86 @@ class TestMCTSBrain:
         brain = MCTSBrain(iterations=20)
         move = brain.get_move(b, Stone.BLACK)
         assert b.is_valid_move(move)
+
+
+# ---------------------------------------------------------------------------
+# Tree invariants (search run directly on a hand-built root)
+# ---------------------------------------------------------------------------
+
+
+def _open_three_board() -> Board:
+    """Black open three on row 7 (cols 5-7), stones far away; Black to move."""
+    b = Board(size=15)
+    stone = Stone.BLACK
+    for r, c in [(7, 5), (2, 2), (7, 6), (2, 12), (7, 7), (12, 2), (10, 10), (12, 12)]:
+        b = b.place_stone(Move(row=r, col=c), stone)
+        stone = stone.opponent()
+    return b
+
+
+def _search_tree(board: Board, stone: Stone, iterations: int, seed: int = 0, **settings) -> _Node:
+    """Run *iterations* MCTS iterations from *board* and return the root."""
+    from gomoku_brain.candidates import get_candidate_moves
+
+    random.seed(seed)
+    brain = MCTSBrain(iterations=iterations, dirichlet_weight=0.0, **settings)
+    state = SearchState.from_board(board, stone)
+    untried = [(m.row, m.col) for m in get_candidate_moves(board)]
+    priors = _compute_priors(state, untried, int(stone), int(stone.opponent()))
+    root = _Node(move=None, stone=stone.opponent(), parent=None, untried=untried, untried_priors=priors)
+    for _ in range(iterations):
+        brain._run_iteration(root, state, stone)
+    assert state.ply == 0  # every iteration restores the root position
+    return root
+
+
+def _walk(root: _Node):
+    stack = [root]
+    while stack:
+        n = stack.pop()
+        yield n
+        stack.extend(n.children)
+
+
+class TestTerminalNodes:
+    def test_terminal_nodes_are_never_expanded(self):
+        root = _search_tree(_open_three_board(), Stone.BLACK, iterations=3000)
+        terminals = [n for n in _walk(root) if n.terminal is not None]
+        assert terminals, "the open three must lead to decided positions"
+        for n in terminals:
+            assert n.children == []
+            assert not n.has_untried()
+
+    def test_terminal_value_is_not_diluted(self):
+        """Every visit of a terminal node backs up the same 0 / 1 value."""
+        root = _search_tree(_open_three_board(), Stone.BLACK, iterations=3000)
+        for n in _walk(root):
+            if n.terminal is not None:
+                assert n.terminal in (0.0, 1.0)
+                q = n.wins / n.visits
+                # Q is stored from the mover's perspective.
+                expected = n.terminal if n.stone is Stone.BLACK else 1.0 - n.terminal
+                assert q == pytest.approx(expected)
+
+    def test_no_node_below_five_in_a_row(self):
+        board = _open_three_board()
+        root = _search_tree(board, Stone.BLACK, iterations=3000)
+
+        def wins(state: SearchState, r: int, c: int, stone: Stone) -> bool:
+            from gomoku_brain.mcts import _fast_check_winner_state
+
+            return _fast_check_winner_state(state, r, c, stone)
+
+        state = SearchState.from_board(board, Stone.BLACK)
+
+        def visit(node: _Node) -> None:
+            for child in node.children:
+                assert child.move is not None
+                r, c = child.move
+                state.make(r, c, child.stone)
+                if wins(state, r, c, child.stone):
+                    assert child.children == []
+                visit(child)
+                state.unmake()
+
+        visit(root)

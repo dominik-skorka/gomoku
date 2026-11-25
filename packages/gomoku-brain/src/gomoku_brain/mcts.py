@@ -95,6 +95,7 @@ class _Node:
         "parent",
         "prior",
         "stone",
+        "terminal",
         "visits",
         "wins",
     )
@@ -115,6 +116,11 @@ class _Node:
         self.children: list[_Node] = []
         self.wins: float = 0.0
         self.visits: int = 0
+        # Game-theoretic value from the root player's perspective when the
+        # position is decided (five made, or the side to move cannot stop
+        # an immediate five); ``None`` for an undecided position.  A
+        # terminal node is never expanded: every visit backs up this value.
+        self.terminal: float | None = None
         self._untried = untried
         if untried_priors is not None:
             self._untried_priors = untried_priors
@@ -316,21 +322,36 @@ class MCTSBrain(Brain[MCTSBrainSettings], name="mcts"):
         depth = 0
 
         # 1. Selection — descend using PUCT, replaying moves into state.
-        while not node.has_untried() and not node.is_leaf():
+        while node.terminal is None and not node.has_untried() and not node.is_leaf():
             node = node.best_child(self.settings.exploration)
             r, c = node.move  # type: ignore[misc]
             state.make(r, c, node.stone)
             depth += 1
 
+        # A decided position: back up its proven value, never expand it.
+        if node.terminal is not None:
+            self._backpropagate(node, node.terminal, root_stone)
+            self._restore(state, depth)
+            return
+
         # 2. Expansion — add one child.
         if node.has_untried():
             move_rc, move_prior = node.pop_untried()
-            child_stone = (
-                root_stone if node.stone is not root_stone else root_stone.opponent()
-            )
+            child_stone = node.stone.opponent()
             r, c = move_rc
             state.make(r, c, child_stone)
             depth += 1
+
+            # Terminal check at the expansion ply, before generating any
+            # candidates: a decided node keeps no untried moves.
+            terminal_value = self._terminal_value(state, r, c, child_stone, root_stone)
+            if terminal_value is not None:
+                child = _Node(move=move_rc, stone=child_stone, parent=node, untried=[], prior=move_prior)
+                child.terminal = terminal_value
+                node.children.append(child)
+                self._backpropagate(child, terminal_value, root_stone)
+                self._restore(state, depth)
+                return
 
             child_moves = get_candidate_moves(state, radius=2)
             child_untried = [(m.row, m.col) for m in child_moves]
@@ -350,13 +371,6 @@ class MCTSBrain(Brain[MCTSBrainSettings], name="mcts"):
             )
             node.children.append(child)
             node = child
-
-            # Terminal check at the expansion ply.
-            terminal_value = self._terminal_value(state, r, c, child_stone, root_stone)
-            if terminal_value is not None:
-                self._backpropagate(node, terminal_value, root_stone)
-                self._restore(state, depth)
-                return
 
         # 3. Heuristic leaf evaluation (replaces random rollout).
         value = _leaf_value(state, root_stone)
