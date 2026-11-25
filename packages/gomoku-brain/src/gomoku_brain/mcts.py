@@ -342,9 +342,11 @@ class MCTSBrain(Brain[MCTSBrainSettings], name="mcts"):
             state.make(r, c, child_stone)
             depth += 1
 
-            # Terminal check at the expansion ply, before generating any
-            # candidates: a decided node keeps no untried moves.
-            terminal_value = self._terminal_value(state, r, c, child_stone, root_stone)
+            # Terminal / forced-reply check at the expansion ply, before
+            # generating any candidates: a decided node keeps no untried
+            # moves, and a node facing a single five threat keeps only
+            # the block.
+            terminal_value, forced = self._node_status(state, r, c, child_stone, root_stone)
             if terminal_value is not None:
                 child = _Node(move=move_rc, stone=child_stone, parent=node, untried=[], prior=move_prior)
                 child.terminal = terminal_value
@@ -353,14 +355,18 @@ class MCTSBrain(Brain[MCTSBrainSettings], name="mcts"):
                 self._restore(state, depth)
                 return
 
-            child_moves = get_candidate_moves(state, radius=2)
-            child_untried = [(m.row, m.col) for m in child_moves]
-            child_priors = _compute_priors(
-                state,
-                child_untried,
-                int(child_stone.opponent()),
-                int(child_stone),
-            )
+            if forced is not None:
+                child_untried = [forced]
+                child_priors = [1.0]
+            else:
+                child_moves = get_candidate_moves(state, radius=2)
+                child_untried = [(m.row, m.col) for m in child_moves]
+                child_priors = _compute_priors(
+                    state,
+                    child_untried,
+                    int(child_stone.opponent()),
+                    int(child_stone),
+                )
             child = _Node(
                 move=move_rc,
                 stone=child_stone,
@@ -386,37 +392,56 @@ class MCTSBrain(Brain[MCTSBrainSettings], name="mcts"):
             state.unmake()
 
     @staticmethod
-    def _terminal_value(
+    def _node_status(
         state: SearchState,
         row: int,
         col: int,
         mover: Stone,
         root_stone: Stone,
-    ) -> float | None:
-        """Return a terminal value in [0, 1] (from *root_stone*'s perspective).
+    ) -> tuple[float | None, tuple[int, int] | None]:
+        """Classify the position after *mover* placed at (row, col).
 
-        * *mover* just placed at (row, col).  If that move wins, return 1.0
-          for root_stone or 0.0 otherwise.
-        * If the *opponent* of *mover* can win immediately on the next ply,
-          the position is a decisive loss for *mover* (who has no time to
-          respond) — report that value.
-        * Otherwise return ``None`` (non-terminal leaf).
+        Returns ``(terminal, forced)``:
+
+        * ``terminal`` — value in [0, 1] from *root_stone*'s perspective
+          when the position is decided, else ``None``:
+
+          - *mover* just made five → *mover* wins;
+          - the side to move can make five → *mover* loses;
+          - *mover* threatens five on two or more cells → *mover* wins
+            (the side to move can block only one).
+
+        * ``forced`` — the only sensible reply when *mover* threatens five
+          on exactly one cell (the block), else ``None``.
         """
         from gomoku_brain.evaluate import _should_use_jit
         from gomoku_brain.threat import _find_winning_move
 
+        win = 1.0 if mover is root_stone else 0.0
         if _should_use_jit():
             from gomoku_brain.evaluate_jit import check_winner_grid, get_dirs
 
             if check_winner_grid(state.grid, state.size, row, col, 5, get_dirs()):
-                return 1.0 if mover is root_stone else 0.0
+                return win, None
         elif _fast_check_winner_state(state, row, col, mover):
-            return 1.0 if mover is root_stone else 0.0
+            return win, None
 
-        opp = mover.opponent()
-        if _find_winning_move(state, opp) is not None:
-            return 0.0 if mover is root_stone else 1.0
-        return None
+        side = mover.opponent()
+        if _find_winning_move(state, side) is not None:
+            return 1.0 - win, None
+
+        threat = _find_winning_move(state, mover)
+        if threat is None:
+            return None, None
+        # Block the threat and look again: a second five threat cannot be
+        # stopped.  (The block cannot remove another threat: that cell is
+        # empty, and the stones completing it are the mover's.)
+        state.make(threat.row, threat.col, side)
+        second = _find_winning_move(state, mover)
+        state.unmake()
+        if second is not None:
+            return win, None
+        return None, (threat.row, threat.col)
 
     @staticmethod
     def _backpropagate(node: _Node, value: float, root_stone: Stone) -> None:
@@ -435,7 +460,7 @@ class MCTSBrain(Brain[MCTSBrainSettings], name="mcts"):
 
 
 # ---------------------------------------------------------------------------
-# Non-JIT fallback win detector (used by ``_terminal_value``)
+# Non-JIT fallback win detector (used by ``_node_status``)
 # ---------------------------------------------------------------------------
 
 

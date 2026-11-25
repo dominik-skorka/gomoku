@@ -377,3 +377,63 @@ class TestTerminalNodes:
                 state.unmake()
 
         visit(root)
+
+
+class TestForcedReplies:
+    @staticmethod
+    def _status(board: Board, mover: Stone, last: tuple[int, int]):
+        state = SearchState.from_board(board, mover.opponent())
+        return MCTSBrain._node_status(state, last[0], last[1], mover, Stone.BLACK)
+
+    @staticmethod
+    def _board(black: list[tuple[int, int]], white: list[tuple[int, int]]) -> Board:
+        b = Board(size=15)
+        for r, c in black:
+            b = b.place_stone(Move(row=r, col=c), Stone.BLACK)
+        for r, c in white:
+            b = b.place_stone(Move(row=r, col=c), Stone.WHITE)
+        return b
+
+    def test_single_four_forces_the_block(self):
+        # Black four (7,3..7,6) with (7,2) blocked: White must play (7,7).
+        b = self._board([(7, 3), (7, 4), (7, 5), (7, 6)], [(7, 2), (0, 0), (0, 14)])
+        assert self._status(b, Stone.BLACK, (7, 6)) == (None, (7, 7))
+
+    def test_open_four_is_a_win_for_the_mover(self):
+        b = self._board([(7, 3), (7, 4), (7, 5), (7, 6)], [(0, 0), (0, 14), (14, 0)])
+        assert self._status(b, Stone.BLACK, (7, 6)) == (1.0, None)
+
+    def test_side_to_move_with_a_five_threat_wins(self):
+        # Black just played a quiet move, White already has a four.
+        b = self._board([(0, 0), (0, 2)], [(7, 3), (7, 4), (7, 5), (7, 6)])
+        assert self._status(b, Stone.BLACK, (0, 2)) == (0.0, None)
+
+    def test_five_is_terminal(self):
+        b = self._board([(7, 3), (7, 4), (7, 5), (7, 6), (7, 7)], [(0, 0), (0, 14), (14, 0), (14, 14)])
+        assert self._status(b, Stone.BLACK, (7, 7)) == (1.0, None)
+
+    def test_quiet_position_is_open(self):
+        b = self._board([(7, 7), (7, 8)], [(8, 8), (6, 6)])
+        assert self._status(b, Stone.BLACK, (7, 8)) == (None, None)
+
+    def test_tree_keeps_only_the_block_under_a_four(self):
+        root = _search_tree(_open_three_board(), Stone.BLACK, iterations=3000)
+        state = SearchState.from_board(_open_three_board(), Stone.BLACK)
+
+        def visit(node: _Node) -> None:
+            for child in node.children:
+                assert child.move is not None
+                state.make(child.move[0], child.move[1], child.stone)
+                if child.terminal is None:
+                    threat = _find_winning_move(state, child.stone)
+                    if threat is not None:
+                        assert len(child.children) + len(child._untried) == 1
+                visit(child)
+                state.unmake()
+
+        from gomoku_brain.threat import _find_winning_move
+
+        visit(root)
+        # The open four itself is now a proven win at the root.
+        four = [c for c in root.children if c.move in {(7, 4), (7, 8)}]
+        assert four and all(c.terminal == 1.0 for c in four)
