@@ -3,6 +3,7 @@ name = "gomoku-brain"
 version = "0.1.0"
 description = "Gomoku AI brains — minimax, negamax, alpha-beta, random"
 requires-python = ">=3.14"
+license = "MIT"
 dependencies = [
     "gomoku",
     "logfire>=6.0.0",

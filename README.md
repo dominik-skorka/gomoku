@@ -407,4 +407,4 @@ docs/                       ← project documentation
 
 ## License
 
-See the project root for licence information.
+Released under the [MIT License](LICENSE).
