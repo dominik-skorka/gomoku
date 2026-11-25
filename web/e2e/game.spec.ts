@@ -496,3 +496,20 @@ test("level settings: nested groups send the whole group with the change", async
   await expect(group.getByTestId("param-threats-own-fours")).not.toHaveAttribute("data-changed");
   await expect(dialog.getByRole("tab", { name: /Master/ })).not.toContainText("edited here");
 });
+
+test("level settings: the window keeps its size between levels, no tab focused on open", async ({ page }) => {
+  await stubBrains(page);
+  await page.goto("/");
+  await page.getByRole("button", { name: "Difficulty levels" }).click();
+  const dialog = page.getByRole("dialog", { name: "Difficulty levels" });
+  // Opening focuses the dialog, not its first tab (Safari drew a focus ring on "Easy").
+  await expect(dialog).toBeFocused();
+  await dialog.getByRole("tab", { name: /Master/ }).click();
+  await expect(dialog.locator("#param-pns_time_s")).toBeVisible();
+  const master = await dialog.boundingBox();
+  await dialog.getByRole("tab", { name: /Easy/ }).click();
+  await expect(dialog.locator("#param-depth")).toBeVisible();
+  const easy = await dialog.boundingBox();
+  expect(easy?.height).toBe(master?.height);
+  expect(easy?.width).toBe(master?.width);
+});

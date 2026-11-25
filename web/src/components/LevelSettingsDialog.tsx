@@ -410,8 +410,12 @@ export function LevelSettingsDialog({ open, onClose }: { open: boolean; onClose:
   useEffect(() => {
     const d = ref.current;
     if (!d) return;
-    if (open && !d.open) d.showModal();
-    else if (!open && d.open) d.close();
+    if (open && !d.open) {
+      d.showModal();
+      // Focus the dialog itself, not its first button: Safari otherwise draws
+      // its focus ring around the first level tab as if it were selected.
+      d.focus();
+    } else if (!open && d.open) d.close();
   }, [open]);
 
   const level = levels.find((l) => l.id === selected) ?? levels[0];
@@ -433,9 +437,12 @@ export function LevelSettingsDialog({ open, onClose }: { open: boolean; onClose:
       onClick={(e) => e.target === ref.current && onClose()}
       onKeyDown={(e) => e.key === "Escape" && onClose()}
       aria-labelledby="levels-title"
-      className="m-auto max-h-[calc(100dvh-2rem)] w-[min(100vw-2rem,34rem)] overflow-y-auto overscroll-contain rounded-3xl border border-line bg-surface-strong p-0 text-fg shadow-2xl"
+      tabIndex={-1}
+      // A fixed height, so switching to a level with few settings does not
+      // shrink the window; the settings scroll, the footer stays at the bottom.
+      className="m-auto h-[min(calc(100dvh-2rem),46rem)] w-[min(100vw-2rem,34rem)] overflow-y-auto overscroll-contain rounded-3xl border border-line bg-surface-strong p-0 text-fg shadow-2xl outline-none"
     >
-      <div className="flex flex-col gap-4 p-5 pb-0 sm:p-6 sm:pb-0">
+      <div className="flex min-h-full flex-col gap-4 p-5 pb-0 sm:p-6 sm:pb-0">
         <h2 id="levels-title" className="text-xl font-bold tracking-tight">
           {t.levelSettings}
         </h2>
@@ -451,6 +458,7 @@ export function LevelSettingsDialog({ open, onClose }: { open: boolean; onClose:
               onClick={() => setSelected(l.id)}
               className={clsx(
                 "rounded-lg border px-3 py-1.5 text-sm font-semibold transition",
+                "outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-surface-strong",
                 l.id === level?.id ? "border-accent bg-accent/10 ring-1 ring-accent" : "border-line hover:bg-surface",
               )}
             >
@@ -478,14 +486,14 @@ export function LevelSettingsDialog({ open, onClose }: { open: boolean; onClose:
         {brains.data && level && <LevelEditor key={level.id} level={level} brains={brains.data} />}
 
         {/* Footer stays on screen while the parameter list scrolls. */}
-        <div className="sticky bottom-0 -mx-5 grid grid-cols-2 gap-2 border-t border-line bg-surface-strong px-5 py-4 sm:-mx-6 sm:flex sm:px-6">
+        <div className="sticky bottom-0 -mx-5 mt-auto grid grid-cols-2 gap-2 border-t border-line bg-surface-strong px-5 py-4 sm:-mx-6 sm:flex sm:px-6">
           <Button className="h-9 px-3 text-xs" onClick={resetAllLevels} disabled={Object.keys(changes).length === 0}>
             {t.restoreAll}
           </Button>
           <Button className="h-9 px-3 text-xs" onClick={download} title="config.json">
             {t.exportConfig}
           </Button>
-          <Button variant="primary" className="col-span-2 sm:ml-auto" onClick={onClose} autoFocus>
+          <Button variant="primary" className="col-span-2 sm:ml-auto" onClick={onClose}>
             {t.close}
           </Button>
         </div>
