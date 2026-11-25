@@ -6,11 +6,15 @@ import type { components } from "../api/schema";
 import { exportConfig, type Level, levelChanges, resetAllLevels, setLevelChange, useLevels } from "../game/levels";
 import { config } from "../lib/config";
 import { t } from "../lib/i18n";
+import { InfoTip } from "./InfoTip";
 import { Button } from "./ui";
 
 type BrainInfo = components["schemas"]["BrainInfo"];
 
 interface Field {
+  /** Path from the top of the settings, e.g. ["threats", "own", "fours"]. */
+  readonly path: readonly string[];
+  /** The last path element: the name shown. */
   readonly key: string;
   readonly type: "integer" | "number" | "boolean" | "string";
   readonly min?: number;
@@ -18,33 +22,111 @@ interface Field {
   readonly description?: string;
 }
 
+/** Settings at one level of nesting: [] for the top level, ["threats", "own"] inside groups. */
+export interface Group {
+  readonly path: readonly string[];
+  readonly description?: string;
+  readonly fields: readonly Field[];
+}
+
+type Schema = Record<string, unknown>;
+
 /**
  * Settings that name files on the server: a client must not choose them
  * (and the form would not know the server's paths anyway).
  */
 const HIDDEN = new Set(["opening_book"]);
 
-/** The flat, editable settings of a brain, from the JSON Schema GET /v1/brains returns. */
-export function fieldsOf(schema: Record<string, unknown>): { fields: Field[]; hasNested: boolean } {
-  const props = (schema.properties ?? {}) as Record<string, Record<string, unknown>>;
-  const fields: Field[] = [];
-  let hasNested = false;
-  for (const [key, p] of Object.entries(props)) {
-    if (HIDDEN.has(key)) continue;
-    const type = p.type;
-    if (type === "integer" || type === "number" || type === "boolean" || type === "string") {
-      fields.push({
-        key,
-        type,
-        min: typeof p.minimum === "number" ? p.minimum : undefined,
-        max: typeof p.maximum === "number" ? p.maximum : undefined,
-        description: typeof p.description === "string" ? p.description : undefined,
-      });
-    } else {
-      hasNested = true;
+/** The object schema behind a `$ref` or a nullable `anyOf: [$ref, null]`, if any. */
+function objectSchema(p: Schema, defs: Record<string, Schema>): Schema | null {
+  const ref = (s: Schema) => (typeof s.$ref === "string" ? (defs[s.$ref.split("/").at(-1) ?? ""] ?? null) : null);
+  if (p.properties) return p;
+  const direct = ref(p);
+  if (direct) return direct;
+  if (Array.isArray(p.anyOf)) {
+    for (const variant of p.anyOf as Schema[]) {
+      const r = ref(variant) ?? (variant.properties ? variant : null);
+      if (r) return r;
     }
   }
-  return { fields, hasNested };
+  return null;
+}
+
+/**
+ * The editable settings of a brain, from the JSON Schema GET /v1/brains
+ * returns: scalar settings, and nested groups (`$ref`, nullable objects)
+ * walked into, top level first.
+ */
+export function groupsOf(schema: Schema): Group[] {
+  const defs = (schema.$defs ?? {}) as Record<string, Schema>;
+  const groups: Group[] = [];
+  const walk = (node: Schema, path: string[], description: string | undefined, depth: number) => {
+    const fields: Field[] = [];
+    const nested: [Schema, string, string | undefined][] = [];
+    for (const [key, p] of Object.entries((node.properties ?? {}) as Record<string, Schema>)) {
+      if (HIDDEN.has(key)) continue;
+      const type = p.type;
+      const desc = typeof p.description === "string" ? p.description : undefined;
+      if (type === "integer" || type === "number" || type === "boolean" || type === "string") {
+        fields.push({
+          path: [...path, key],
+          key,
+          type,
+          min: typeof p.minimum === "number" ? p.minimum : undefined,
+          max: typeof p.maximum === "number" ? p.maximum : undefined,
+          description: desc,
+        });
+      } else {
+        const obj = objectSchema(p, defs);
+        if (obj && depth < 4) nested.push([obj, key, desc]);
+      }
+    }
+    // A top-level group is listed even without settings of its own, for its description.
+    if (fields.length > 0 || path.length === 1) groups.push({ path, description, fields });
+    for (const [obj, key, desc] of nested) walk(obj, [...path, key], desc, depth + 1);
+  };
+  walk(schema, [], undefined, 0);
+  return groups;
+}
+
+/** Every setting's schema default, nested objects included (a baseline for a group the server leaves unset). */
+export function defaultsOf(schema: Schema): Record<string, unknown> {
+  const defs = (schema.$defs ?? {}) as Record<string, Schema>;
+  const build = (node: Schema, depth: number): Record<string, unknown> => {
+    const out: Record<string, unknown> = {};
+    for (const [key, p] of Object.entries((node.properties ?? {}) as Record<string, Schema>)) {
+      const obj = objectSchema(p, defs);
+      if (p.default !== undefined && p.default !== null) out[key] = p.default;
+      else if (obj && depth < 4) out[key] = build(obj, depth + 1);
+    }
+    return out;
+  };
+  return build(schema, 0);
+}
+
+export function getPath(obj: unknown, path: readonly string[]): unknown {
+  let cur = obj;
+  for (const key of path) {
+    if (typeof cur !== "object" || cur === null) return undefined;
+    cur = (cur as Record<string, unknown>)[key];
+  }
+  return cur;
+}
+
+/** A copy of `obj` with `value` at `path`, creating objects on the way. */
+export function setPath(obj: unknown, path: readonly string[], value: unknown): Record<string, unknown> {
+  const root: Record<string, unknown> =
+    typeof obj === "object" && obj !== null ? structuredClone(obj as Record<string, unknown>) : {};
+  let cur = root;
+  path.forEach((key, i) => {
+    if (i === path.length - 1) cur[key] = value;
+    else {
+      const next = cur[key];
+      cur[key] = typeof next === "object" && next !== null ? next : {};
+      cur = cur[key] as Record<string, unknown>;
+    }
+  });
+  return root;
 }
 
 /** Same value, by JSON identity (numbers, booleans, strings). */
@@ -75,7 +157,8 @@ function ParamInput({
   server: unknown;
   onChange: (v: unknown | undefined) => void;
 }) {
-  const id = `param-${field.key}`;
+  const id = `param-${field.path.join("-")}`;
+  const name = field.path.join(".");
   const effective = override !== undefined ? override : server;
   const changed = override !== undefined && server !== undefined && !same(override, server);
   // Equal to the server's value: no override is needed.
@@ -144,36 +227,35 @@ function ParamInput({
       data-testid={id}
       data-changed={changed || undefined}
       className={clsx(
-        "grid grid-cols-[minmax(0,1fr)_8.5rem_1.75rem] items-center gap-x-2 gap-y-0.5 rounded-lg px-1.5 py-1",
+        "grid grid-cols-[minmax(0,1fr)_7rem_1.75rem] items-center gap-x-2 gap-y-0.5 rounded-lg px-1.5 py-1 sm:grid-cols-[minmax(0,1fr)_8.5rem_1.75rem]",
         changed && "bg-accent/10",
       )}
     >
-      <label htmlFor={id} className="min-w-0">
+      <div className="min-w-0">
         <span className="flex items-center gap-1.5">
-          <span className="truncate font-mono text-xs font-semibold">{field.key}</span>
-          {changed && <span className="shrink-0 text-[11px] font-semibold text-accent">{t.changed}</span>}
+          <label htmlFor={id} className="font-mono text-xs font-semibold break-all">
+            {field.key}
+          </label>
+          {field.description && <InfoTip text={field.description} label={`${name}: ${t.about}`} />}
         </span>
-        <span className="block truncate text-xs text-muted" title={field.description}>
+        <span className="block text-xs text-muted">
           {changed ? (
             <span>
-              {t.serverValue}: <span className="font-medium tabular-nums">{format(server)}</span>
+              <span className="font-semibold text-accent">{t.changed}</span> · {t.serverValue}:{" "}
+              <span className="font-medium tabular-nums">{format(server)}</span>
             </span>
           ) : (
-            <>
-              {range && <span className="tabular-nums">{range}</span>}
-              {range && field.description && " · "}
-              {field.description}
-            </>
+            range && <span className="tabular-nums">{range}</span>
           )}
         </span>
-      </label>
+      </div>
       {input}
       {changed ? (
         <button
           type="button"
           className="grid size-7 place-items-center rounded-md text-muted hover:bg-surface hover:text-fg"
           title={`${t.useServerValue}: ${format(server)}`}
-          aria-label={`${field.key}: ${t.useServerValue}`}
+          aria-label={`${name}: ${t.useServerValue}`}
           onClick={() => onChange(undefined)}
         >
           ×
@@ -187,7 +269,7 @@ function ParamInput({
 
 function LevelEditor({ level, brains }: { level: Level; brains: readonly BrainInfo[] }) {
   const brain = brains.find((b) => b.name === level.brain);
-  const { fields, hasNested } = brain ? fieldsOf(brain.settings_schema) : { fields: [], hasNested: false };
+  const groups = brain ? groupsOf(brain.settings_schema) : [];
   const changed = level.id in levelChanges();
   const names = brains.map((b) => b.name);
   if (!names.includes(level.brain)) names.unshift(level.brain); // a server alias the registry does not list
@@ -203,17 +285,62 @@ function LevelEditor({ level, brains }: { level: Level; brains: readonly BrainIn
       return data.settings;
     },
   });
+  // A group the server leaves unset (e.g. `fallback: null`) starts from the schema defaults.
+  const defaults = brain ? defaultsOf(brain.settings_schema) : {};
+  const baseline = (top: string): unknown => server.data?.[top] ?? defaults[top];
 
-  const update = (key: string, value: unknown | undefined) => {
+  /**
+   * A top-level setting is overridden as a whole (the API merges overrides
+   * one level deep): a change inside a group sends the group's server
+   * values with the change applied, and a group back at the server's
+   * values is no longer overridden.
+   */
+  const update = (path: readonly string[], value: unknown | undefined) => {
+    const [top, ...rest] = path;
+    if (top === undefined) return;
     const overrides: Record<string, unknown> = { ...level.overrides };
-    if (value === undefined) delete overrides[key];
-    else overrides[key] = value;
+    if (rest.length === 0) {
+      if (value === undefined) delete overrides[top];
+      else overrides[top] = value;
+    } else {
+      const leaf = value === undefined ? getPath(baseline(top), rest) : value;
+      const group = setPath(overrides[top] ?? baseline(top), rest, leaf);
+      if (same(group, server.data?.[top])) delete overrides[top];
+      else overrides[top] = group;
+    }
     setLevelChange(level.id, { brain: level.brain, overrides });
   };
 
+  const input = (f: Field) => {
+    const [top = ""] = f.path;
+    const overridden = top in level.overrides;
+    return (
+      <ParamInput
+        key={f.path.join(".")}
+        field={f}
+        override={overridden ? getPath(level.overrides, f.path) : undefined}
+        server={server.data ? getPath({ ...defaults, ...server.data, [top]: baseline(top) }, f.path) : undefined}
+        onChange={(v) => update(f.path, v)}
+      />
+    );
+  };
+  const changedIn = (group: Group) =>
+    group.fields.filter((f) => {
+      const [top = ""] = f.path;
+      return top in level.overrides && !same(getPath(level.overrides, f.path), getPath(baseline(top), f.path.slice(1)));
+    }).length;
+
+  const top = groups.filter((g) => g.path.length === 0);
+  // Nested groups under their top-level setting, e.g. threats › own, threats › defence.
+  const sections = new Map<string, Group[]>();
+  for (const g of groups.filter((g) => g.path.length > 0)) {
+    const key = g.path[0] as string;
+    sections.set(key, [...(sections.get(key) ?? []), g]);
+  }
+
   return (
     <div className="flex flex-col gap-3">
-      <div className="grid grid-cols-[minmax(0,1fr)_8.5rem_1.75rem] items-center gap-x-2 px-1.5">
+      <div className="grid grid-cols-[minmax(0,1fr)_7rem_1.75rem] items-center gap-x-2 px-1.5 sm:grid-cols-[minmax(0,1fr)_8.5rem_1.75rem]">
         <label htmlFor="level-brain" className="text-sm font-semibold">
           {t.engineLabel}
         </label>
@@ -231,18 +358,39 @@ function LevelEditor({ level, brains }: { level: Level; brains: readonly BrainIn
         </select>
       </div>
       {server.isError && <p className="px-1.5 text-xs text-muted">{t.serverValuesUnavailable}</p>}
-      <div className="flex flex-col gap-1">
-        {fields.map((f) => (
-          <ParamInput
-            key={f.key}
-            field={f}
-            override={level.overrides[f.key]}
-            server={server.data?.[f.key]}
-            onChange={(v) => update(f.key, v)}
-          />
-        ))}
-        {hasNested && <p className="px-1.5 text-xs text-muted">{t.nestedNote}</p>}
-      </div>
+      <div className="flex flex-col gap-1">{top.flatMap((g) => g.fields.map(input))}</div>
+      {/* Nested settings need the server's values as their baseline. */}
+      {server.data &&
+        [...sections].map(([key, subgroups]) => {
+          const count = subgroups.reduce((n, g) => n + changedIn(g), 0);
+          const description = subgroups.find((g) => g.path.length === 1)?.description;
+          return (
+            <details key={key} className="rounded-xl border border-line" data-testid={`group-${key}`}>
+              <summary className="flex cursor-pointer items-center gap-2 px-3 py-2 text-sm font-semibold">
+                <span className="font-mono">{key}</span>
+                {description && <InfoTip text={description} label={`${key}: ${t.about}`} />}
+                {count > 0 && (
+                  <span className="text-xs font-semibold text-accent">
+                    {t.changed} ({count})
+                  </span>
+                )}
+              </summary>
+              <div className="flex flex-col gap-2 px-1.5 pb-2">
+                {subgroups.map((g) => (
+                  <div key={g.path.join(".")} className="flex flex-col gap-1">
+                    {g.path.length > 1 && g.fields.length > 0 && (
+                      <span className="flex items-center gap-1.5 px-1.5 pt-1 font-mono text-xs text-muted">
+                        {g.path.join(" › ")}
+                        {g.description && <InfoTip text={g.description} label={`${g.path.join(".")}: ${t.about}`} />}
+                      </span>
+                    )}
+                    {g.fields.map(input)}
+                  </div>
+                ))}
+              </div>
+            </details>
+          );
+        })}
       <div className="px-1.5">
         <Button className="h-8 px-3 text-xs" disabled={!changed} onClick={() => setLevelChange(level.id, null)}>
           {t.restoreLevel}

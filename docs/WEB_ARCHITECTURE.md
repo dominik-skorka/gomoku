@@ -131,9 +131,18 @@ appears there without a web change.  Each field shows the value a move
 uses: the level's override, or what the server plays with
 (`GET /v1/brains/{name}/settings`: the `gomoku.toml` alias, the brain's
 defaults and the server's time cap; generic engine information, no
-client concepts).  Values that differ from the server's are highlighted,
-with the server's value beside them and a button back to it; a value
-equal to the server's is not stored as an override.
+client concepts).  Values that differ from the server's (the defaults) are
+highlighted, with the default beside them and a button back to it; a
+value equal to the default is not stored as an override.  Explanations
+from the schema sit in (i) tooltips (hover, focus, or tap on touch).
+
+Nested settings (e.g. `threats.own.split_fours`, the `fallback` alpha-beta
+tuning of the threat brain) are collapsible groups.  The API merges
+`brain_overrides` one level deep, so a change inside a group sends the
+whole top-level group: the server's values with the change applied
+(sending only the changed key would reset the group's other values to
+their schema defaults).  A group back at the server's values is no
+longer overridden.
 
 **Why.** The engine and its API serve any client; client concepts (levels,
 their names in two languages) would make them specific to this one.

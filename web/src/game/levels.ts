@@ -34,6 +34,17 @@ function readChanges(): Changes {
   }
 }
 
+/** `value` with object keys in order, so equal objects serialise equally. */
+function sorted(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sorted);
+  if (typeof value !== "object" || value === null) return value;
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([k, v]) => [k, sorted(v)]),
+  );
+}
+
 let changes: Changes = readChanges();
 const listeners = new Set<() => void>();
 
@@ -54,7 +65,14 @@ export function levelChanges(): Changes {
 
 export function setLevelChange(id: string, change: LevelChange | null): void {
   const next = { ...changes };
-  if (change === null) delete next[id];
+  const base = config.levels.find((l) => l.id === id);
+  // A change that ends where config.json is is no change: nothing to keep.
+  const same =
+    change !== null &&
+    base !== undefined &&
+    change.brain === base.brain &&
+    JSON.stringify(sorted(change.overrides)) === JSON.stringify(sorted(base.overrides));
+  if (change === null || same) delete next[id];
   else next[id] = change;
   save(next);
 }

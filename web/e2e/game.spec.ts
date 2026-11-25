@@ -327,12 +327,25 @@ const BRAINS = {
       settings_schema: {
         properties: {
           depth: { type: "integer", minimum: 1, maximum: 10, default: 4 },
-          lmr: { type: "boolean", default: false },
+          lmr: { type: "boolean", default: false, description: "Late move reductions." },
           opening_book: { type: "string", default: "" },
         },
       },
     },
-    { name: "threat", settings_schema: { properties: { pns_time_s: { type: "number", minimum: 0.1, maximum: 60 } } } },
+    {
+      name: "threat",
+      settings_schema: {
+        properties: {
+          pns_time_s: { type: "number", minimum: 0.1, maximum: 60 },
+          threats: { $ref: "#/$defs/Search", description: "Which threats." },
+        },
+        $defs: {
+          Search: { properties: { own: { $ref: "#/$defs/Attack" }, defence: { $ref: "#/$defs/Defence" } } },
+          Attack: { properties: { fours: { type: "boolean" }, threes: { type: "boolean" } } },
+          Defence: { properties: { block_fours: { type: "boolean" } } },
+        },
+      },
+    },
   ],
 };
 
@@ -361,7 +374,10 @@ test("config.json decides the levels and what each sends to the engine", async (
 const SERVER_SETTINGS: Record<string, Record<string, unknown>> = {
   negamax: { depth: 3 },
   alphabeta: { depth: 4, lmr: false, opening_book: "" },
-  threat: { pns_time_s: 5 },
+  threat: {
+    pns_time_s: 5,
+    threats: { own: { fours: true, threes: true }, defence: { block_fours: true } },
+  },
 };
 
 async function stubBrains(page: Page) {
@@ -387,7 +403,7 @@ test("level settings: show the server's values, mark and send changes, restore t
   // config.json sets Easy's depth to 2; the server plays 3: marked as changed.
   await expect(dialog.locator("#param-depth")).toHaveValue("2");
   await expect(dialog.getByTestId("param-depth")).toHaveAttribute("data-changed", "true");
-  await expect(dialog.getByTestId("param-depth")).toContainText("server: 3");
+  await expect(dialog.getByTestId("param-depth")).toContainText("Default: 3");
 
   // Another engine: fields show the server's values, nothing marked.
   await dialog.getByLabel("Engine").selectOption("alphabeta");
@@ -396,6 +412,15 @@ test("level settings: show the server's values, mark and send changes, restore t
   await expect(dialog.locator("#param-lmr")).toHaveValue("false");
   // Server file paths are never offered.
   await expect(dialog.locator("#param-opening_book")).toHaveCount(0);
+  // Descriptions live in an (i) tooltip: hover with a mouse, tap on touch.
+  await expect(dialog.getByText("Late move reductions.")).toHaveCount(0);
+  const info = dialog.getByRole("button", { name: "lmr: what is this?" });
+  const touch = await page.evaluate(() => matchMedia("(pointer: coarse)").matches);
+  if (touch) await info.tap();
+  else await info.hover();
+  await expect(page.getByRole("tooltip")).toHaveText("Late move reductions.");
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("tooltip")).toHaveCount(0);
 
   await dialog.locator("#param-depth").fill("3");
   await dialog.locator("#param-lmr").selectOption("true");
@@ -406,7 +431,7 @@ test("level settings: show the server's values, mark and send changes, restore t
   await dialog.locator("#param-depth").fill("4");
   await expect(dialog.getByTestId("param-depth")).not.toHaveAttribute("data-changed");
   await dialog.locator("#param-depth").fill("3");
-  await dialog.getByRole("button", { name: "lmr: Use the server's value" }).click();
+  await dialog.getByRole("button", { name: "lmr: Restore the default" }).click();
   await expect(dialog.locator("#param-lmr")).toHaveValue("false");
   await expect(dialog.getByTestId("param-lmr")).not.toHaveAttribute("data-changed");
   await dialog.getByRole("button", { name: "Close" }).click();
@@ -429,4 +454,46 @@ test("level settings: show the server's values, mark and send changes, restore t
   await dialog.getByRole("tab", { name: /Easy/ }).click();
   await expect(dialog.getByLabel("Engine")).toHaveValue("negamax");
   await expect(dialog.locator("#param-depth")).toHaveValue("2");
+});
+
+test("level settings: nested groups send the whole group with the change", async ({ page }) => {
+  await stubBrains(page);
+  const requests = await stubEngine(page, [
+    [0, 0],
+    [0, 1],
+  ]);
+  await page.goto("/");
+  await page.getByRole("button", { name: "Difficulty levels" }).click();
+  const dialog = page.getByRole("dialog", { name: "Difficulty levels" });
+  await dialog.getByRole("tab", { name: /Master/ }).click();
+  const group = dialog.getByTestId("group-threats");
+  await group.locator("summary").click();
+  await expect(group.locator("#param-threats-own-fours")).toHaveValue("true");
+  await group.locator("#param-threats-own-fours").selectOption("false");
+  await expect(group.getByTestId("param-threats-own-fours")).toHaveAttribute("data-changed", "true");
+  await expect(group.locator("summary")).toContainText("changed (1)");
+  await dialog.getByRole("button", { name: "Close" }).click();
+
+  await page.getByRole("button", { name: "New game" }).filter({ visible: true }).first().click();
+  const newGame = page.getByRole("dialog");
+  await newGame.getByRole("group", { name: /Black/ }).getByText("Engine", { exact: true }).click();
+  await newGame.getByRole("group", { name: /Black/ }).getByText("Master", { exact: true }).click();
+  await newGame.getByRole("group", { name: /White/ }).getByText("Human", { exact: true }).click();
+  await newGame.getByRole("button", { name: "Start" }).click();
+  await expect.poll(() => requests.length).toBeGreaterThan(0);
+  // The API merges overrides one level deep, so the whole group goes: the
+  // server's values with the one change.
+  expect(requests.at(-1)).toMatchObject({
+    brain: "threat",
+    brain_overrides: { threats: { own: { fours: false, threes: true }, defence: { block_fours: true } } },
+  });
+
+  // Back to the default: the group is no longer overridden at all.
+  await page.getByRole("button", { name: "Difficulty levels" }).click();
+  await dialog.getByRole("tab", { name: /Master/ }).click();
+  // The dialog keeps the section's open/closed state.
+  if (!(await group.evaluate((d) => (d as HTMLDetailsElement).open))) await group.locator("summary").click();
+  await group.getByRole("button", { name: "threats.own.fours: Restore the default" }).click();
+  await expect(group.getByTestId("param-threats-own-fours")).not.toHaveAttribute("data-changed");
+  await expect(dialog.getByRole("tab", { name: /Master/ })).not.toContainText("edited here");
 });
