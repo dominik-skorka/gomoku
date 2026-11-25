@@ -12,7 +12,7 @@ async function stubEngine(page: Page, cells: [number, number][]) {
   return requests;
 }
 
-async function startGame(page: Page, black: "Human" | "Engine", white: "Human" | "Engine") {
+async function startGame(page: Page, black: "Human" | "Computer", white: "Human" | "Computer") {
   await page.goto("/");
   await page.getByRole("button", { name: "New game" }).filter({ visible: true }).first().click();
   const dialog = page.getByRole("dialog");
@@ -56,7 +56,7 @@ test("human vs engine: five in a row wins and turns blue", async ({ page }) => {
     [0, 2],
     [0, 3],
   ]);
-  await startGame(page, "Human", "Engine");
+  await startGame(page, "Human", "Computer");
   for (let i = 0; i < 5; i++) {
     // Wait for the engine's reply in the move list, not for the status
     // text: while the status animates out, the previous "Your move" is
@@ -88,7 +88,7 @@ test("human vs human: colours alternate on one device and undo takes back one mo
 test("engine vs engine: plays itself, pauses, steps one move at a time", async ({ page }) => {
   const cells: [number, number][] = Array.from({ length: 40 }, (_, k) => [Math.floor(k / 8) * 2, k % 8]);
   const requests = await stubEngine(page, cells);
-  await startGame(page, "Engine", "Engine");
+  await startGame(page, "Computer", "Computer");
   await page.getByText("Fast", { exact: true }).filter({ visible: true }).click();
   await expect.poll(() => requests.length).toBeGreaterThan(3);
 
@@ -127,7 +127,7 @@ test("rate limited: says so, counts down and retries by itself", async ({ page }
       await route.fulfill({ json: { move: { row: 0, col: 0, position: "A1" }, brain: "stub", diagnostics: null } });
     }
   });
-  await startGame(page, "Engine", "Human");
+  await startGame(page, "Computer", "Human");
   // The error shows in the bar of the engine whose move failed (Black).
   await expect(bar(page, "black").getByText("Too many requests.")).toBeVisible();
   await expect(bar(page, "black").getByText(/Retrying in \d s/)).toBeVisible();
@@ -135,12 +135,12 @@ test("rate limited: says so, counts down and retries by itself", async ({ page }
   expect(calls).toBe(2);
 });
 
-test("resign: asks first, then the engine wins and the game is over", async ({ page }) => {
+test("resign: asks first, then the computer wins and the game is over", async ({ page }) => {
   await stubEngine(page, [
     [0, 0],
     [0, 1],
   ]);
-  await startGame(page, "Human", "Engine");
+  await startGame(page, "Human", "Computer");
   await tap(page, 7, 7);
   await expect(status(page)).toHaveText(/Your move/);
 
@@ -154,7 +154,7 @@ test("resign: asks first, then the engine wins and the game is over", async ({ p
 
   await resign.click();
   await dialog.getByRole("button", { name: "Resign" }).click();
-  await expect(status(page)).toHaveText("You resigned — the engine wins");
+  await expect(status(page)).toHaveText("You resigned — the computer wins");
   await expect(bar(page, "white")).toContainText("Wins");
   await expect(bar(page, "black")).toContainText("Resigned");
   await expect(resign).toBeDisabled();
@@ -363,7 +363,7 @@ test("config.json decides the levels and what each sends to the engine", async (
   await page.goto("/");
   await page.getByRole("button", { name: "New game" }).filter({ visible: true }).first().click();
   const dialog = page.getByRole("dialog");
-  await dialog.getByRole("group", { name: /Black/ }).getByText("Engine", { exact: true }).click();
+  await dialog.getByRole("group", { name: /Black/ }).getByText("Computer", { exact: true }).click();
   // A level without a translation shows its id.
   await expect(dialog.getByText("blitz", { exact: true }).first()).toBeVisible();
   await dialog.getByRole("button", { name: "Start" }).click();
@@ -399,14 +399,14 @@ test("level settings: show the server's values, mark and send changes, restore t
   await page.getByRole("button", { name: "Difficulty levels" }).click();
   const dialog = page.getByRole("dialog", { name: "Difficulty levels" });
   await dialog.getByRole("tab", { name: /Easy/ }).click();
-  await expect(dialog.getByLabel("Engine")).toHaveValue("negamax");
+  await expect(dialog.getByLabel("Algorithm")).toHaveValue("negamax");
   // config.json sets Easy's depth to 2; the server plays 3: marked as changed.
   await expect(dialog.locator("#param-depth")).toHaveValue("2");
   await expect(dialog.getByTestId("param-depth")).toHaveAttribute("data-changed", "true");
   await expect(dialog.getByTestId("param-depth")).toContainText("Default: 3");
 
   // Another engine: fields show the server's values, nothing marked.
-  await dialog.getByLabel("Engine").selectOption("alphabeta");
+  await dialog.getByLabel("Algorithm").selectOption("alphabeta");
   await expect(dialog.locator("#param-depth")).toHaveValue("4");
   await expect(dialog.getByTestId("param-depth")).not.toHaveAttribute("data-changed");
   await expect(dialog.locator("#param-lmr")).toHaveValue("false");
@@ -440,7 +440,7 @@ test("level settings: show the server's values, mark and send changes, restore t
   await page.reload();
   await page.getByRole("button", { name: "New game" }).filter({ visible: true }).first().click();
   const newGame = page.getByRole("dialog");
-  await newGame.getByRole("group", { name: /Black/ }).getByText("Engine", { exact: true }).click();
+  await newGame.getByRole("group", { name: /Black/ }).getByText("Computer", { exact: true }).click();
   await newGame.getByRole("group", { name: /Black/ }).getByText("Easy", { exact: true }).click();
   await newGame.getByRole("group", { name: /White/ }).getByText("Human", { exact: true }).click();
   await newGame.getByRole("button", { name: "Start" }).click();
@@ -452,7 +452,7 @@ test("level settings: show the server's values, mark and send changes, restore t
   await page.getByRole("button", { name: "Difficulty levels" }).click();
   await dialog.getByRole("button", { name: "Restore all" }).click();
   await dialog.getByRole("tab", { name: /Easy/ }).click();
-  await expect(dialog.getByLabel("Engine")).toHaveValue("negamax");
+  await expect(dialog.getByLabel("Algorithm")).toHaveValue("negamax");
   await expect(dialog.locator("#param-depth")).toHaveValue("2");
 });
 
@@ -475,7 +475,7 @@ test("level settings: nested groups send the whole group with the change", async
 
   await page.getByRole("button", { name: "New game" }).filter({ visible: true }).first().click();
   const newGame = page.getByRole("dialog");
-  await newGame.getByRole("group", { name: /Black/ }).getByText("Engine", { exact: true }).click();
+  await newGame.getByRole("group", { name: /Black/ }).getByText("Computer", { exact: true }).click();
   await newGame.getByRole("group", { name: /Black/ }).getByText("Master", { exact: true }).click();
   await newGame.getByRole("group", { name: /White/ }).getByText("Human", { exact: true }).click();
   await newGame.getByRole("button", { name: "Start" }).click();
