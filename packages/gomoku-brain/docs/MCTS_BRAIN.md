@@ -183,12 +183,21 @@ noise** into the root priors only:
 new_prior = (1 - weight) · prior + weight · noise
 ```
 
-- **`dirichlet_alpha`** (default `0.03`) controls the noise shape.
+- **`dirichlet_alpha`** (default `0.25`) controls the noise shape.
   Small α → concentrated (one move dominates the noise vector); larger
-  α → flat (uniform noise).
-- **`dirichlet_weight`** (default `0.25`) controls how much the noise
+  α → flat (uniform noise).  AlphaZero scaled α inversely to the number
+  of legal moves (0.3 chess, 0.15 shogi, 0.03 Go); `0.25` suits the ~50
+  candidates of a gomoku root.
+- **`dirichlet_weight`** (default `0.0`) controls how much the noise
   displaces the priors.  `0.0` disables noise entirely (deterministic
   play); `1.0` replaces priors with pure noise.
+
+**Off by default.**  AlphaZero adds the noise to explore while
+generating self-play training data; this brain does not learn, so the
+noise only takes prior mass from the best moves.  Measured with
+`gomoku match` (100 games, 2 000 iterations), weight `0.0` vs `0.25`
+scored 50.0% (+0 Elo, 95% interval −54 to +54).  Turn it on only to vary
+or weaken play.
 
 The implementation samples Dirichlet via the gamma-function trick
 (`Gamma(α, 1)` per dimension, then normalise) so no NumPy dependency
@@ -375,8 +384,8 @@ Because MCTS candidate scores are winrates (not eval units), the
 |-----------|---------|-------|----------|----------------------|
 | `iterations` | 10 000 | 100 – 1 000 000 | Simulation budget per move | Linearly stronger, linearly slower |
 | `exploration` | 2.0 | 0.1 – 5.0 | PUCT constant `c` | More exploration, less exploitation |
-| `dirichlet_alpha` | 0.03 | 0.0 – 1.0 | Dirichlet shape | Larger = flatter noise |
-| `dirichlet_weight` | 0.25 | 0.0 – 1.0 | Noise mix weight | `0.0` = deterministic priors; `1.0` = pure noise |
+| `dirichlet_alpha` | 0.25 | 0.0 – 1.0 | Dirichlet shape | Larger = flatter noise |
+| `dirichlet_weight` | 0.0 | 0.0 – 1.0 | Noise mix weight | `0.0` = deterministic priors; `1.0` = pure noise |
 | `vcf_depth` | 10 | 0 – 40 | Opponent VCF probe depth for the safety gate | Deeper probe, more blocks enforced; `0` disables the gate |
 
 ### Internal constants
@@ -420,7 +429,7 @@ First 100 simulations distribute ~80% of visits to A, ~15% to B,
 ```
 Priors (deterministic):
   A: 0.80      B: 0.15      C: 0.05
-With Dirichlet(α=0.03, weight=0.25):
+With Dirichlet(α=0.25, weight=0.25):
   A: 0.62      B: 0.12      C: 0.26  ← noise vector spiked on C
 
 C is now visited often enough to discover that it leads to a fork

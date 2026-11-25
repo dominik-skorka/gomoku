@@ -374,15 +374,20 @@ iterations = 10_000
 # Default: 2.0 | Valid range: 0.1–5.0 | Lower = more exploitative
 exploration = 2.0
 
-# Dirichlet distribution parameter for noise injection at root.
-# Controls noise shape — lower = more concentrated.
-# Default: 0.03 | Valid range: 0.0–1.0
-dirichlet_alpha = 0.03
-
-# Mixing weight for Dirichlet noise: (1−weight)·prior + weight·noise.
-# 0.0 = no noise (deterministic); 1.0 = pure noise (fully random).
-# Default: 0.25 | Valid range: 0.0–1.0
-dirichlet_weight = 0.25
+# Dirichlet noise mixed into the root priors:
+# (1−weight)·prior + weight·noise.  AlphaZero uses it to explore while
+# generating self-play training data; this brain does not learn, so it is
+# off by default.  Measured with `gomoku match` (100 games, 2 000
+# iterations): weight 0.0 vs 0.25 scored 50.0% (+0 Elo, 95% interval -54
+# to +54), at slightly less think time.
+# alpha shapes the noise: AlphaZero scaled it inversely to the number of
+# legal moves (0.3 chess, 0.15 shogi, 0.03 Go with ~361 moves); for the
+# ~50 candidates of a gomoku root about 0.25 is the equivalent.
+# Use the noise only to vary or weaken play.
+# dirichlet_alpha  Default: 0.25 | Valid range: 0.0–1.0
+# dirichlet_weight Default: 0.0 | Valid range: 0.0–1.0 | 0.0 = no noise
+dirichlet_alpha = 0.25
+dirichlet_weight = 0.0
 
 # =============================================================================
 # Evaluation Settings
