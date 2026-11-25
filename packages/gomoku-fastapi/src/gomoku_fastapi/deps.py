@@ -87,6 +87,35 @@ def _cap_time_budget(brain_type: str, kwargs: dict[str, Any], cap: float) -> dic
     return kwargs
 
 
+def effective_brain_settings(name: str, settings: GomokuSettings) -> tuple[str, dict[str, Any]]:
+    """The brain type and the full settings a move by *name* uses without overrides.
+
+    Resolves *name* (a registry key or a ``[brains.<name>]`` alias) the way
+    :func:`build_brain` does, fills every setting the alias leaves out with
+    the brain's default, and applies the server's time cap
+    (``[api].max_time_limit_s``), so the values are the ones a move really
+    runs with.  Raises the same 404 / 422 as :func:`build_brain`.
+    """
+    if name not in BRAINS and name not in settings.brains.aliases():
+        available = sorted(set(BRAINS) | set(settings.brains.aliases()))
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"error": "unknown_brain", "name": name, "available": available},
+        )
+    try:
+        brain_type, kwargs = resolve_brain(name, settings.brains)
+        kwargs = BRAINS[brain_type].settings_cls(**kwargs).model_dump(mode="json")
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={"error": "brain_resolution_failed", "message": str(exc)},
+        ) from exc
+    cap = settings.api.max_time_limit_s
+    if cap > 0:
+        kwargs = _cap_time_budget(brain_type, kwargs, cap)
+    return brain_type, kwargs
+
+
 def build_brain(
     name: str,
     overrides: dict[str, Any] | None,
@@ -148,6 +177,7 @@ __all__ = [
     "SessionStoreDep",
     "SettingsDep",
     "build_brain",
+    "effective_brain_settings",
     # Re-exported for convenience so endpoint code only imports from one place.
     "get_brain_from_settings",
     "get_session_store",

@@ -1,0 +1,74 @@
+name: Web
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: web-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  web:
+    name: web (lint, types, tests, build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: web/package.json
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - name: Generated API types are current
+        run: pnpm run gen:api && git diff --exit-code -- src/api/schema.d.ts
+      - run: pnpm run check
+      - run: pnpm test
+      - run: pnpm run build
+      - name: End-to-end tests (stubbed API)
+        run: |
+          pnpm exec playwright install --with-deps chromium
+          pnpm run test:e2e
+
+  openapi:
+    name: OpenAPI document is current
+    runs-on: ubuntu-latest
+    env:
+      UV_PYTHON: "3.14t"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      - run: uv sync --all-packages --frozen
+      - run: uv run python scripts/export_openapi.py --check
+
+  images:
+    name: container images build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+      - name: gomoku-api
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: packages/gomoku-fastapi/Dockerfile
+          push: false
+          cache-from: type=gha,scope=api
+          cache-to: type=gha,scope=api,mode=max
+      - name: gomoku-web
+        uses: docker/build-push-action@v7
+        with:
+          context: web
+          push: false
+          cache-from: type=gha,scope=web
+          cache-to: type=gha,scope=web,mode=max

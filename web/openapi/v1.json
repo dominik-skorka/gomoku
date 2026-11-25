@@ -1,0 +1,1461 @@
+{
+  "components": {
+    "schemas": {
+      "Board": {
+        "description": "Immutable-style gomoku board. Use place_stone() to get a new board with a move applied.",
+        "properties": {
+          "grid": {
+            "items": {
+              "items": {
+                "$ref": "#/components/schemas/Stone"
+              },
+              "type": "array"
+            },
+            "title": "Grid",
+            "type": "array"
+          },
+          "occupied": {
+            "items": {
+              "maxItems": 2,
+              "minItems": 2,
+              "prefixItems": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "integer"
+                }
+              ],
+              "type": "array"
+            },
+            "title": "Occupied",
+            "type": "array",
+            "uniqueItems": true
+          },
+          "size": {
+            "default": 15,
+            "maximum": 25.0,
+            "minimum": 5.0,
+            "title": "Size",
+            "type": "integer"
+          }
+        },
+        "title": "Board",
+        "type": "object"
+      },
+      "Body_post_analyze_v1_analyze_post": {
+        "properties": {
+          "file": {
+            "contentMediaType": "application/octet-stream",
+            "description": ".diag.jsonl recording",
+            "title": "File",
+            "type": "string"
+          }
+        },
+        "required": [
+          "file"
+        ],
+        "title": "Body_post_analyze_v1_analyze_post",
+        "type": "object"
+      },
+      "BrainInfo": {
+        "description": "Metadata for a single registered brain \u2014 returned by ``GET /v1/brains``.",
+        "properties": {
+          "name": {
+            "description": "Registry key \u2014 pass this as ``brain`` in /v1/move.",
+            "title": "Name",
+            "type": "string"
+          },
+          "settings_schema": {
+            "additionalProperties": true,
+            "description": "JSON Schema generated from the brain's pydantic settings model. Useful for clients that want to render a settings UI without hard-coding the knob list.",
+            "title": "Settings Schema",
+            "type": "object"
+          }
+        },
+        "required": [
+          "name",
+          "settings_schema"
+        ],
+        "title": "BrainInfo",
+        "type": "object"
+      },
+      "BrainSettingsResponse": {
+        "description": "Response payload for ``GET /v1/brains/{name}/settings``.",
+        "properties": {
+          "name": {
+            "description": "The brain name or alias that was asked for.",
+            "title": "Name",
+            "type": "string"
+          },
+          "settings": {
+            "additionalProperties": true,
+            "description": "Every setting a move with this brain uses when the request sends no ``brain_overrides``: the server's ``[brains.<name>]`` alias, the brain's defaults for what the alias leaves out, and the server's time cap.  Keys follow the type's ``settings_schema`` from ``GET /v1/brains``.",
+            "title": "Settings",
+            "type": "object"
+          },
+          "type": {
+            "description": "The registry brain it resolves to (``alphabeta``, ``threat``, \u2026).",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "type",
+          "settings"
+        ],
+        "title": "BrainSettingsResponse",
+        "type": "object"
+      },
+      "BrainsResponse": {
+        "description": "Response payload for ``GET /v1/brains``.",
+        "properties": {
+          "brains": {
+            "items": {
+              "$ref": "#/components/schemas/BrainInfo"
+            },
+            "title": "Brains",
+            "type": "array"
+          }
+        },
+        "required": [
+          "brains"
+        ],
+        "title": "BrainsResponse",
+        "type": "object"
+      },
+      "CandidateInfo": {
+        "description": "A candidate move with its score.\n\n``score_type`` declares what the ``score`` represents so the analyzer can\ncompare apples to apples across brains:\n\n* ``\"eval\"``    \u2014 static evaluation (AlphaBetaBrain): higher is better for\n                  the side to move.  No fixed range; wins \u2248 \u00b1100 000.\n* ``\"winrate\"`` \u2014 root-visit winrate proportion (MCTSBrain), in ``[0, 1]``.\n* ``\"visits\"``  \u2014 raw visit count for MCTS root children.\n* ``\"priority\"``\u2014 threat-brain ordering score (higher = more urgent).",
+        "properties": {
+          "move": {
+            "$ref": "#/components/schemas/Move-Output"
+          },
+          "score": {
+            "title": "Score",
+            "type": "number"
+          },
+          "score_type": {
+            "default": "eval",
+            "title": "Score Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "move",
+          "score"
+        ],
+        "title": "CandidateInfo",
+        "type": "object"
+      },
+      "CreateGameRequest": {
+        "additionalProperties": false,
+        "description": "Request payload for ``POST /v1/games``.",
+        "properties": {
+          "black": {
+            "$ref": "#/components/schemas/PlayerConfig",
+            "description": "Black-side configuration.  Default: external."
+          },
+          "board_size": {
+            "default": 15,
+            "description": "N for an NxN board.",
+            "maximum": 25.0,
+            "minimum": 5.0,
+            "title": "Board Size",
+            "type": "integer"
+          },
+          "diagnostics": {
+            "default": false,
+            "description": "When ``true``, the session activates a :class:`DiagnosticsRecorder` and writes per-move diagnostics to a ``gomoku_*.diag.jsonl`` companion file. Independent of the per-call ``think`` diagnostics \u2014 even when this flag is off, ``think`` still returns in-memory diagnostics on the response.",
+            "title": "Diagnostics",
+            "type": "boolean"
+          },
+          "record": {
+            "default": false,
+            "description": "When ``true``, the session writes its moves to a ``gomoku_*.json`` recording in a per-session temp dir.  The path appears on ``GET /v1/games/{id}`` as ``record_dir`` so clients can fetch the file out-of-band.  The directory is removed when the session is deleted or expires.",
+            "title": "Record",
+            "type": "boolean"
+          },
+          "white": {
+            "$ref": "#/components/schemas/PlayerConfig",
+            "description": "White-side configuration.  Default: external."
+          },
+          "win_length": {
+            "default": 5,
+            "description": "Stones in a row needed to win.",
+            "minimum": 3.0,
+            "title": "Win Length",
+            "type": "integer"
+          }
+        },
+        "title": "CreateGameRequest",
+        "type": "object"
+      },
+      "EvaluateRequest": {
+        "additionalProperties": false,
+        "description": "Request payload for ``POST /v1/evaluate`` \u2014 static heuristic eval.\n\nNo brain is involved; this is a cheap call into\n:func:`gomoku_brain.evaluate.evaluate_board`.",
+        "properties": {
+          "board": {
+            "$ref": "#/components/schemas/Board",
+            "description": "Position to evaluate."
+          },
+          "side_to_move": {
+            "$ref": "#/components/schemas/Stone",
+            "description": "Whose perspective the eval is from.  Higher = better for *this* side; the same board returns roughly opposite scores for opposite stones."
+          }
+        },
+        "required": [
+          "board",
+          "side_to_move"
+        ],
+        "title": "EvaluateRequest",
+        "type": "object"
+      },
+      "EvaluateResponse": {
+        "description": "Response payload for ``POST /v1/evaluate``.",
+        "properties": {
+          "score": {
+            "description": "Heuristic score from ``side_to_move``'s perspective.  Clamped to \u00b199 000 \u2014 never reaches the \u00b1100 000 win/loss constants used by the search.",
+            "title": "Score",
+            "type": "number"
+          }
+        },
+        "required": [
+          "score"
+        ],
+        "title": "EvaluateResponse",
+        "type": "object"
+      },
+      "GameResult": {
+        "description": "Outcome of a completed game.",
+        "properties": {
+          "winner": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Stone"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "winning_moves": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/Move-Output"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Winning Moves"
+          }
+        },
+        "title": "GameResult",
+        "type": "object"
+      },
+      "GameStateResponse": {
+        "description": "Response payload for ``POST /v1/games`` and ``GET /v1/games/{id}``.\n\nCaptures everything a UI needs to render the current state: who's\nconfigured for each side, whose turn it is, the board, the move\nhistory, and the result if the game has finished.",
+        "properties": {
+          "black_brain": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Brain name for Black, or null when external.",
+            "title": "Black Brain"
+          },
+          "board": {
+            "$ref": "#/components/schemas/Board"
+          },
+          "diag_dir": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Filesystem dir of the .diag.jsonl, when ``diagnostics=true``.",
+            "title": "Diag Dir"
+          },
+          "game_id": {
+            "description": "Session UUID \u2014 pass to subsequent /v1/games/{id}/* calls.",
+            "title": "Game Id",
+            "type": "string"
+          },
+          "history": {
+            "items": {
+              "$ref": "#/components/schemas/HistoryEntry"
+            },
+            "title": "History",
+            "type": "array"
+          },
+          "move_number": {
+            "description": "1-based number of the *next* move (== len(history) + 1).",
+            "title": "Move Number",
+            "type": "integer"
+          },
+          "record_dir": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Filesystem dir of the recording, when ``record=true``.",
+            "title": "Record Dir"
+          },
+          "result": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GameResult"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Set once the game ends; null while in progress."
+          },
+          "side_to_move": {
+            "$ref": "#/components/schemas/Stone"
+          },
+          "white_brain": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Brain name for White, or null when external.",
+            "title": "White Brain"
+          }
+        },
+        "required": [
+          "game_id",
+          "board",
+          "side_to_move",
+          "move_number",
+          "history",
+          "black_brain",
+          "white_brain",
+          "result"
+        ],
+        "title": "GameStateResponse",
+        "type": "object"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "HistoryEntry": {
+        "description": "One entry in ``GameStateResponse.history``.",
+        "properties": {
+          "move": {
+            "$ref": "#/components/schemas/Move-Output"
+          },
+          "stone": {
+            "$ref": "#/components/schemas/Stone"
+          }
+        },
+        "required": [
+          "stone",
+          "move"
+        ],
+        "title": "HistoryEntry",
+        "type": "object"
+      },
+      "Move-Input": {
+        "description": "A board position (row, col), both zero-indexed.",
+        "properties": {
+          "col": {
+            "minimum": 0.0,
+            "title": "Col",
+            "type": "integer"
+          },
+          "row": {
+            "minimum": 0.0,
+            "title": "Row",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "row",
+          "col"
+        ],
+        "title": "Move",
+        "type": "object"
+      },
+      "Move-Output": {
+        "description": "A board position (row, col), both zero-indexed.",
+        "properties": {
+          "col": {
+            "minimum": 0.0,
+            "title": "Col",
+            "type": "integer"
+          },
+          "position": {
+            "description": "Human-readable notation, e.g. ``H8``.",
+            "readOnly": true,
+            "title": "Position",
+            "type": "string"
+          },
+          "row": {
+            "minimum": 0.0,
+            "title": "Row",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "row",
+          "col",
+          "position"
+        ],
+        "title": "Move",
+        "type": "object"
+      },
+      "MoveDiagnostics": {
+        "description": "Diagnostics collected for a single move decision.",
+        "properties": {
+          "alternative_best": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CandidateInfo"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "board_stones": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Board Stones",
+            "type": "array"
+          },
+          "chosen_move": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Move-Output"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "decision_path": {
+            "default": "",
+            "title": "Decision Path",
+            "type": "string"
+          },
+          "eval_after": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Eval After"
+          },
+          "eval_before": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Eval Before"
+          },
+          "move_number": {
+            "minimum": 1.0,
+            "title": "Move Number",
+            "type": "integer"
+          },
+          "notes": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Notes",
+            "type": "array"
+          },
+          "opp_threats": {
+            "$ref": "#/components/schemas/ThreatInfo",
+            "default": {
+              "four_threats": 0,
+              "three_threats": 0
+            }
+          },
+          "our_threats": {
+            "$ref": "#/components/schemas/ThreatInfo",
+            "default": {
+              "four_threats": 0,
+              "three_threats": 0
+            }
+          },
+          "search_stats": {
+            "$ref": "#/components/schemas/SearchStats",
+            "default": {}
+          },
+          "stone": {
+            "$ref": "#/components/schemas/Stone"
+          },
+          "think_time_ms": {
+            "default": 0,
+            "title": "Think Time Ms",
+            "type": "integer"
+          },
+          "top_candidates": {
+            "items": {
+              "$ref": "#/components/schemas/CandidateInfo"
+            },
+            "title": "Top Candidates",
+            "type": "array"
+          }
+        },
+        "required": [
+          "move_number",
+          "stone"
+        ],
+        "title": "MoveDiagnostics",
+        "type": "object"
+      },
+      "MoveRequest": {
+        "additionalProperties": false,
+        "description": "Request payload for ``POST /v1/move``.\n\nStateless: the client passes the full board, the side to move, and a\nbrain reference; the server replies with the brain's chosen move.\nNo session is created.",
+        "properties": {
+          "board": {
+            "$ref": "#/components/schemas/Board",
+            "description": "Current position.  Must be a legal Gomoku board state."
+          },
+          "brain": {
+            "description": "Registry name or TOML alias of the brain to consult.",
+            "examples": [
+              "alphabeta",
+              "threat",
+              "mcts"
+            ],
+            "title": "Brain",
+            "type": "string"
+          },
+          "brain_overrides": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Per-request tweaks merged on top of the resolved brain settings, validated against the brain's pydantic model.  Use sparingly \u2014 most clients should configure brains via the TOML aliases.",
+            "title": "Brain Overrides"
+          },
+          "diagnostics": {
+            "default": false,
+            "description": "When ``true``, the server activates a diagnostics :class:`~gomoku.diagnostics.MoveDiagnostics` ContextVar around the brain call and returns the captured record on the response.  Adds a measurable cost to the request (brains do extra evaluation when diagnostics are active), so leave it off when you only need the move.",
+            "title": "Diagnostics",
+            "type": "boolean"
+          },
+          "side_to_move": {
+            "$ref": "#/components/schemas/Stone",
+            "description": "Whose turn it is.  ``Stone.EMPTY`` is rejected \u2014 only ``Stone.BLACK`` (1) or ``Stone.WHITE`` (2) are valid."
+          }
+        },
+        "required": [
+          "board",
+          "side_to_move",
+          "brain"
+        ],
+        "title": "MoveRequest",
+        "type": "object"
+      },
+      "MoveResponse": {
+        "description": "Response payload for ``POST /v1/move``.",
+        "properties": {
+          "brain": {
+            "description": "Echo of the brain key used (post-alias resolution).",
+            "title": "Brain",
+            "type": "string"
+          },
+          "diagnostics": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MoveDiagnostics"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Per-move diagnostics when the request set ``diagnostics: true``; ``null`` otherwise.  Schema matches the lines of a ``.diag.jsonl`` recording so callers can pipe straight into ``analyze_diagnostics``."
+          },
+          "move": {
+            "$ref": "#/components/schemas/Move-Output",
+            "description": "Move chosen by the brain."
+          }
+        },
+        "required": [
+          "move",
+          "brain"
+        ],
+        "title": "MoveResponse",
+        "type": "object"
+      },
+      "PlayerConfig": {
+        "additionalProperties": false,
+        "description": "Configuration for one side of a session.\n\nA side may be **brain-driven** (set ``brain``) or **external**\n(omit ``brain``).  External sides advance via\n``POST /v1/games/{id}/moves``; brain-driven sides advance via\n``POST /v1/games/{id}/think``.  The two patterns mix freely \u2014 a\ntypical \"play against AI\" UI configures one external side and one\nbrain.",
+        "properties": {
+          "brain": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Registry name or TOML alias of the brain to use for this side.  ``null`` (or omit) marks the side as external \u2014 moves arrive via ``POST /v1/games/{id}/moves``.",
+            "examples": [
+              "alphabeta",
+              null
+            ],
+            "title": "Brain"
+          },
+          "brain_overrides": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Per-session tweaks merged on top of the resolved brain settings.  Ignored when ``brain`` is ``null``.",
+            "title": "Brain Overrides"
+          }
+        },
+        "title": "PlayerConfig",
+        "type": "object"
+      },
+      "SearchStats": {
+        "description": "Statistics from the search algorithm.",
+        "properties": {
+          "aspiration_resets": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Aspiration Resets"
+          },
+          "depth_reached": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Depth Reached"
+          },
+          "iterations": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Iterations"
+          },
+          "nodes_searched": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nodes Searched"
+          },
+          "qs_nodes_searched": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Qs Nodes Searched"
+          },
+          "time_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Time Ms"
+          },
+          "tt_hits": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tt Hits"
+          },
+          "tt_probes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tt Probes"
+          },
+          "tt_size": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tt Size"
+          }
+        },
+        "title": "SearchStats",
+        "type": "object"
+      },
+      "Stone": {
+        "description": "Represents the state of a board cell.",
+        "enum": [
+          0,
+          1,
+          2
+        ],
+        "title": "Stone",
+        "type": "integer"
+      },
+      "SubmitMoveRequest": {
+        "additionalProperties": false,
+        "description": "Request payload for ``POST /v1/games/{id}/moves`` \u2014 external move.",
+        "properties": {
+          "move": {
+            "$ref": "#/components/schemas/Move-Input",
+            "description": "Cell coordinates the external player chose."
+          },
+          "stone": {
+            "$ref": "#/components/schemas/Stone",
+            "description": "The colour playing this move; must equal the session's current side_to_move."
+          }
+        },
+        "required": [
+          "stone",
+          "move"
+        ],
+        "title": "SubmitMoveRequest",
+        "type": "object"
+      },
+      "ThinkRequest": {
+        "additionalProperties": false,
+        "description": "Request payload for ``POST /v1/games/{id}/think``.\n\nOptional knobs only \u2014 the brain is whatever the session was\nconstructed with for the current side.",
+        "properties": {
+          "diagnostics": {
+            "default": false,
+            "description": "Return the per-move :class:`MoveDiagnostics` record on the response.  Independent of the session's recording flag \u2014 useful when a UI wants to render search internals for *this* move without producing a file.",
+            "title": "Diagnostics",
+            "type": "boolean"
+          }
+        },
+        "title": "ThinkRequest",
+        "type": "object"
+      },
+      "ThinkResponse": {
+        "description": "Response payload for ``POST /v1/games/{id}/think``.",
+        "properties": {
+          "diagnostics": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MoveDiagnostics"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Populated when ``diagnostics: true`` was requested; ``null`` otherwise."
+          },
+          "move": {
+            "$ref": "#/components/schemas/Move-Output",
+            "description": "Move the brain chose and the runner applied."
+          },
+          "state": {
+            "$ref": "#/components/schemas/GameStateResponse",
+            "description": "Updated session state after the move."
+          }
+        },
+        "required": [
+          "move",
+          "state"
+        ],
+        "title": "ThinkResponse",
+        "type": "object"
+      },
+      "ThreatInfo": {
+        "description": "Summary of threats detected for one side.",
+        "properties": {
+          "four_threats": {
+            "default": 0,
+            "title": "Four Threats",
+            "type": "integer"
+          },
+          "three_threats": {
+            "default": 0,
+            "title": "Three Threats",
+            "type": "integer"
+          },
+          "vcf_result": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vcf Result"
+          },
+          "vct_result": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vct Result"
+          }
+        },
+        "title": "ThreatInfo",
+        "type": "object"
+      },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      },
+      "VersionInfo": {
+        "description": "One API version and its lifecycle status \u2014 an entry of ``GET /versions``.",
+        "properties": {
+          "deprecated": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Date the version was deprecated, if it is.",
+            "title": "Deprecated"
+          },
+          "openapi": {
+            "description": "OpenAPI document describing only this version.",
+            "examples": [
+              "/v1/openapi.json"
+            ],
+            "title": "Openapi",
+            "type": "string"
+          },
+          "path": {
+            "description": "URL prefix of every endpoint in this version.",
+            "examples": [
+              "/v1"
+            ],
+            "title": "Path",
+            "type": "string"
+          },
+          "released": {
+            "description": "Date the version was first served.",
+            "format": "date",
+            "title": "Released",
+            "type": "string"
+          },
+          "status": {
+            "description": "``deprecated`` versions still work but will be removed after their sunset date.  A version whose deprecation date is still ahead stays ``stable`` until then.",
+            "enum": [
+              "stable",
+              "deprecated"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "successor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Version that replaces this one, if any.",
+            "title": "Successor"
+          },
+          "sunset": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Date after which the version may be removed.",
+            "title": "Sunset"
+          },
+          "version": {
+            "description": "Version name, which is also its URL prefix.",
+            "examples": [
+              "v1"
+            ],
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "version",
+          "path",
+          "openapi",
+          "status",
+          "released"
+        ],
+        "title": "VersionInfo",
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "description": "REST API for the Gomoku engine.  Stateless surface (move, evaluate, analyze) plus stateful sessions for live play with mixed external/brain players.\n\nVersioned by URL prefix: every endpoint except ``/healthz`` and ``/versions`` lives under a version such as ``/v1``, and a version only ever changes in backwards-compatible ways.  ``GET /versions`` lists the served versions and their status; responses carry an ``API-Version`` header, plus ``Deprecation`` and ``Sunset`` headers once their version is deprecated.  See ``packages/gomoku-fastapi/README.md`` for the workflow.",
+    "title": "Gomoku API (v1)"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/v1": {
+      "get": {
+        "description": "The version's home resource: its status, dates and OpenAPI document.\n\nA deprecated version's ``successor-version`` link points at the\nsuccessor's home resource, so it always resolves.",
+        "operationId": "version_home_v1_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VersionInfo"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "This API version and its status",
+        "tags": [
+          "meta"
+        ]
+      }
+    },
+    "/v1/analyze": {
+      "post": {
+        "description": "Parse the upload and return an :class:`AnalysisReport`.\n\nThe response body is the dict produced by :meth:`AnalysisReport.to_json`\n\u2014 same shape as ``gomoku analyze --json``.  We bypass FastAPI's\nautomatic ``response_model`` so dataclass-keyed dicts (e.g. the\n``Stone``-keyed ``player_stats``) serialise without ceremony.",
+        "operationId": "post_analyze_v1_analyze_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_post_analyze_v1_analyze_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Post Analyze V1 Analyze Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "description": "File body could not be parsed as a diagnostics recording."
+          },
+          "413": {
+            "description": "Upload exceeds the size limit."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Analyse an uploaded .diag.jsonl recording",
+        "tags": [
+          "analyze"
+        ]
+      }
+    },
+    "/v1/brains": {
+      "get": {
+        "description": "Return one entry per brain in :data:`gomoku_brain.BRAINS`.\n\nEach entry includes the brain's *settings JSON Schema* so a UI can\nauto-render a configuration form without hard-coding the per-brain\nknob list (depth, ``vcf_depth``, exploration, \u2026).",
+        "operationId": "list_brains_v1_brains_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BrainsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List brains and their settings schemas",
+        "tags": [
+          "brains"
+        ]
+      }
+    },
+    "/v1/brains/{name}/settings": {
+      "get": {
+        "description": "Return every setting a move with *name* uses when the request sends\nno ``brain_overrides``.\n\nThe schema from ``GET /v1/brains`` gives each setting's built-in\ndefault; this server may play differently (a ``[brains.<name>]``\nalias in ``gomoku.toml``, the ``[api].max_time_limit_s`` cap).  A\nclient that lets users override settings can show these values as\nthe baseline the overrides change.",
+        "operationId": "get_brain_settings_v1_brains__name__settings_get",
+        "parameters": [
+          {
+            "description": "Registry name or ``[brains.<name>]`` alias.",
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "description": "Registry name or ``[brains.<name>]`` alias.",
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BrainSettingsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "Unknown brain name or alias."
+          },
+          "422": {
+            "description": "The server's configuration for this alias is invalid."
+          }
+        },
+        "summary": "The settings a brain plays with on this server",
+        "tags": [
+          "brains"
+        ]
+      }
+    },
+    "/v1/evaluate": {
+      "post": {
+        "operationId": "post_evaluate_v1_evaluate_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EvaluateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvaluateResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Invalid side (must be BLACK or WHITE, not EMPTY)."
+          }
+        },
+        "summary": "Static heuristic eval of a board for a given side",
+        "tags": [
+          "evaluate"
+        ]
+      }
+    },
+    "/v1/games": {
+      "post": {
+        "description": "Build a fresh :class:`GameRunner` and register it in the store.\n\nThe returned ``game_id`` is the only handle clients need \u2014 pass it\nin subsequent ``/v1/games/{id}/...`` calls.  Brains (when\nrequested) are instantiated immediately so a bad config produces a\nclean error at create-time, not on the first ``/think`` call.",
+        "operationId": "create_game_v1_games_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateGameRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GameStateResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "One of the requested brains is unknown."
+          },
+          "422": {
+            "description": "Invalid request payload (bad config, brain overrides)."
+          }
+        },
+        "summary": "Create a session",
+        "tags": [
+          "games"
+        ]
+      }
+    },
+    "/v1/games/{game_id}": {
+      "delete": {
+        "description": "Idempotent: deleting a missing session is a no-op (still 204).\n\nReturning 204 for unknown IDs lets clients retry safely without\nbranching on whether the session is \"really\" gone.",
+        "operationId": "delete_game_v1_games__game_id__delete",
+        "parameters": [
+          {
+            "description": "Session UUID returned by ``POST /v1/games``.",
+            "in": "path",
+            "name": "game_id",
+            "required": true,
+            "schema": {
+              "description": "Session UUID returned by ``POST /v1/games``.",
+              "title": "Game Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Drop a session",
+        "tags": [
+          "games"
+        ]
+      },
+      "get": {
+        "operationId": "get_game_v1_games__game_id__get",
+        "parameters": [
+          {
+            "description": "Session UUID returned by ``POST /v1/games``.",
+            "in": "path",
+            "name": "game_id",
+            "required": true,
+            "schema": {
+              "description": "Session UUID returned by ``POST /v1/games``.",
+              "title": "Game Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GameStateResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "Session not found or expired."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Read the current state of a session",
+        "tags": [
+          "games"
+        ]
+      }
+    },
+    "/v1/games/{game_id}/moves": {
+      "post": {
+        "description": "Apply *req.move* on behalf of the external player at *req.stone*.\n\nThe runner enforces side-of-move and legality; mismatches surface\nas 422 with a structured ``detail.error`` code so clients can\ndiscriminate (``wrong_turn`` vs ``invalid_move`` vs\n``game_already_over``).",
+        "operationId": "submit_move_v1_games__game_id__moves_post",
+        "parameters": [
+          {
+            "description": "Session UUID returned by ``POST /v1/games``.",
+            "in": "path",
+            "name": "game_id",
+            "required": true,
+            "schema": {
+              "description": "Session UUID returned by ``POST /v1/games``.",
+              "title": "Game Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SubmitMoveRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GameStateResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "Session not found or expired."
+          },
+          "422": {
+            "description": "Wrong turn, illegal move, or game already over."
+          }
+        },
+        "summary": "Submit an external move",
+        "tags": [
+          "games"
+        ]
+      }
+    },
+    "/v1/games/{game_id}/think": {
+      "post": {
+        "description": "Run the brain configured for the side-to-move and apply its move.\n\nThe brain runs on a worker thread (anyio) so a multi-second\nsearch doesn't block the event loop.  The session lock is released\n*only after* the apply completes \u2014 concurrent ``think`` /\n``submit_move`` calls on the same session are serialised, but\ndifferent sessions don't block each other.",
+        "operationId": "think_v1_games__game_id__think_post",
+        "parameters": [
+          {
+            "description": "Session UUID returned by ``POST /v1/games``.",
+            "in": "path",
+            "name": "game_id",
+            "required": true,
+            "schema": {
+              "description": "Session UUID returned by ``POST /v1/games``.",
+              "title": "Game Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ThinkRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ThinkResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "Session not found or expired."
+          },
+          "422": {
+            "description": "Current side is external, or game already over."
+          },
+          "429": {
+            "description": "Per-IP rate limit exceeded."
+          }
+        },
+        "summary": "Ask the brain on the current side to play its move",
+        "tags": [
+          "games"
+        ]
+      }
+    },
+    "/v1/move": {
+      "post": {
+        "description": "Resolve the brain, run ``get_move``, return the move (and optional diagnostics).\n\nThe brain runs in a worker thread via :func:`anyio.to_thread.run_sync`\nso that a several-second search doesn't block the event loop and\nstarve other concurrent requests.  Diagnostics ``ContextVar``s\npropagate through correctly because anyio copies the task context\non dispatch.",
+        "operationId": "post_move_v1_move_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MoveRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MoveResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "Unknown brain name."
+          },
+          "422": {
+            "description": "Invalid request payload (bad side, no candidates, etc.)."
+          },
+          "429": {
+            "description": "Per-IP rate limit exceeded."
+          }
+        },
+        "summary": "Get a brain's chosen move for a given board",
+        "tags": [
+          "moves"
+        ]
+      }
+    }
+  }
+}

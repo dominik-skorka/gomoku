@@ -183,7 +183,14 @@ class VersionHeadersMiddleware:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
-        segment = scope["path"].lstrip("/").split("/", 1)[0]
+        # Behind a proxy that mounts the API under a prefix (``--root-path
+        # /api``), the ASGI server reports the full path, ``/api/v1/...``;
+        # the version is the first segment after the root path.
+        path: str = scope["path"]
+        root_path: str = scope.get("root_path", "")
+        if root_path and path.startswith(root_path):
+            path = path[len(root_path) :]
+        segment = path.lstrip("/").split("/", 1)[0]
         extra = self._served.get(segment)
         if extra is not None:
 

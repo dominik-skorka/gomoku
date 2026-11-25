@@ -1,0 +1,99 @@
+# Gomoku: the whole site on one machine.
+#
+#   docker compose up --build          # http://localhost:8080
+#   docker compose up -d --scale api=3 # three engine replicas behind the edge
+#   docker compose logs -f api         # tail one component's logs
+#   docker compose down                # stop + remove
+#
+# Each service is its own image and can be rebuilt, replaced or restarted
+# alone:  docker compose up -d --build web   /   docker compose restart api
+#
+# Working on the API alone (port 8000 on the host, no proxy prefix):
+#   docker compose -f compose.yaml -f compose.dev.yaml up --build api
+name: gomoku
+
+x-restart: &restart
+  restart: unless-stopped
+
+services:
+  api:
+    <<: *restart
+    build:
+      context: .
+      dockerfile: packages/gomoku-fastapi/Dockerfile
+      args:
+        VERSION: ${GOMOKU_VERSION:-dev}
+        REVISION: ${GOMOKU_REVISION:-unknown}
+    image: ${GOMOKU_REGISTRY:-ghcr.io/dominik-skorka}/gomoku-api:${GOMOKU_VERSION:-dev}
+    environment:
+      # The edge strips /api, so the interactive docs live at /api/docs.
+      UVICORN_ROOT_PATH: /api
+      # Logfire: stdout only by default.  Set LOGFIRE_TOKEN in a .env file
+      # (gitignored) and GOMOKU_API__LOGFIRE_SEND=true to ship traces.
+      GOMOKU_API__LOGFIRE_CONSOLE: "true"
+      GOMOKU_API__LOGFIRE_SEND: ${GOMOKU_LOGFIRE_SEND:-false}
+      LOGFIRE_TOKEN: ${LOGFIRE_TOKEN:-}
+      # Rate limits, per IP and per replica; an empty string disables a tier.
+      GOMOKU_API__RATE_LIMIT_DEFAULT: ${GOMOKU_RATE_LIMIT_DEFAULT:-240/minute}
+      GOMOKU_API__RATE_LIMIT_COMPUTE: ${GOMOKU_RATE_LIMIT_COMPUTE:-60/minute}
+      # Upper bound on the search time of a single request, in seconds.
+      GOMOKU_API__MAX_TIME_LIMIT_S: ${GOMOKU_MAX_TIME_LIMIT_S:-10}
+    # volumes:
+    #   # Optional: the image ships the repository's gomoku.toml; mount a
+    #   # host-side copy read-only to change brain settings without
+    #   # rebuilding.
+    #   - ./gomoku.toml:/app/gomoku.toml:ro
+    labels:
+      autoheal: "true"
+    # No published port: only the edge can reach the engine (which is also
+    # why the API may trust X-Forwarded-For).
+
+  web:
+    <<: *restart
+    build:
+      context: web
+      args:
+        VERSION: ${GOMOKU_WEB_VERSION:-}
+        REVISION: ${GOMOKU_REVISION:-unknown}
+    image: ${GOMOKU_REGISTRY:-ghcr.io/dominik-skorka}/gomoku-web:${GOMOKU_WEB_VERSION:-dev}
+    # The web UI's runtime configuration (API address, difficulty levels and
+    # their engine parameters) and its texts.  Mounted from the repository,
+    # so an edit plus a browser refresh is enough: no rebuild, no API restart.
+    # Directories, not single files: a single-file bind mount keeps showing
+    # the old content after an editor replaces the file (vim, sed -i).
+    volumes:
+      - ./web/public/config:/srv/config:ro
+      - ./web/public/locales:/srv/locales:ro
+    labels:
+      autoheal: "true"
+
+  edge:
+    <<: *restart
+    image: caddy:2.11-alpine
+    ports:
+      - "${HTTP_PORT:-8080}:80"
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:-:80}
+    volumes:
+      - ./deploy/edge/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+    depends_on:
+      api:
+        condition: service_healthy
+      web:
+        condition: service_healthy
+
+  # Docker restarts a container when its process exits, but not when its
+  # healthcheck turns "unhealthy".  autoheal closes that gap for every
+  # container labelled autoheal=true (needs read access to the Docker socket).
+  autoheal:
+    <<: *restart
+    image: willfarrell/autoheal:1.2.0
+    environment:
+      AUTOHEAL_CONTAINER_LABEL: autoheal
+      AUTOHEAL_INTERVAL: 10
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+
+volumes:
+  caddy-data:

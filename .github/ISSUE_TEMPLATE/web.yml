@@ -1,0 +1,27 @@
+name: Web page (UI)
+description: Something about the website — look, layout, mobile, the game in the browser.
+labels: ["area:web"]
+body:
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Kind
+      options: ["Bug", "Feature / improvement"]
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happens, or what should happen?
+    validations:
+      required: true
+  - type: input
+    id: device
+    attributes:
+      label: Device and browser
+      placeholder: "e.g. iPhone 15, Safari 26 / Windows laptop, Chrome 143"
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Shown in the page footer, e.g. "0.1.0 (867e0da)".

@@ -36,6 +36,22 @@ class BrainsResponse(BaseModel):
     brains: list[BrainInfo]
 
 
+class BrainSettingsResponse(BaseModel):
+    """Response payload for ``GET /v1/brains/{name}/settings``."""
+
+    name: str = Field(description="The brain name or alias that was asked for.")
+    type: str = Field(description="The registry brain it resolves to (``alphabeta``, ``threat``, …).")
+    settings: dict[str, Any] = Field(
+        description=(
+            "Every setting a move with this brain uses when the request sends "
+            "no ``brain_overrides``: the server's ``[brains.<name>]`` alias, "
+            "the brain's defaults for what the alias leaves out, and the "
+            "server's time cap.  Keys follow the type's ``settings_schema`` "
+            "from ``GET /v1/brains``."
+        ),
+    )
+
+
 class MoveRequest(BaseModel):
     """Request payload for ``POST /v1/move``.
 

@@ -1,0 +1,10 @@
+{
+  "apiBase": "/api",
+  "defaultLevel": "hard",
+  "levels": [
+    { "id": "easy", "brain": "negamax", "overrides": { "depth": 2 }, "typicalSeconds": 0.5 },
+    { "id": "medium", "brain": "alphabeta", "overrides": { "depth": 2, "vcf_depth": 0 }, "typicalSeconds": 0.5 },
+    { "id": "hard", "brain": "alphabeta", "overrides": {}, "typicalSeconds": 1 },
+    { "id": "master", "brain": "threat", "overrides": {}, "typicalSeconds": 6 }
+  ]
+}

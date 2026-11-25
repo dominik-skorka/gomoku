@@ -1,0 +1,53 @@
+# Edge proxy: the only container that publishes a port.
+#
+#   /api/*  -> gomoku-api replicas (prefix stripped; FastAPI sees /v1/...)
+#   /*      -> gomoku-web (static SPA)
+#
+# SITE_ADDRESS ":80" serves plain HTTP (laptop).  Set it to a domain name
+# (e.g. "gomoku.example.com") and Caddy obtains and renews a TLS certificate
+# automatically.
+{
+	servers {
+		metrics
+	}
+}
+
+{$SITE_ADDRESS::80} {
+	encode zstd gzip
+
+	header {
+		-Server
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		X-Frame-Options DENY
+	}
+
+	handle_path /api/* {
+		reverse_proxy {
+			# Every replica behind the `api` DNS name (docker compose --scale api=N).
+			dynamic a api 8000 {
+				refresh 5s
+			}
+			lb_policy least_conn
+			lb_retries 2
+			# Passive health: a replica that fails is skipped for 30 s.
+			fail_duration 30s
+			unhealthy_status 502 503 504
+			# Brains think for seconds; never cut a move off at the proxy.
+			transport http {
+				dial_timeout 3s
+				response_header_timeout 60s
+			}
+		}
+	}
+
+	handle {
+		reverse_proxy web:8080
+	}
+
+	log {
+		output stdout
+		format json
+	}
+}
