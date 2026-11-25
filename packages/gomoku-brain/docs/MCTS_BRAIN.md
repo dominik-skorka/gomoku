@@ -58,28 +58,33 @@ get_move(board, stone)
 ├── Decision shortcuts (no MCTS needed)
 │   ├── Only one legal candidate         → "single_candidate"
 │   ├── We have an immediate win         → "instant_win"
-│   └── Opponent wins next               → "instant_block"
+│   ├── Opponent wins next               → "instant_block"
+│   └── We have a VCF (vcf_depth > 0)    → "vcf_win"
 │
 ├── VCF safety gate (opponent forced-win check)
-│   └── Restrict candidates to the proven blocking cells
+│   └── Restrict candidates to the durable VCF breakers
 │
-├── Build root node
+├── Build root node (or reuse the kept subtree, reuse_tree = true)
 │   ├── Generate candidates (radius-2 of occupied)
 │   ├── Compute per-move priors (pattern score → normalised)
-│   └── Mix in Dirichlet noise
+│   └── Mix in Dirichlet noise (not on a gated or reused root)
 │
-├── For i = 1..iterations:
-│   └── _run_iteration(root, grid, occupied, stone)
+├── Until `iterations` ran or `time_limit_s` passed:
+│   └── _run_iteration(root, state, stone)
 │       │
-│       ├── 1. Selection       PUCT descent while untried is empty
-│       │                      and the node has children
+│       ├── 1. Selection       PUCT descent; the best untried move
+│       │                      competes as an unvisited child (FPU)
+│       │                      Moves of a node are generated at its
+│       │                      first expansion (lazy)
 │       │
-│       ├── 2. Expansion       Pop one untried child at random,
-│       │                      apply its move, compute its priors
+│       ├── 2. Expansion       Pop the highest-prior untried move,
+│       │                      classify the new node: terminal
+│       │                      (decided), forced (one block) or open
 │       │
-│       ├── 3. Evaluation      Heuristic eval of the leaf position
+│       ├── 3. Evaluation      Terminal: its stored 0 / 1 value
+│       │                      Otherwise heuristic eval of the leaf
+│       │                      (+ tempo for the side to move)
 │       │                      → value in [0, 1] (root-relative)
-│       │                      Shortcut: immediate win / decisive loss
 │       │
 │       └── 4. Backpropagation Walk up to root updating visits / wins
 │                              (flip perspective on opponent nodes)
@@ -87,10 +92,9 @@ get_move(board, stone)
 └── Return the child of root with the most visits (most robust choice)
 ```
 
-All hot-path work uses **raw `int` grids** (`list[list[int]]`) and
-`set[tuple[int, int]]` occupancy sets — the code deliberately avoids
-constructing `Board` objects per iteration, because `Board.place_stone`
-is an immutable-style deep-copy that would dominate the cost.
+The search runs on one mutable `SearchState`: each iteration `make`s
+the moves on the way down and `unmake`s them on the way back, so no
+`Board` is built per iteration.
 
 ---
 
@@ -133,8 +137,8 @@ c = exploration constant           (default 2.0)
 ## Heuristic Priors
 
 Priors replace AGZ's neural-network policy head.  Each candidate move
-is scored by a raw-grid version of the pattern evaluator
-(`_score_move_prior`):
+is scored by the pattern scorer `gomoku_brain.priors.compute_priors`
+(shared with alpha-beta):
 
 ```python
 # (consecutive_stones, open_ends) → raw score
@@ -201,13 +205,9 @@ Classical MCTS runs a random playout from the leaf to a terminal state
 and backs up the winner as 0 or 1.  Random playouts are O(depth) per
 iteration and terribly noisy on a 225-cell board.
 
-This brain instead calls `_evaluate_position(grid, size, occupied,
-root_stone_val)`:
-
-1. Scan every run of consecutive same-colour stones on the board.
-2. Score each run using `_PRIOR_PATTERN_SCORES`, with opponent runs
-   weighted 0.8× (same defensive ratio as the prior).
-3. Map the net advantage through a sigmoid, `k = 1000`:
+This brain instead scores the leaf with the static evaluator shared
+with alpha-beta (`gomoku_brain.evaluate.evaluate_board`, from the root
+player's view) and maps it through a sigmoid, `k = 1000`:
 
 ```python
 clamped = max(-10, min(10, score / 1000))
@@ -221,17 +221,32 @@ value = 1 / (1 + exp(-clamped))
 Because the returned value is already in `[0, 1]` it plugs directly
 into the PUCT `Q` term without any rescaling.
 
-### Decisive-leaf shortcuts
+### Tempo for the side to move
 
-Before falling back to the sigmoid, expansion checks:
+The static evaluation does not know whose turn it is, but an open
+three is nearly a win for the side to move and only a threat to block
+for the other side.  When the side to move at a leaf can make a live
+four or a double four next move, and the other side has no five threat,
+the score moves by `_TEMPO_WIN = 5000` towards the side to move before
+the sigmoid.
 
-- **Expansion move wins** — `_fast_check_winner` finds 5-in-a-row for
-  the stone we just placed → value is `1.0` from that player's view.
-- **Opponent can win immediately** — `_find_winning_move` finds an
-  opponent reply that ends the game → value is `0.0`.
+### Decided and forced nodes
 
-Either way the node is backpropagated with an exact terminal value, so
-the tree learns forced wins/losses with perfect accuracy.
+When a node is created, `_node_status` classifies the position after
+its move:
+
+| Position | Node |
+|----------|------|
+| The move made five | Terminal: win for the mover |
+| The side to move can make five | Terminal: loss for the mover |
+| The mover threatens five on two or more cells (e.g. open four) | Terminal: win for the mover |
+| The mover threatens five on one cell | Forced: the block is its only move |
+| Otherwise | Open: moves generated at its first expansion |
+
+A terminal node stores its value (`_Node.terminal`, from the root
+player's view), has no moves and is never expanded: every visit backs
+up the same exact value, so a proven result is never averaged with
+heuristic values.
 
 ---
 
@@ -245,9 +260,7 @@ trivial cases:
 | Only one candidate in range | `"single_candidate"` | O(1) |
 | We can win in 1 ply | `"instant_win"` | O(C) candidates |
 | Opponent can win in 1 ply — we must block | `"instant_block"` | O(C) candidates |
-
-These checks use raw-grid helpers (`_fast_check_winner`,
-`_find_winning_move`) so they are effectively free.
+| We have a VCF of at most `vcf_depth` (as AlphaBeta's root) | `"vcf_win"` | VCF search |
 
 ---
 
@@ -262,14 +275,14 @@ before spinning up the tree:
 opp_vcf = _vcf(board, opponent, vcf_depth)
 if opp_vcf is not None:
     # Opponent has a forced win via continuous fours.
-    # Restrict root candidates to the proven blocking cells.
+    durable, breakers = classify_vcf_breakers(board, candidates, stone, vcf_depth)
+    candidates = durable or breakers
 ```
 
-Blocking candidates come from two sources:
-
-1. The opponent's first VCF attack move itself.
-2. All four-threat attack/defence pairs discovered by
-   `_find_four_threats(board, opponent)`.
+A *breaker* is a candidate after which the opponent's VCF is gone; a
+*durable* breaker also keeps it gone after the forced reply to any
+four it makes (`classify_vcf_breakers`, shared with AlphaBeta and
+ThreatBrain).
 
 When the restricted set is non-empty, MCTS continues with only those
 moves — ensuring the brain cannot wander away from a proven threat.
@@ -284,46 +297,49 @@ diagnostics, which is one of the triggers for `gomoku analyze`'s
 
 ## Iteration Loop
 
-A single iteration (`_run_iteration`) mutates a per-iteration copy of
-the board grid — creating and tearing it down costs a shallow list
-comprehension (`[row[:] for row in grid]`), roughly 50× faster than
-`copy.deepcopy` used by `Board.place_stone`.
-
 ```
 1. Selection
-   while node has no untried moves AND has children:
-       node = argmax_{child} PUCT(child)
-       apply node.move to grid
+   loop:
+       if node is terminal: stop
+       if node's moves are not generated yet: generate them (+ priors)
+       if node has no children, or its best untried move outscores
+          every child (FPU, below): stop
+       node = argmax_{child} PUCT(child); state.make(node.move)
+
+   if node is terminal: backpropagate node.terminal, done
 
 2. Expansion  (if node still has untried moves)
-   move, prior = node.pop_untried()        # random choice
-   apply move to grid
-   child = _Node(move, stone, untried=candidates(grid))
-   compute child.untried_priors
-   node.children.append(child)
-   node = child
-
-   # terminal shortcuts
-   if move wins:          value = 1.0 (or 0.0)
-   if opp can win next:   value = 0.0 (or 1.0)
+   move, prior = node.pop_untried()        # highest prior
+   state.make(move)
+   classify (terminal / forced / open), add the child
+   if terminal: backpropagate its value, done
 
 3. Evaluation
-   value = _evaluate_position(grid, root_stone)    # sigmoid ∈ [0, 1]
+   value = _leaf_value(state, root_stone, side_to_move)   # ∈ [0, 1]
 
 4. Backpropagation
    walk up to root:
        node.visits += 1
        node.wins  += value     if node.stone == root_stone
                      (1-value) otherwise
+   unmake every move of the iteration
 ```
 
-### Expansion order
+### Expansion order and First Play Urgency
 
-`pop_untried()` picks a **uniformly random** untried move, not the
-highest-prior one.  Selection (step 1) already prefers high-prior
-children via PUCT, so the *order* in which children are created does
-not matter — randomising keeps the tree from becoming structurally
-biased when multiple moves share a prior.
+Untried moves are kept sorted by prior; `pop_untried()` takes the
+highest.  An untried move competes with the existing children as an
+unvisited child:
+
+```
+PUCT_untried = FPU + c · P_best_untried · √N
+FPU          = (value of the node for the player choosing) − fpu_reduction
+```
+
+A new child is expanded only when this beats the best child, so a node
+does not have to expand all its ~50–140 moves before the search goes
+deeper.  In a quiet 6-stone position at 10 000 iterations this took the
+maximum depth from 7 to 16 plies.
 
 ---
 
@@ -333,15 +349,16 @@ When a diagnostics context is active, MCTSBrain records:
 
 | Field | Value |
 |-------|-------|
-| `decision_path` | `"single_candidate"`, `"instant_win"`, `"instant_block"`, `"mcts"`, `"mcts_vcf_gated"` |
+| `decision_path` | `"single_candidate"`, `"instant_win"`, `"instant_block"`, `"vcf_win"`, `"mcts"`, `"mcts_vcf_gated"` |
 | `chosen_move` | The most-visited root child (or the shortcut move) |
-| `search_stats.iterations` | Simulations run |
+| `search_stats.iterations` | Simulations run (fewer than `iterations` when `time_limit_s` stopped the search) |
 | `search_stats.nodes_searched` | `root.visits` (total tree samples) |
 | `search_stats.time_ms` | Wall-clock search time |
 | `top_candidates` | Top-10 root children by visits, with **`score_type="winrate"`** — score is `wins / visits ∈ [0, 1]` |
 | `alternative_best` | Set when the top-visits candidate differs from the chosen move (never, unless a shortcut fired first) |
 | `opp_threats.vcf_result` | `"win"` when the VCF safety gate fired |
-| `notes` | `"Best: {move} visits={n}/{N} wr={rate}"`; VCF-gate explanations |
+| `our_threats.vcf_result` | `"win"` when our own VCF was played |
+| `notes` | `"Best: {move} visits={n}/{N} wr={rate}"`; VCF-gate explanations; `"Reused tree: …"` |
 
 Because MCTS candidate scores are winrates (not eval units), the
 `gomoku analyze` tool intentionally does **not** trigger
@@ -438,11 +455,11 @@ Heuristic eval:
 ### Example 5 — Decisive-move shortcut avoids wasted budget
 
 ```
-Expansion places a stone creating 5-in-a-row.
-Instead of heuristic eval, _fast_check_winner flags the terminal win:
-    value = 1.0 (from placer's perspective)
-Backpropagation records a perfect win on this branch — no sigmoid noise
-masks the result, and PUCT will prefer this path deterministically.
+Expansion places a stone making an open four.
+_node_status sees two five threats the opponent cannot both block:
+    terminal = 1.0 (from the placer's perspective)
+The node is never expanded; every visit backs up the same exact value,
+so no sigmoid noise masks the result.
 ```
 
 ---
