@@ -121,12 +121,14 @@ class _Node:
         # an immediate five); ``None`` for an undecided position.  A
         # terminal node is never expanded: every visit backs up this value.
         self.terminal: float | None = None
-        self._untried = untried
-        if untried_priors is not None:
-            self._untried_priors = untried_priors
-        else:
+        if untried_priors is None:
             n = len(untried)
-            self._untried_priors = [1.0 / n] * n if n else []
+            untried_priors = [1.0 / n] * n if n else []
+        # Untried moves sorted by ascending prior, so ``pop()`` takes the
+        # most promising one (the order PUCT would visit them in).
+        order = sorted(range(len(untried)), key=untried_priors.__getitem__)
+        self._untried = [untried[i] for i in order]
+        self._untried_priors = [untried_priors[i] for i in order]
 
     def puct(self, exploration: float) -> float:
         """AGZ-style PUCT score: Q + c · P · √N / (n + 1)."""
@@ -137,20 +139,35 @@ class _Node:
     def best_child(self, exploration: float) -> _Node:
         return max(self.children, key=lambda c: c.puct(exploration))
 
+    def untried_puct(self, exploration: float, fpu_reduction: float) -> float:
+        """PUCT score of the best untried move, as an unvisited child.
+
+        Its Q is the First Play Urgency value: this node's value from the
+        perspective of the player choosing here, minus *fpu_reduction*.
+        """
+        q = (1.0 - self.wins / self.visits) if self.visits else 0.5
+        fpu = max(0.0, q - fpu_reduction)
+        return fpu + exploration * self._untried_priors[-1] * math.sqrt(self.visits)
+
+    def wants_expansion(self, exploration: float, fpu_reduction: float) -> bool:
+        """Expand a new child here rather than descend into an existing one?
+
+        True when there are untried moves and either no children yet or
+        the best untried move (highest prior) outscores every child.
+        """
+        if not self._untried:
+            return False
+        if not self.children:
+            return True
+        best = max(c.puct(exploration) for c in self.children)
+        return self.untried_puct(exploration, fpu_reduction) > best
+
     def has_untried(self) -> bool:
         return len(self._untried) > 0
 
     def pop_untried(self) -> tuple[tuple[int, int], float]:
-        """Remove and return a random untried move together with its prior."""
-        idx = _random.randrange(len(self._untried))
-        self._untried[idx], self._untried[-1] = self._untried[-1], self._untried[idx]
-        self._untried_priors[idx], self._untried_priors[-1] = (
-            self._untried_priors[-1],
-            self._untried_priors[idx],
-        )
-        prior = self._untried_priors.pop()
-        move = self._untried.pop()
-        return move, prior
+        """Remove and return the highest-prior untried move with its prior."""
+        return self._untried.pop(), self._untried_priors.pop()
 
     def is_leaf(self) -> bool:
         return len(self.children) == 0
@@ -322,8 +339,17 @@ class MCTSBrain(Brain[MCTSBrainSettings], name="mcts"):
         depth = 0
 
         # 1. Selection — descend using PUCT, replaying moves into state.
-        while node.terminal is None and not node.has_untried() and not node.is_leaf():
-            node = node.best_child(self.settings.exploration)
+        # Untried moves compete with the existing children as unvisited
+        # children (FPU), in prior order: a node is not required to expand
+        # every move before the search goes deeper.
+        exploration = self.settings.exploration
+        fpu_reduction = self.settings.fpu_reduction
+        while (
+            node.terminal is None
+            and not node.is_leaf()
+            and not node.wants_expansion(exploration, fpu_reduction)
+        ):
+            node = node.best_child(exploration)
             r, c = node.move  # type: ignore[misc]
             state.make(r, c, node.stone)
             depth += 1

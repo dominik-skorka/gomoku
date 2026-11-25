@@ -223,6 +223,36 @@ class TestNodePUCT:
         assert {move1, move2} == {(0, 0), (1, 1)}
         assert math.isclose(prior1 + prior2, 1.0)
 
+    def test_pop_untried_takes_highest_prior_first(self):
+        n = _Node(
+            move=None,
+            stone=Stone.BLACK,
+            parent=None,
+            untried=[(0, 0), (1, 1), (2, 2)],
+            untried_priors=[0.2, 0.5, 0.3],
+        )
+        assert [n.pop_untried()[0] for _ in range(3)] == [(1, 1), (2, 2), (0, 0)]
+
+    def test_expands_while_best_untried_outscores_children(self):
+        parent = _Node(
+            move=None, stone=Stone.WHITE, parent=None, untried=[(0, 0), (1, 1)], untried_priors=[0.1, 0.4]
+        )
+        assert parent.wants_expansion(1.0, 0.2)  # no children yet
+        parent.visits = 4
+        parent.wins = 2.0  # Q = 0.5 for the chooser too
+        child = _Node(move=(2, 2), stone=Stone.BLACK, parent=parent, untried=[], prior=0.5)
+        child.visits = 3
+        child.wins = 2.7  # Q = 0.9: PUCT = 0.9 + 0.5 * 2 / 4 = 1.15
+        parent.children = [child]
+        # Best untried (prior 0.4): FPU 0.3 + 0.4 * 2 = 1.1 < 1.15 -> descend.
+        assert not parent.wants_expansion(1.0, 0.2)
+        child.wins = 1.5  # Q = 0.5: PUCT = 0.75 -> expand
+        assert parent.wants_expansion(1.0, 0.2)
+
+    def test_no_expansion_without_untried(self):
+        parent = _Node(move=None, stone=Stone.WHITE, parent=None, untried=[])
+        assert not parent.wants_expansion(1.0, 0.2)
+
 
 # ---------------------------------------------------------------------------
 # MCTSBrain high-level behaviour
@@ -333,6 +363,25 @@ def _walk(root: _Node):
         n = stack.pop()
         yield n
         stack.extend(n.children)
+
+
+class TestPriorOrderedExpansion:
+    def test_strong_move_gets_searched_deeply(self):
+        """In a quiet position the search goes deeper than one ply per
+        candidate: the most visited root move has a grandchild with visits."""
+        b = Board(size=15)
+        stone = Stone.BLACK
+        for r, c in [(7, 7), (7, 8), (8, 6), (6, 8), (9, 9), (8, 9)]:
+            b = b.place_stone(Move(row=r, col=c), stone)
+            stone = stone.opponent()
+        root = _search_tree(b, Stone.BLACK, iterations=2000)
+        assert root._untried  # weak moves were never expanded
+        depth = 0
+        node = root
+        while node.children:
+            node = max(node.children, key=lambda c: c.visits)
+            depth += 1
+        assert depth >= 6
 
 
 class TestTerminalNodes:
