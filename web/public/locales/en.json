@@ -74,7 +74,6 @@
   "settingsNote": "Each field shows the value a move uses. Values that differ from the defaults (the server's settings) are marked. Changes apply to new moves and are saved in this browser only.",
   "loadingEngines": "Loading engines…",
   "enginesUnavailable": "Could not load the engines from the server.",
-  "changed": "changed",
   "serverValue": "Default",
   "useServerValue": "Restore the default",
   "serverValuesUnavailable": "The default values could not be loaded from the server; empty fields use them.",

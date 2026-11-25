@@ -74,7 +74,6 @@
   "settingsNote": "Każde pole pokazuje wartość, której używa ruch. Wartości inne niż domyślne (ustawienia serwera) są wyróżnione. Zmiany działają od następnego ruchu i są zapisywane tylko w tej przeglądarce.",
   "loadingEngines": "Wczytywanie silników…",
   "enginesUnavailable": "Nie udało się pobrać silników z serwera.",
-  "changed": "zmieniony",
   "serverValue": "Domyślnie",
   "useServerValue": "Przywróć domyślną",
   "serverValuesUnavailable": "Nie udało się pobrać wartości domyślnych z serwera; puste pola ich używają.",

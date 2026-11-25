@@ -241,8 +241,7 @@ function ParamInput({
         <span className="block text-xs text-muted">
           {changed ? (
             <span>
-              <span className="font-semibold text-accent">{t.changed}</span> · {t.serverValue}:{" "}
-              <span className="font-medium tabular-nums">{format(server)}</span>
+              {t.serverValue}: <span className="font-medium tabular-nums">{format(server)}</span>
             </span>
           ) : (
             range && <span className="tabular-nums">{range}</span>
@@ -324,12 +323,6 @@ function LevelEditor({ level, brains }: { level: Level; brains: readonly BrainIn
       />
     );
   };
-  const changedIn = (group: Group) =>
-    group.fields.filter((f) => {
-      const [top = ""] = f.path;
-      return top in level.overrides && !same(getPath(level.overrides, f.path), getPath(baseline(top), f.path.slice(1)));
-    }).length;
-
   const top = groups.filter((g) => g.path.length === 0);
   // Nested groups under their top-level setting, e.g. threats › own, threats › defence.
   const sections = new Map<string, Group[]>();
@@ -362,18 +355,12 @@ function LevelEditor({ level, brains }: { level: Level; brains: readonly BrainIn
       {/* Nested settings need the server's values as their baseline. */}
       {server.data &&
         [...sections].map(([key, subgroups]) => {
-          const count = subgroups.reduce((n, g) => n + changedIn(g), 0);
           const description = subgroups.find((g) => g.path.length === 1)?.description;
           return (
             <details key={key} className="rounded-xl border border-line" data-testid={`group-${key}`}>
               <summary className="flex cursor-pointer items-center gap-2 px-3 py-2 text-sm font-semibold">
                 <span className="font-mono">{key}</span>
                 {description && <InfoTip text={description} label={`${key}: ${t.about}`} />}
-                {count > 0 && (
-                  <span className="text-xs font-semibold text-accent">
-                    {t.changed} ({count})
-                  </span>
-                )}
               </summary>
               <div className="flex flex-col gap-2 px-1.5 pb-2">
                 {subgroups.map((g) => (
@@ -468,7 +455,13 @@ export function LevelSettingsDialog({ open, onClose }: { open: boolean; onClose:
               )}
             >
               {t.level(l.id).label}
-              {l.id in changes && <span className="ml-1.5 text-xs font-normal text-accent">• {t.edited}</span>}
+              {l.id in changes && (
+                // A dot marks a level edited in this browser; the word is for screen readers.
+                <span className="ml-1.5 text-accent" title={t.edited}>
+                  <span aria-hidden="true">•</span>
+                  <span className="sr-only"> ({t.edited})</span>
+                </span>
+              )}
             </button>
           ))}
         </div>

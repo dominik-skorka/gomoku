@@ -471,7 +471,6 @@ test("level settings: nested groups send the whole group with the change", async
   await expect(group.locator("#param-threats-own-fours")).toHaveValue("true");
   await group.locator("#param-threats-own-fours").selectOption("false");
   await expect(group.getByTestId("param-threats-own-fours")).toHaveAttribute("data-changed", "true");
-  await expect(group.locator("summary")).toContainText("changed (1)");
   await dialog.getByRole("button", { name: "Close" }).click();
 
   await page.getByRole("button", { name: "New game" }).filter({ visible: true }).first().click();
