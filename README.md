@@ -57,6 +57,8 @@ docker compose up --build
 Open <http://localhost:8080>.  See [docs/WEB_ARCHITECTURE.md](docs/WEB_ARCHITECTURE.md)
 for how the website is built and run.
 
+![Gomoku in the browser — computer vs computer](assets/web_game.png)
+
 ---
 
 ## Features
