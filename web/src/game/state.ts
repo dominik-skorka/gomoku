@@ -1,4 +1,3 @@
-import type { PresetId } from "./presets";
 import {
   BLACK,
   type Cell,
@@ -27,8 +26,11 @@ export type PlayerKind = "human" | "engine";
 
 export interface SideSettings {
   readonly kind: PlayerKind;
-  /** Difficulty when `kind` is `engine`; kept for humans so switching back remembers it. */
-  readonly preset: PresetId;
+  /**
+   * Difficulty level id (config.json) when `kind` is `engine`; kept for
+   * humans so switching back remembers it.
+   */
+  readonly preset: string;
 }
 
 export interface GameSettings {
@@ -214,7 +216,7 @@ export function migrateSettings(raw: unknown): GameSettings {
     typeof (v as SideSettings).preset === "string";
   if (isSide(r.black) && isSide(r.white)) return { size, winLength, black: r.black, white: r.white };
   if (r.human === BLACK || r.human === WHITE) {
-    const preset = (typeof r.preset === "string" ? r.preset : "hard") as PresetId;
+    const preset = typeof r.preset === "string" ? r.preset : "hard";
     const human: SideSettings = { kind: "human", preset };
     const engine: SideSettings = { kind: "engine", preset };
     return r.human === BLACK

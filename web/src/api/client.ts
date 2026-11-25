@@ -7,12 +7,16 @@ import type { components, paths } from "./schema";
  * `web/openapi/v1.json` (`pnpm gen:api`), which CI keeps in sync with the
  * server, so an incompatible API change breaks the web build, not the game.
  *
- * The base URL is same-origin `/api` by default: Caddy (production) and the
- * Vite dev server both proxy it to the API, so no CORS is involved.
+ * The base URL comes from `apiBase` in config.json (`configureApi`, called
+ * at start-up); the default `/api` is same-origin: Caddy (production) and
+ * the Vite dev server both proxy it to the API, so no CORS is involved.
  */
-export const API_BASE: string = import.meta.env.VITE_API_BASE ?? "/api";
+export let api = createClient<paths>({ baseUrl: "/api" });
 
-export const api = createClient<paths>({ baseUrl: API_BASE });
+/** Point the client at the API (`apiBase` from config.json). */
+export function configureApi(baseUrl: string): void {
+  api = createClient<paths>({ baseUrl });
+}
 
 export type ApiErrorKind = "rate_limited" | "unavailable" | "rejected";
 

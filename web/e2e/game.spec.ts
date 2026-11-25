@@ -168,7 +168,7 @@ test("move navigation: view earlier positions without changing the game", async 
   await tap(page, 6, 6);
   await tap(page, 5, 5);
   const nav = page.getByRole("toolbar", { name: "Move navigation" });
-  await expect(nav).toContainText("3 moves");
+  await expect(nav).toContainText("Moves: 3");
 
   await nav.getByRole("button", { name: "Previous move" }).click();
   await expect(nav).toContainText("Viewing 2/3");
@@ -193,7 +193,7 @@ test("move navigation: view earlier positions without changing the game", async 
 
   // Keyboard: End catches up with the game.
   await page.locator("body").press("End");
-  await expect(nav).toContainText("3 moves");
+  await expect(nav).toContainText("Moves: 3");
   await expect(status(page)).toHaveText(/White to move/);
 });
 
@@ -314,4 +314,86 @@ test("loading or reloading the page does not start a game; New game → Start do
   await expect(moveItems(page)).toHaveCount(1);
   expect(requests).toHaveLength(1);
   await expect(status(page)).toHaveText(/Your move/);
+});
+
+const BRAINS = {
+  brains: [
+    {
+      name: "negamax",
+      settings_schema: { properties: { depth: { type: "integer", minimum: 1, maximum: 10, default: 3 } } },
+    },
+    {
+      name: "alphabeta",
+      settings_schema: {
+        properties: {
+          depth: { type: "integer", minimum: 1, maximum: 10, default: 4 },
+          lmr: { type: "boolean", default: false },
+          opening_book: { type: "string", default: "" },
+        },
+      },
+    },
+    { name: "threat", settings_schema: { properties: { pns_time_s: { type: "number", minimum: 0.1, maximum: 60 } } } },
+  ],
+};
+
+test("config.json decides the levels and what each sends to the engine", async ({ page }) => {
+  await page.route("**/config.json", (route) =>
+    route.fulfill({
+      json: {
+        apiBase: "/api",
+        defaultLevel: "blitz",
+        levels: [{ id: "blitz", brain: "random", overrides: { seed: 1 }, typicalSeconds: 0 }],
+      },
+    }),
+  );
+  const requests = await stubEngine(page, [[0, 0]]);
+  await page.goto("/");
+  await page.getByRole("button", { name: "New game" }).filter({ visible: true }).first().click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByRole("group", { name: /Black/ }).getByText("Engine", { exact: true }).click();
+  // A level without a translation shows its id.
+  await expect(dialog.getByText("blitz", { exact: true }).first()).toBeVisible();
+  await dialog.getByRole("button", { name: "Start" }).click();
+  await expect.poll(() => requests.length).toBe(1);
+  expect(requests[0]).toMatchObject({ brain: "random", brain_overrides: { seed: 1 } });
+});
+
+test("level settings: change a level's parameters in this browser, restore them", async ({ page }) => {
+  await page.route("**/api/v1/brains", (route) => route.fulfill({ json: BRAINS }));
+  const requests = await stubEngine(page, [
+    [0, 0],
+    [0, 1],
+    [0, 2],
+  ]);
+  await page.goto("/");
+  await page.getByRole("button", { name: "Difficulty levels" }).click();
+  const dialog = page.getByRole("dialog", { name: "Difficulty levels" });
+  await dialog.getByRole("tab", { name: /Easy/ }).click();
+  await expect(dialog.getByLabel("Engine")).toHaveValue("negamax");
+  // Server file paths are never offered.
+  await dialog.getByLabel("Engine").selectOption("alphabeta");
+  await expect(dialog.getByLabel(/^lmr/)).toBeVisible();
+  await expect(dialog.getByLabel(/opening_book/)).toHaveCount(0);
+  await dialog.getByLabel(/^depth/).fill("3");
+  await dialog.getByLabel(/^lmr/).selectOption("true");
+  await expect(dialog.getByRole("tab", { name: /Easy/ })).toContainText("changed");
+  await dialog.getByRole("button", { name: "Close" }).click();
+
+  // The change survives a reload (saved in this browser) and is what the engine gets.
+  await page.reload();
+  await page.getByRole("button", { name: "New game" }).filter({ visible: true }).first().click();
+  const newGame = page.getByRole("dialog");
+  await newGame.getByRole("group", { name: /Black/ }).getByText("Engine", { exact: true }).click();
+  await newGame.getByRole("group", { name: /Black/ }).getByText("Easy", { exact: true }).click();
+  await newGame.getByRole("group", { name: /White/ }).getByText("Human", { exact: true }).click();
+  await newGame.getByRole("button", { name: "Start" }).click();
+  await expect.poll(() => requests.length).toBeGreaterThan(0);
+  expect(requests.at(-1)).toMatchObject({ brain: "alphabeta", brain_overrides: { depth: 3, lmr: true } });
+
+  // Restore all: back to the config's Easy.
+  await page.getByRole("button", { name: "Difficulty levels" }).click();
+  await dialog.getByRole("button", { name: "Restore all" }).click();
+  await dialog.getByRole("tab", { name: /Easy/ }).click();
+  await expect(dialog.getByLabel("Engine")).toHaveValue("negamax");
+  await expect(dialog.getByLabel(/^depth/)).toHaveValue("2");
 });

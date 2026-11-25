@@ -1,5 +1,6 @@
 import { clsx } from "clsx";
 import { useEffect, useState } from "react";
+import { levelById } from "../game/levels";
 import { BLACK, type Player } from "../game/rules";
 import { clockMs, formatClock, type GameState, sideSettings, sideToMove, soleHuman, turnKind } from "../game/state";
 import type { EngineStatus } from "../game/useGame";
@@ -110,7 +111,11 @@ export function PlayerBar({
   const clock = clockMs(state, player, now, engineSince);
 
   const you = soleHuman(state.settings);
-  const name = isEngine ? `${t.engineKind} · ${t.presets[side.preset][0]}` : you === player ? t.youName : t.human;
+  const name = isEngine
+    ? `${t.engineKind} · ${t.level(levelById(side.preset).id).label}`
+    : you === player
+      ? t.youName
+      : t.human;
 
   const { outcome } = state;
   let badge: React.ReactNode = null;

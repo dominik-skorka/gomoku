@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useReducer, useState } from "react";
 import { ApiError, requestMove } from "../api/client";
-import { presetById } from "./presets";
+import { levelById } from "./levels";
 import type { Cell } from "./rules";
 import { type GameSettings, gameReducer, initialState, isEngineTurn, modeOf, sideSettings, sideToMove } from "./state";
 
@@ -51,7 +51,7 @@ export function useGame(initial: GameSettings) {
       return;
     }
     const controller = new AbortController();
-    const preset = presetById(presetId);
+    const preset = levelById(presetId);
     let retryTimer: ReturnType<typeof setTimeout> | undefined;
     const timer = setTimeout(() => {
       setEngine({ kind: "thinking", since: Date.now() });

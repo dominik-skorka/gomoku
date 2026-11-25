@@ -3,16 +3,18 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { requestMove } from "./api/client";
 import { Board } from "./components/Board";
 import { Controls } from "./components/Controls";
+import { LevelSettingsDialog } from "./components/LevelSettingsDialog";
 import { MoveList } from "./components/MoveList";
 import { FIRST, MoveNav } from "./components/MoveNav";
 import { NewGameDialog } from "./components/NewGameDialog";
 import { PlayerBar } from "./components/PlayerBar";
 import { ResignDialog } from "./components/ResignDialog";
 import { Button, Card } from "./components/ui";
-import { presetById } from "./game/presets";
+import { levelById } from "./game/levels";
 import { BLACK, type Cell, WHITE } from "./game/rules";
 import { canResign, canUndo, type GameSettings, isHumanTurn, migrateSettings, replay, sideToMove } from "./game/state";
 import { useGame } from "./game/useGame";
+import { config } from "./lib/config";
 import { t } from "./lib/i18n";
 import { statusText } from "./lib/status";
 import { useTheme } from "./lib/theme";
@@ -59,6 +61,25 @@ function ThemeIcon({ choice }: { choice: "system" | "light" | "dark" }) {
   );
 }
 
+function GearIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      className="size-5"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M4 7h10M18 7h2M4 17h4M12 17h8" />
+      <circle cx="16" cy="7" r="2" />
+      <circle cx="10" cy="17" r="2" />
+    </svg>
+  );
+}
+
 export function App() {
   const [initial] = useState(loadSettings);
   const { state, engine, play, newGame, undo, resign, retry, paused, togglePause, step, speed, setSpeed } =
@@ -73,6 +94,7 @@ export function App() {
   const goTo = useCallback((ply: number) => setViewPly(ply >= total ? null : Math.max(0, ply)), [total]);
   const { choice, cycle } = useTheme();
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [hint, setHint] = useState<Cell | null>(null);
   const [hintLoading, setHintLoading] = useState(false);
 
@@ -129,7 +151,7 @@ export function App() {
   const askHint = useCallback(async () => {
     setHintLoading(true);
     try {
-      const preset = presetById("hard");
+      const preset = levelById(config.defaultLevel);
       const move = await requestMove({
         grid: state.grid,
         sideToMove: side,
@@ -168,15 +190,26 @@ export function App() {
           <h1 className="text-2xl font-extrabold tracking-tight">Gomoku</h1>
           <span className="hidden text-sm text-muted sm:inline">{t.tagline}</span>
         </div>
-        <Button
-          variant="ghost"
-          icon
-          onClick={cycle}
-          title={`${t.theme}: ${themeLabel}`}
-          aria-label={`${t.theme}: ${themeLabel}`}
-        >
-          <ThemeIcon choice={choice} />
-        </Button>
+        <div className="flex items-center gap-1">
+          <Button
+            variant="ghost"
+            icon
+            onClick={() => setSettingsOpen(true)}
+            title={t.levelSettings}
+            aria-label={t.levelSettings}
+          >
+            <GearIcon />
+          </Button>
+          <Button
+            variant="ghost"
+            icon
+            onClick={cycle}
+            title={`${t.theme}: ${themeLabel}`}
+            aria-label={`${t.theme}: ${themeLabel}`}
+          >
+            <ThemeIcon choice={choice} />
+          </Button>
+        </div>
       </header>
 
       <main className="mx-auto grid w-full max-w-6xl flex-1 gap-4 px-4 py-4 sm:gap-6 sm:py-6 lg:grid-cols-[minmax(0,1fr)_20rem] lg:items-start">
@@ -246,6 +279,8 @@ export function App() {
         }}
         onClose={() => setResignOpen(false)}
       />
+
+      <LevelSettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} />
 
       <NewGameDialog
         open={dialogOpen}

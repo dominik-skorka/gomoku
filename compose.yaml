@@ -56,6 +56,14 @@ services:
         VERSION: ${GOMOKU_WEB_VERSION:-}
         REVISION: ${GOMOKU_REVISION:-unknown}
     image: ${GOMOKU_REGISTRY:-ghcr.io/dominik-skorka}/gomoku-web:${GOMOKU_WEB_VERSION:-dev}
+    # The web UI's runtime configuration (API address, difficulty levels and
+    # their engine parameters) and its texts.  Mounted from the repository,
+    # so an edit plus a browser refresh is enough: no rebuild, no API restart.
+    # Directories, not single files: a single-file bind mount keeps showing
+    # the old content after an editor replaces the file (vim, sed -i).
+    volumes:
+      - ./web/public/config:/srv/config:ro
+      - ./web/public/locales:/srv/locales:ro
     labels:
       autoheal: "true"
 

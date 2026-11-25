@@ -112,6 +112,42 @@ spent in the game, chess-style: a human's from the start of each turn,
 an engine's only while its request is in flight, so pauses and errors do
 not count.  Undo takes the time of the undone moves back.
 
+### ADR-7: The web UI owns its configuration; the API stays generic
+
+**Decision.** What a difficulty level is, which engine and parameters it
+uses, and every text the page shows belong to the web UI, not to the API
+or `gomoku.toml`.  They live in files the web container serves and the page
+reads at start-up:
+
+| File (repository) | Served at | Holds |
+|---|---|---|
+| `web/public/config/config.json` | `/config/config.json` | `apiBase`, `defaultLevel`, `levels[]`: `id`, `brain`, `overrides`, `typicalSeconds` |
+| `web/public/locales/en.json`, `pl.json` | `/locales/<lang>.json` | All UI texts; level names under `levels.<id>` |
+
+The API only receives what it always accepted: a `brain` name and
+`brain_overrides`.  The level editor (gear icon) builds its form from the
+engines' settings schemas (`GET /v1/brains`), so a new engine parameter
+appears there without a web change.
+
+**Why.** The engine and its API serve any client; client concepts (levels,
+their names in two languages) would make them specific to this one.
+Reading the files at run time means changing a level or a text needs an
+edit and a browser refresh, not a rebuild.
+
+**Layers.**  Levels in use = `config.json` levels, with this browser's
+changes from the level editor on top (localStorage).  "Restore" drops the
+changes; "Export" downloads the levels in use as a `config.json`, to make
+them everyone's default.  Settings shared across devices wait for user
+accounts.
+
+**Safety nets.**  A missing or invalid `config.json` falls back to the copy
+built into the bundle (the console says what is wrong); a locale file with
+missing keys is filled from the bundled English; a level without a
+translation shows its id.  Parameters left empty in the editor are not
+sent, so the server's own settings apply (they may differ from the schema
+defaults, e.g. `vcf_depth` in `gomoku.toml`).  Settings that name server
+files (`opening_book`) are never offered.
+
 ### ADR-2: A static SPA, not a server-rendered framework
 
 **Decision.** React + Vite, built to static files.  No Next.js/SSR.
@@ -210,6 +246,12 @@ Vite proxies `/api` to `127.0.0.1:8000` exactly as Caddy does in production.
 | `GOMOKU_MAX_TIME_LIMIT_S` | `10` | Upper bound on a brain's think time per request |
 | `LOGFIRE_TOKEN` | empty | Ship traces to Logfire when set |
 | `GOMOKU_VERSION`, `GOMOKU_WEB_VERSION` | `dev` | Image tags to run |
+
+The web UI's own settings (API address, difficulty levels, texts) are in
+`web/public/config/config.json` and `web/public/locales/`, mounted into the
+web container (see ADR-7): edit, then refresh the browser.  The directories
+are mounted, not single files, because a single-file bind mount keeps the
+old content after an editor replaces the file.
 
 Rate limits are kept in each replica's memory, so with N replicas a client
 can get up to N times the limit.  That is fine for abuse protection; a

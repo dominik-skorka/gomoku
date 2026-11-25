@@ -1,6 +1,6 @@
 import { clsx } from "clsx";
 import { useEffect, useRef, useState } from "react";
-import { PRESETS } from "../game/presets";
+import { useLevels } from "../game/levels";
 import { BLACK, type Player, WHITE } from "../game/rules";
 import type { GameSettings, PlayerKind, SideSettings } from "../game/state";
 import { t } from "../lib/i18n";
@@ -33,6 +33,7 @@ function SidePicker({
   onChange: (v: SideSettings) => void;
 }) {
   const name = player === BLACK ? "black" : "white";
+  const levels = useLevels();
   return (
     <fieldset className="flex flex-col gap-2 rounded-2xl border border-line p-3">
       <legend className="flex items-center gap-2 px-1 text-sm font-semibold">
@@ -56,8 +57,8 @@ function SidePicker({
       </div>
       {value.kind === "engine" && (
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4" role="radiogroup" aria-label={t.difficulty}>
-          {PRESETS.map((p) => {
-            const [label, desc] = t.presets[p.id];
+          {levels.map((p) => {
+            const { label, description: desc } = t.level(p.id);
             return (
               <label
                 key={p.id}
