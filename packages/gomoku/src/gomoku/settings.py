@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import override
 
 from pydantic import BaseModel, ConfigDict, Field
+from pydantic.fields import FieldInfo
 from pydantic_settings import BaseSettings, SettingsConfigDict, TomlConfigSettingsSource
 
 CONFIG_FILENAME = "gomoku.toml"
@@ -79,6 +80,19 @@ _PROBE_THREADS_DOC = (
     "but more threads probe more candidates within the time cap.  Only a free-threaded "
     "Python (python3.14t) runs them truly in parallel; with the GIL, keep 1."
 )
+
+
+SERVER_ONLY_MARKER = "server_only"
+"""``json_schema_extra`` key marking a brain setting that names a server-side
+resource (a file path, …).  Front ends that accept settings from untrusted
+clients (e.g. the HTTP API's ``brain_overrides``) must refuse to let a client
+set such a field; it may only come from the operator's own configuration."""
+
+
+def is_server_only(field: FieldInfo) -> bool:
+    """True when *field* carries the :data:`SERVER_ONLY_MARKER`."""
+    extra = field.json_schema_extra
+    return isinstance(extra, dict) and extra.get(SERVER_ONLY_MARKER) is True
 
 
 class BaseBrainSettings(BaseModel):
@@ -143,7 +157,11 @@ class AlphaBetaBrainSettings(BaseBrainSettings):
         description="Nodes at least this deep order moves by full evaluation; shallower ones by pattern priors.",
     )
     time_limit_s: float = Field(default=0.0, ge=0.0, le=600.0)
-    opening_book: str = Field(default="", description="Path to an opening book JSON file.")
+    opening_book: str = Field(
+        default="",
+        description="Path to an opening book JSON file.",
+        json_schema_extra={SERVER_ONLY_MARKER: True},
+    )
     vcf_breaker_pns_nodes: int = Field(
         default=0,
         ge=0,

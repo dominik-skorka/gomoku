@@ -12,16 +12,18 @@ every request.  Tests can clear the cache via :func:`reset_settings_cache`
 and :func:`reset_session_store`.
 """
 
-from typing import Annotated, Any
+import types
+from typing import Annotated, Any, Union, get_args, get_origin
 
 from fastapi import Depends, HTTPException, status
 from gomoku.interfaces import Player
-from gomoku.settings import GomokuSettings
+from gomoku.settings import GomokuSettings, is_server_only
 from gomoku_brain import (
     BRAINS,
     get_brain_from_settings,
     resolve_brain,
 )
+from pydantic import BaseModel
 
 from gomoku_fastapi.sessions import SessionStore
 
@@ -87,6 +89,40 @@ def _cap_time_budget(brain_type: str, kwargs: dict[str, Any], cap: float) -> dic
     return kwargs
 
 
+def _nested_model(annotation: Any) -> type[BaseModel] | None:
+    """The pydantic model inside *annotation* (``Model`` or ``Model | None``)."""
+    if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+        return annotation
+    if get_origin(annotation) in (Union, types.UnionType):
+        for arg in get_args(annotation):
+            model = _nested_model(arg)
+            if model is not None:
+                return model
+    return None
+
+
+def _server_only_override(model: type[BaseModel], overrides: dict[str, Any], prefix: str = "") -> str | None:
+    """Dotted path of the first server-only field set in *overrides*, if any.
+
+    Walks nested settings tables (e.g. the threat brain's ``fallback``) so a
+    marked field cannot be smuggled in one level down.  Unknown keys are
+    left to the model's own ``extra="forbid"`` validation.
+    """
+    for key, value in overrides.items():
+        field = model.model_fields.get(key)
+        if field is None:
+            continue
+        path = f"{prefix}{key}"
+        if is_server_only(field):
+            return path
+        nested = _nested_model(field.annotation)
+        if nested is not None and isinstance(value, dict):
+            found = _server_only_override(nested, value, f"{path}.")  # pyright: ignore[reportUnknownArgumentType]
+            if found is not None:
+                return found
+    return None
+
+
 def build_brain(
     name: str,
     overrides: dict[str, Any] | None,
@@ -127,6 +163,15 @@ def build_brain(
         # Merge + revalidate via the brain's settings model so out-of-range
         # values (e.g. depth=999) fail at the API edge with a 422.
         spec = BRAINS[brain_type]
+        # Settings naming server-side resources (file paths, …) may only come
+        # from the operator's config — a client must not make the server
+        # open arbitrary files.
+        forbidden = _server_only_override(spec.settings_cls, overrides)
+        if forbidden is not None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail={"error": "override_not_allowed", "field": forbidden},
+            )
         try:
             kwargs = spec.settings_cls(**{**kwargs, **overrides}).model_dump()
         except ValueError as exc:

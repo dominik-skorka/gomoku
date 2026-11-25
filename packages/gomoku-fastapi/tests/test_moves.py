@@ -119,6 +119,78 @@ class TestPostMoveValidation:
         assert response.status_code == 422
 
 
+class TestServerOnlyOverrides:
+    """Settings that name server-side resources (``opening_book``) must
+    not be settable by a client — otherwise a request could make the
+    server open any file it can read."""
+
+    def _payload(self, brain: str, overrides: dict) -> dict:
+        payload = _empty_board_payload()
+        payload["brain"] = brain
+        payload["brain_overrides"] = overrides
+        return payload
+
+    def test_opening_book_override_rejected_without_touching_file(self, client, monkeypatch):
+        from gomoku_brain import opening_book
+
+        def fail_load(*_args, **_kwargs):
+            raise AssertionError("opening book must not be loaded")
+
+        monkeypatch.setattr(opening_book.OpeningBookFile, "load", classmethod(fail_load))
+        response = client.post(
+            "/v1/move",
+            json=self._payload("alphabeta", {"opening_book": "/etc/passwd", "depth": 1}),
+        )
+        assert response.status_code == 422
+        assert response.json()["detail"] == {"error": "override_not_allowed", "field": "opening_book"}
+
+    def test_empty_opening_book_override_also_rejected(self, client):
+        response = client.post("/v1/move", json=self._payload("alphabeta", {"opening_book": ""}))
+        assert response.status_code == 422
+        assert response.json()["detail"]["error"] == "override_not_allowed"
+
+    def test_nested_opening_book_override_rejected(self, client):
+        """The threat brain's ``fallback`` table is an alpha-beta settings
+        model — the marker must be enforced one level down too."""
+        response = client.post(
+            "/v1/move",
+            json=self._payload("threat", {"fallback": {"depth": 1, "opening_book": "/etc/passwd"}}),
+        )
+        assert response.status_code == 422
+        assert response.json()["detail"] == {"error": "override_not_allowed", "field": "fallback.opening_book"}
+
+    def test_session_create_rejects_opening_book_override(self, client):
+        response = client.post(
+            "/v1/games",
+            json={
+                "board_size": 9,
+                "black": {"brain": "alphabeta", "brain_overrides": {"opening_book": "/etc/passwd"}},
+            },
+        )
+        assert response.status_code == 422
+        assert response.json()["detail"] == {"error": "override_not_allowed", "field": "opening_book"}
+
+    def test_regular_overrides_still_work(self, client):
+        response = client.post(
+            "/v1/move",
+            json=self._payload("alphabeta", {"depth": 1, "threat_ordering": False, "max_candidates": 10}),
+        )
+        assert response.status_code == 200
+        assert response.json()["move"] == Move(row=4, col=4).model_dump(mode="json")
+
+    def test_nested_regular_override_still_works(self, client):
+        response = client.post(
+            "/v1/move",
+            json=self._payload("threat", {"depth": 1, "fallback": {"depth": 1}}),
+        )
+        assert response.status_code == 200
+
+    def test_unknown_override_key_is_clean_422(self, client):
+        response = client.post("/v1/move", json=self._payload("alphabeta", {"no_such_knob": 1}))
+        assert response.status_code == 422
+        assert response.json()["detail"]["error"] == "invalid_brain_overrides"
+
+
 class TestBrainAliasResolution:
     """When a TOML alias is configured, ``brain="<alias>"`` should
     resolve through it.  We synthesise a settings file in the temp
