@@ -67,6 +67,33 @@
     }
    }
   },
+  "/v1/brains/{name}/settings": {
+   "get": {
+    "parameters": [
+     {
+      "in": "path",
+      "name": "name",
+      "required": true,
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/BrainSettingsResponse"
+        }
+       }
+      }
+     },
+     "404": {},
+     "422": {}
+    }
+   }
+  },
   "/v1/evaluate": {
    "post": {
     "requestBody": {
@@ -346,6 +373,26 @@
    "required": [
     "name",
     "settings_schema"
+   ],
+   "type": "object"
+  },
+  "BrainSettingsResponse": {
+   "properties": {
+    "name": {
+     "type": "string"
+    },
+    "settings": {
+     "additionalProperties": true,
+     "type": "object"
+    },
+    "type": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "name",
+    "type",
+    "settings"
    ],
    "type": "object"
   },

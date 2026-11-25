@@ -76,6 +76,33 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/brains/{name}/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The settings a brain plays with on this server
+         * @description Return every setting a move with *name* uses when the request sends
+         *     no ``brain_overrides``.
+         *
+         *     The schema from ``GET /v1/brains`` gives each setting's built-in
+         *     default; this server may play differently (a ``[brains.<name>]``
+         *     alias in ``gomoku.toml``, the ``[api].max_time_limit_s`` cap).  A
+         *     client that lets users override settings can show these values as
+         *     the baseline the overrides change.
+         */
+        get: operations["get_brain_settings_v1_brains__name__settings_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/evaluate": {
         parameters: {
             query?: never;
@@ -266,6 +293,29 @@ export interface components {
             settings_schema: {
                 [key: string]: unknown;
             };
+        };
+        /**
+         * BrainSettingsResponse
+         * @description Response payload for ``GET /v1/brains/{name}/settings``.
+         */
+        BrainSettingsResponse: {
+            /**
+             * Name
+             * @description The brain name or alias that was asked for.
+             */
+            name: string;
+            /**
+             * Settings
+             * @description Every setting a move with this brain uses when the request sends no ``brain_overrides``: the server's ``[brains.<name>]`` alias, the brain's defaults for what the alias leaves out, and the server's time cap.  Keys follow the type's ``settings_schema`` from ``GET /v1/brains``.
+             */
+            settings: {
+                [key: string]: unknown;
+            };
+            /**
+             * Type
+             * @description The registry brain it resolves to (``alphabeta``, ``threat``, …).
+             */
+            type: string;
         };
         /**
          * BrainsResponse
@@ -819,6 +869,43 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["BrainsResponse"];
                 };
+            };
+        };
+    };
+    get_brain_settings_v1_brains__name__settings_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Registry name or ``[brains.<name>]`` alias. */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BrainSettingsResponse"];
+                };
+            };
+            /** @description Unknown brain name or alias. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The server's configuration for this alias is invalid. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

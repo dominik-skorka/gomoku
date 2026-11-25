@@ -112,6 +112,7 @@ Interactive OpenAPI docs are live at `http://127.0.0.1:8000/docs`.
 | `/v1` | GET | This version's status and dates |
 | `/v1/openapi.json` | GET | OpenAPI document of `v1` only |
 | `/v1/brains` | GET | Brain registry + per-brain settings JSON Schema |
+| `/v1/brains/{name}/settings` | GET | The settings a brain (or `[brains.<name>]` alias) plays with on this server: alias values, defaults, time cap |
 | `/v1/move` | POST | Stateless: ask a brain for its move on a given board (optional `diagnostics: true`) |
 | `/v1/evaluate` | POST | Static heuristic eval — no brain |
 | `/v1/analyze` | POST | Upload a `.diag.jsonl`; returns the same report shape as `gomoku analyze --json` |

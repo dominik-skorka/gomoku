@@ -47,75 +47,140 @@ export function fieldsOf(schema: Record<string, unknown>): { fields: Field[]; ha
   return { fields, hasNested };
 }
 
+/** Same value, by JSON identity (numbers, booleans, strings). */
+const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+
+function format(v: unknown): string {
+  if (typeof v === "boolean") return v ? t.yes : t.no;
+  if (v === undefined || v === null || v === "") return "—";
+  return String(v);
+}
+
+/**
+ * One setting.  It shows the value a move uses: the level's override, or
+ * the server's value (`GET /v1/brains/{name}/settings`).  A value that
+ * differs from the server's is marked "changed", with the server's value
+ * beside it and a button that goes back to it.
+ */
 function ParamInput({
   field,
-  value,
+  override,
+  server,
   onChange,
 }: {
   field: Field;
-  value: unknown;
+  /** The level's override, if any. */
+  override: unknown;
+  /** The server's value; undefined while unknown. */
+  server: unknown;
   onChange: (v: unknown | undefined) => void;
 }) {
   const id = `param-${field.key}`;
-  const common = "h-9 w-full rounded-lg border border-line bg-surface-strong px-2 text-sm";
+  const effective = override !== undefined ? override : server;
+  const changed = override !== undefined && server !== undefined && !same(override, server);
+  // Equal to the server's value: no override is needed.
+  const commit = (v: unknown | undefined) => onChange(v === undefined || same(v, server) ? undefined : v);
+
+  // Text being typed, committed when it is a valid value (empty: back to the server's).
+  const [draft, setDraft] = useState(effective === undefined ? "" : String(effective));
+  useEffect(() => setDraft(effective === undefined ? "" : String(effective)), [effective]);
+
+  const box = clsx(
+    "h-9 w-full rounded-lg border bg-surface-strong px-2 text-sm",
+    changed ? "border-accent ring-1 ring-accent" : "border-line",
+  );
   let input: React.ReactNode;
   if (field.type === "boolean") {
     input = (
       <select
         id={id}
-        className={common}
-        value={value === undefined ? "" : String(value)}
-        onChange={(e) => onChange(e.target.value === "" ? undefined : e.target.value === "true")}
+        className={box}
+        value={effective === undefined ? "" : String(effective)}
+        onChange={(e) => commit(e.target.value === "" ? undefined : e.target.value === "true")}
       >
-        <option value="">{t.serverDefault}</option>
+        {effective === undefined && <option value="">{t.serverDefault}</option>}
         <option value="true">{t.yes}</option>
         <option value="false">{t.no}</option>
       </select>
     );
-  } else if (field.type === "string") {
-    input = (
-      <input
-        id={id}
-        className={common}
-        placeholder={t.serverDefault}
-        value={typeof value === "string" ? value : ""}
-        onChange={(e) => onChange(e.target.value === "" ? undefined : e.target.value)}
-      />
-    );
   } else {
+    const numeric = field.type !== "string";
+    const parse = (text: string): unknown | null => {
+      if (!numeric) return text;
+      const n = field.type === "integer" ? Number.parseInt(text, 10) : Number(text);
+      if (!Number.isFinite(n) || (field.type === "integer" && !/^-?\d+$/.test(text.trim()))) return null;
+      if ((field.min !== undefined && n < field.min) || (field.max !== undefined && n > field.max)) return null;
+      return n;
+    };
+    const invalid = draft !== "" && parse(draft) === null;
     input = (
       <input
         id={id}
-        type="number"
-        inputMode={field.type === "integer" ? "numeric" : "decimal"}
-        className={common}
+        type={numeric ? "number" : "text"}
+        inputMode={field.type === "integer" ? "numeric" : field.type === "number" ? "decimal" : undefined}
+        className={clsx(box, invalid && "border-red-500 ring-1 ring-red-500")}
         placeholder={t.serverDefault}
         min={field.min}
         max={field.max}
         step={field.type === "integer" ? 1 : "any"}
-        value={typeof value === "number" ? value : ""}
+        value={draft}
+        aria-invalid={invalid || undefined}
         onChange={(e) => {
-          if (e.target.value === "") return onChange(undefined);
-          const n = field.type === "integer" ? Number.parseInt(e.target.value, 10) : Number(e.target.value);
-          if (Number.isFinite(n)) onChange(n);
+          setDraft(e.target.value);
+          if (e.target.value === "") return;
+          const v = parse(e.target.value);
+          if (v !== null) commit(v);
+        }}
+        onBlur={() => {
+          if (draft === "") commit(undefined);
+          else if (invalid) setDraft(effective === undefined ? "" : String(effective));
         }}
       />
     );
   }
   const range = field.min !== undefined || field.max !== undefined ? `${field.min ?? ""}–${field.max ?? ""}` : "";
   return (
-    <div className="grid grid-cols-[minmax(0,1fr)_8.5rem] items-center gap-x-3 gap-y-0.5">
+    <div
+      data-testid={id}
+      data-changed={changed || undefined}
+      className={clsx(
+        "grid grid-cols-[minmax(0,1fr)_8.5rem_1.75rem] items-center gap-x-2 gap-y-0.5 rounded-lg px-1.5 py-1",
+        changed && "bg-accent/10",
+      )}
+    >
       <label htmlFor={id} className="min-w-0">
-        <span className="block truncate font-mono text-xs font-semibold">{field.key}</span>
-        {(field.description || range) && (
-          <span className="block truncate text-xs text-muted" title={field.description}>
-            {range && <span className="tabular-nums">{range}</span>}
-            {range && field.description && " · "}
-            {field.description}
-          </span>
-        )}
+        <span className="flex items-center gap-1.5">
+          <span className="truncate font-mono text-xs font-semibold">{field.key}</span>
+          {changed && <span className="shrink-0 text-[11px] font-semibold text-accent">{t.changed}</span>}
+        </span>
+        <span className="block truncate text-xs text-muted" title={field.description}>
+          {changed ? (
+            <span>
+              {t.serverValue}: <span className="font-medium tabular-nums">{format(server)}</span>
+            </span>
+          ) : (
+            <>
+              {range && <span className="tabular-nums">{range}</span>}
+              {range && field.description && " · "}
+              {field.description}
+            </>
+          )}
+        </span>
       </label>
       {input}
+      {changed ? (
+        <button
+          type="button"
+          className="grid size-7 place-items-center rounded-md text-muted hover:bg-surface hover:text-fg"
+          title={`${t.useServerValue}: ${format(server)}`}
+          aria-label={`${field.key}: ${t.useServerValue}`}
+          onClick={() => onChange(undefined)}
+        >
+          ×
+        </button>
+      ) : (
+        <span />
+      )}
     </div>
   );
 }
@@ -126,6 +191,18 @@ function LevelEditor({ level, brains }: { level: Level; brains: readonly BrainIn
   const changed = level.id in levelChanges();
   const names = brains.map((b) => b.name);
   if (!names.includes(level.brain)) names.unshift(level.brain); // a server alias the registry does not list
+  // What the server plays with for this brain, as the baseline overrides change.
+  const server = useQuery({
+    queryKey: ["brain-settings", level.brain],
+    staleTime: 60_000,
+    queryFn: async () => {
+      const { data, error } = await api.GET("/v1/brains/{name}/settings", {
+        params: { path: { name: level.brain } },
+      });
+      if (!data) throw new Error(JSON.stringify(error));
+      return data.settings;
+    },
+  });
 
   const update = (key: string, value: unknown | undefined) => {
     const overrides: Record<string, unknown> = { ...level.overrides };
@@ -136,7 +213,7 @@ function LevelEditor({ level, brains }: { level: Level; brains: readonly BrainIn
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="grid grid-cols-[minmax(0,1fr)_8.5rem] items-center gap-3">
+      <div className="grid grid-cols-[minmax(0,1fr)_8.5rem_1.75rem] items-center gap-x-2 px-1.5">
         <label htmlFor="level-brain" className="text-sm font-semibold">
           {t.engineLabel}
         </label>
@@ -153,13 +230,20 @@ function LevelEditor({ level, brains }: { level: Level; brains: readonly BrainIn
           ))}
         </select>
       </div>
-      <div className="flex flex-col gap-2.5">
+      {server.isError && <p className="px-1.5 text-xs text-muted">{t.serverValuesUnavailable}</p>}
+      <div className="flex flex-col gap-1">
         {fields.map((f) => (
-          <ParamInput key={f.key} field={f} value={level.overrides[f.key]} onChange={(v) => update(f.key, v)} />
+          <ParamInput
+            key={f.key}
+            field={f}
+            override={level.overrides[f.key]}
+            server={server.data?.[f.key]}
+            onChange={(v) => update(f.key, v)}
+          />
         ))}
-        {hasNested && <p className="text-xs text-muted">{t.nestedNote}</p>}
+        {hasNested && <p className="px-1.5 text-xs text-muted">{t.nestedNote}</p>}
       </div>
-      <div>
+      <div className="px-1.5">
         <Button className="h-8 px-3 text-xs" disabled={!changed} onClick={() => setLevelChange(level.id, null)}>
           {t.restoreLevel}
         </Button>
@@ -236,7 +320,7 @@ export function LevelSettingsDialog({ open, onClose }: { open: boolean; onClose:
               )}
             >
               {t.level(l.id).label}
-              {l.id in changes && <span className="ml-1.5 text-xs font-normal text-accent">• {t.changed}</span>}
+              {l.id in changes && <span className="ml-1.5 text-xs font-normal text-accent">• {t.edited}</span>}
             </button>
           ))}
         </div>

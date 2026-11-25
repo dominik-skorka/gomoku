@@ -358,8 +358,22 @@ test("config.json decides the levels and what each sends to the engine", async (
   expect(requests[0]).toMatchObject({ brain: "random", brain_overrides: { seed: 1 } });
 });
 
-test("level settings: change a level's parameters in this browser, restore them", async ({ page }) => {
+const SERVER_SETTINGS: Record<string, Record<string, unknown>> = {
+  negamax: { depth: 3 },
+  alphabeta: { depth: 4, lmr: false, opening_book: "" },
+  threat: { pns_time_s: 5 },
+};
+
+async function stubBrains(page: Page) {
   await page.route("**/api/v1/brains", (route) => route.fulfill({ json: BRAINS }));
+  await page.route("**/api/v1/brains/*/settings", (route) => {
+    const name = new URL(route.request().url()).pathname.split("/").at(-2) ?? "";
+    return route.fulfill({ json: { name, type: name, settings: SERVER_SETTINGS[name] ?? {} } });
+  });
+}
+
+test("level settings: show the server's values, mark and send changes, restore them", async ({ page }) => {
+  await stubBrains(page);
   const requests = await stubEngine(page, [
     [0, 0],
     [0, 1],
@@ -370,13 +384,31 @@ test("level settings: change a level's parameters in this browser, restore them"
   const dialog = page.getByRole("dialog", { name: "Difficulty levels" });
   await dialog.getByRole("tab", { name: /Easy/ }).click();
   await expect(dialog.getByLabel("Engine")).toHaveValue("negamax");
-  // Server file paths are never offered.
+  // config.json sets Easy's depth to 2; the server plays 3: marked as changed.
+  await expect(dialog.locator("#param-depth")).toHaveValue("2");
+  await expect(dialog.getByTestId("param-depth")).toHaveAttribute("data-changed", "true");
+  await expect(dialog.getByTestId("param-depth")).toContainText("server: 3");
+
+  // Another engine: fields show the server's values, nothing marked.
   await dialog.getByLabel("Engine").selectOption("alphabeta");
-  await expect(dialog.getByLabel(/^lmr/)).toBeVisible();
-  await expect(dialog.getByLabel(/opening_book/)).toHaveCount(0);
-  await dialog.getByLabel(/^depth/).fill("3");
-  await dialog.getByLabel(/^lmr/).selectOption("true");
-  await expect(dialog.getByRole("tab", { name: /Easy/ })).toContainText("changed");
+  await expect(dialog.locator("#param-depth")).toHaveValue("4");
+  await expect(dialog.getByTestId("param-depth")).not.toHaveAttribute("data-changed");
+  await expect(dialog.locator("#param-lmr")).toHaveValue("false");
+  // Server file paths are never offered.
+  await expect(dialog.locator("#param-opening_book")).toHaveCount(0);
+
+  await dialog.locator("#param-depth").fill("3");
+  await dialog.locator("#param-lmr").selectOption("true");
+  await expect(dialog.getByTestId("param-depth")).toHaveAttribute("data-changed", "true");
+  await expect(dialog.getByTestId("param-lmr")).toHaveAttribute("data-changed", "true");
+  await expect(dialog.getByRole("tab", { name: /Easy/ })).toContainText("edited here");
+  // Typing the server's value again is no change; × goes back to the server's value.
+  await dialog.locator("#param-depth").fill("4");
+  await expect(dialog.getByTestId("param-depth")).not.toHaveAttribute("data-changed");
+  await dialog.locator("#param-depth").fill("3");
+  await dialog.getByRole("button", { name: "lmr: Use the server's value" }).click();
+  await expect(dialog.locator("#param-lmr")).toHaveValue("false");
+  await expect(dialog.getByTestId("param-lmr")).not.toHaveAttribute("data-changed");
   await dialog.getByRole("button", { name: "Close" }).click();
 
   // The change survives a reload (saved in this browser) and is what the engine gets.
@@ -388,12 +420,13 @@ test("level settings: change a level's parameters in this browser, restore them"
   await newGame.getByRole("group", { name: /White/ }).getByText("Human", { exact: true }).click();
   await newGame.getByRole("button", { name: "Start" }).click();
   await expect.poll(() => requests.length).toBeGreaterThan(0);
-  expect(requests.at(-1)).toMatchObject({ brain: "alphabeta", brain_overrides: { depth: 3, lmr: true } });
+  expect(requests.at(-1)).toMatchObject({ brain: "alphabeta", brain_overrides: { depth: 3 } });
+  expect((requests.at(-1) as { brain_overrides: object }).brain_overrides).not.toHaveProperty("lmr");
 
   // Restore all: back to the config's Easy.
   await page.getByRole("button", { name: "Difficulty levels" }).click();
   await dialog.getByRole("button", { name: "Restore all" }).click();
   await dialog.getByRole("tab", { name: /Easy/ }).click();
   await expect(dialog.getByLabel("Engine")).toHaveValue("negamax");
-  await expect(dialog.getByLabel(/^depth/)).toHaveValue("2");
+  await expect(dialog.locator("#param-depth")).toHaveValue("2");
 });

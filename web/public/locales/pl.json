@@ -71,11 +71,15 @@
   "restoreAll": "Przywróć wszystkie",
   "exportConfig": "Eksportuj",
   "close": "Zamknij",
-  "settingsNote": "Zmiany działają od następnego ruchu i są zapisywane tylko w tej przeglądarce. Puste pola oznaczają ustawienia serwera.",
+  "settingsNote": "Każde pole pokazuje wartość, której używa ruch. Wartości inne niż na serwerze są wyróżnione. Zmiany działają od następnego ruchu i są zapisywane tylko w tej przeglądarce.",
   "loadingEngines": "Wczytywanie silników…",
   "enginesUnavailable": "Nie udało się pobrać silników z serwera.",
   "nestedNote": "Zagnieżdżone ustawienia tego silnika można zmienić tylko w config.json.",
   "changed": "zmieniony",
+  "serverValue": "serwer",
+  "useServerValue": "Użyj wartości serwera",
+  "serverValuesUnavailable": "Nie udało się pobrać bieżących wartości serwera; puste pola ich używają.",
+  "edited": "edytowany",
   "levels": {
     "easy": {
       "label": "Łatwy",

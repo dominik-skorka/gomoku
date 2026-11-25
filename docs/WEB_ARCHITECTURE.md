@@ -127,7 +127,13 @@ reads at start-up:
 The API only receives what it always accepted: a `brain` name and
 `brain_overrides`.  The level editor (gear icon) builds its form from the
 engines' settings schemas (`GET /v1/brains`), so a new engine parameter
-appears there without a web change.
+appears there without a web change.  Each field shows the value a move
+uses: the level's override, or what the server plays with
+(`GET /v1/brains/{name}/settings`: the `gomoku.toml` alias, the brain's
+defaults and the server's time cap; generic engine information, no
+client concepts).  Values that differ from the server's are highlighted,
+with the server's value beside them and a button back to it; a value
+equal to the server's is not stored as an override.
 
 **Why.** The engine and its API serve any client; client concepts (levels,
 their names in two languages) would make them specific to this one.
@@ -143,9 +149,10 @@ accounts.
 **Safety nets.**  A missing or invalid `config.json` falls back to the copy
 built into the bundle (the console says what is wrong); a locale file with
 missing keys is filled from the bundled English; a level without a
-translation shows its id.  Parameters left empty in the editor are not
-sent, so the server's own settings apply (they may differ from the schema
-defaults, e.g. `vcf_depth` in `gomoku.toml`).  Settings that name server
+translation shows its id.  Parameters without an override are not sent,
+so the server's own settings apply (they may differ from the schema
+defaults, e.g. `vcf_depth` in `gomoku.toml`, which is why the editor asks
+the server rather than showing schema defaults).  Settings that name server
 files (`opening_book`) are never offered.
 
 ### ADR-2: A static SPA, not a server-rendered framework

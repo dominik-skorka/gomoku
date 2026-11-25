@@ -80,6 +80,34 @@
         "title": "BrainInfo",
         "type": "object"
       },
+      "BrainSettingsResponse": {
+        "description": "Response payload for ``GET /v1/brains/{name}/settings``.",
+        "properties": {
+          "name": {
+            "description": "The brain name or alias that was asked for.",
+            "title": "Name",
+            "type": "string"
+          },
+          "settings": {
+            "additionalProperties": true,
+            "description": "Every setting a move with this brain uses when the request sends no ``brain_overrides``: the server's ``[brains.<name>]`` alias, the brain's defaults for what the alias leaves out, and the server's time cap.  Keys follow the type's ``settings_schema`` from ``GET /v1/brains``.",
+            "title": "Settings",
+            "type": "object"
+          },
+          "type": {
+            "description": "The registry brain it resolves to (``alphabeta``, ``threat``, \u2026).",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "type",
+          "settings"
+        ],
+        "title": "BrainSettingsResponse",
+        "type": "object"
+      },
       "BrainsResponse": {
         "description": "Response payload for ``GET /v1/brains``.",
         "properties": {
@@ -1082,6 +1110,47 @@
           }
         },
         "summary": "List brains and their settings schemas",
+        "tags": [
+          "brains"
+        ]
+      }
+    },
+    "/v1/brains/{name}/settings": {
+      "get": {
+        "description": "Return every setting a move with *name* uses when the request sends\nno ``brain_overrides``.\n\nThe schema from ``GET /v1/brains`` gives each setting's built-in\ndefault; this server may play differently (a ``[brains.<name>]``\nalias in ``gomoku.toml``, the ``[api].max_time_limit_s`` cap).  A\nclient that lets users override settings can show these values as\nthe baseline the overrides change.",
+        "operationId": "get_brain_settings_v1_brains__name__settings_get",
+        "parameters": [
+          {
+            "description": "Registry name or ``[brains.<name>]`` alias.",
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "description": "Registry name or ``[brains.<name>]`` alias.",
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BrainSettingsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "Unknown brain name or alias."
+          },
+          "422": {
+            "description": "The server's configuration for this alias is invalid."
+          }
+        },
+        "summary": "The settings a brain plays with on this server",
         "tags": [
           "brains"
         ]
