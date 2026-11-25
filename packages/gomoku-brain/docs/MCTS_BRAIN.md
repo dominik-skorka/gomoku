@@ -382,11 +382,14 @@ Because MCTS candidate scores are winrates (not eval units), the
 
 | Parameter | Default | Range | Controls | Effect of increasing |
 |-----------|---------|-------|----------|----------------------|
-| `iterations` | 10 000 | 100 – 1 000 000 | Simulation budget per move | Linearly stronger, linearly slower |
+| `iterations` | 10 000 | 1 – 1 000 000 | Simulation budget per move | Linearly stronger, linearly slower |
+| `time_limit_s` | 0 | 0 – 600 | Hard time limit per move (`0` = unlimited) | The search stops at the deadline |
 | `exploration` | 2.0 | 0.1 – 5.0 | PUCT constant `c` | More exploration, less exploitation |
+| `fpu_reduction` | 0.2 | 0.0 – 1.0 | First Play Urgency: Q of an untried move = node value − this | Deeper, narrower tree |
+| `reuse_tree` | false (`gomoku.toml`: true) | bool | Continue from the kept subtree of the opponent's reply | More visits per move when the same brain plays on |
 | `dirichlet_alpha` | 0.25 | 0.0 – 1.0 | Dirichlet shape | Larger = flatter noise |
 | `dirichlet_weight` | 0.0 | 0.0 – 1.0 | Noise mix weight | `0.0` = deterministic priors; `1.0` = pure noise |
-| `vcf_depth` | 10 | 0 – 40 | Opponent VCF probe depth for the safety gate | Deeper probe, more blocks enforced; `0` disables the gate |
+| `vcf_depth` | 10 (`gomoku.toml`: 20) | 0 – 40 | Own VCF search and opponent VCF probe for the safety gate | Deeper probes; `0` disables both |
 
 ### Internal constants
 
@@ -396,14 +399,16 @@ Because MCTS candidate scores are winrates (not eval units), the
 | Sigmoid scale `k` | 1000 | Maps eval-point advantage to winrate; live-3 ≈ 0.73 |
 | Defensive weight | 0.8× | Applied to opponent pattern scores in priors and leaf eval |
 | Prior baseline | `+1.0` | Ensures no candidate receives zero prior |
+| `_TEMPO_WIN` | 5000 | Leaf score shift for a side to move that can make a live four / double four |
 
 ### Tuning guidelines
 
 | Scenario | Recommendation |
 |----------|----------------|
 | Weak baseline for comparison | `iterations=1000` |
-| Default | `iterations=10_000, exploration=2.0, dirichlet_weight=0.25, vcf_depth=10` |
-| Deterministic self-play | `dirichlet_weight=0.0` |
+| Default | `iterations=10_000, exploration=2.0, dirichlet_weight=0.0, vcf_depth=10` |
+| Varied / weaker play | `dirichlet_weight=0.25` |
+| Bounded think time | `time_limit_s=2.0` with a large `iterations` |
 | Open-position exploration | Increase `exploration` to 3.0 – 4.0 |
 | Tactical sharpness | Increase `vcf_depth` to 20 – 30 (cheap, catches more forced losses) |
 | Strongest available | `iterations=100_000, vcf_depth=20` — time scales linearly |
@@ -484,12 +489,12 @@ from gomoku_brain.mcts import MCTSBrain
 brain = MCTSBrain()
 move = brain.get_move(board, stone)
 
-# Deterministic play (no root noise)
+# Bigger budget, bounded time, tree kept between moves
 brain = MCTSBrain(
     iterations=50_000,
-    exploration=2.0,
-    dirichlet_weight=0.0,
+    time_limit_s=5.0,
     vcf_depth=20,
+    reuse_tree=True,
 )
 ```
 
@@ -510,18 +515,21 @@ uv run gomoku analyze recordings/gomoku_*.diag.jsonl
 [brains.mcts]
 type = "mcts"
 iterations = 10_000
+time_limit_s = 0.0
 exploration = 2.0
-dirichlet_alpha = 0.03
-dirichlet_weight = 0.25
-vcf_depth = 10
+fpu_reduction = 0.2
+vcf_depth = 20
+reuse_tree = true
+dirichlet_alpha = 0.25
+dirichlet_weight = 0.0
 
 # Stronger variant as a named alias
 [brains.mcts_strong]
 type = "mcts"
 iterations = 100_000
-exploration = 2.0
-dirichlet_weight = 0.15
+time_limit_s = 10.0
 vcf_depth = 20
+reuse_tree = true
 ```
 
 ---
