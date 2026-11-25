@@ -64,17 +64,38 @@ def _apply_dirichlet_noise(
 # ---------------------------------------------------------------------------
 
 
-def _leaf_value(state: SearchState, root_stone: Stone) -> float:
+# Score shift for the side to move when it can make an unblockable four
+# (live four or double four) next move: worth about a proven win, unless
+# the other side refutes it with fours of its own, which only a search sees.
+_TEMPO_WIN = 5_000.0
+
+
+def _leaf_value(state: SearchState, root_stone: Stone, to_move: Stone | None = None) -> float:
     """Return a leaf value in [0, 1] from *root_stone*'s perspective.
 
     Uses the same :func:`gomoku_brain.evaluate.evaluate_board` as
     alpha-beta — keeping MCTS and AB aligned on what a "good" position
     means — and maps the signed heuristic score through a sigmoid.
     ``k = 1000`` so a live-3 advantage (~1000 pts) maps to ~0.73.
+
+    The static evaluation does not know whose turn it is.  When
+    *to_move* is given and that side can make a live four or a double
+    four next move (an open three, or a four-three, of its own) while
+    the other side has no five threat, the score moves by
+    ``_TEMPO_WIN`` towards *to_move*: the same open three is nearly a
+    win for the side to move but only a threat to block for the other.
     """
     from gomoku_brain.evaluate import evaluate_board
+    from gomoku_brain.threat import _find_winning_move
+    from gomoku_brain.threat_detect import _has_unblockable_four
 
     raw = evaluate_board(state, root_stone)
+    if (
+        to_move is not None
+        and _find_winning_move(state, to_move.opponent()) is None
+        and _has_unblockable_four(state, to_move)
+    ):
+        raw += _TEMPO_WIN if to_move is root_stone else -_TEMPO_WIN
     clamped = max(-10.0, min(10.0, raw / 1000.0))
     return 1.0 / (1.0 + math.exp(-clamped))
 
@@ -416,7 +437,7 @@ class MCTSBrain(Brain[MCTSBrainSettings], name="mcts"):
             node = child
 
         # 3. Heuristic leaf evaluation (replaces random rollout).
-        value = _leaf_value(state, root_stone)
+        value = _leaf_value(state, root_stone, node.stone.opponent())
 
         # 4. Backpropagation + restore the shared state to the root position.
         self._backpropagate(node, value, root_stone)

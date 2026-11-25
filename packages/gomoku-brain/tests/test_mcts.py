@@ -522,3 +522,31 @@ class TestOwnVCF:
         monkeypatch.setattr(threat, "_vcf", spy)
         MCTSBrain(iterations=5, vcf_depth=0).get_move(self._vcf_board(), Stone.BLACK)
         assert calls == []
+
+
+class TestLeafTempo:
+    def test_open_three_is_worth_more_for_the_side_to_move(self):
+        """Black open three (row 7, cols 3-5), White stones far away."""
+        b = Board(size=15)
+        for c in range(3, 6):
+            b = b.place_stone(Move(row=7, col=c), Stone.BLACK)
+        for r, c in [(0, 0), (14, 14)]:
+            b = b.place_stone(Move(row=r, col=c), Stone.WHITE)
+        state = SearchState.from_board(b, Stone.BLACK)
+        black_to_move = _leaf_value(state, Stone.BLACK, Stone.BLACK)
+        white_to_move = _leaf_value(state, Stone.BLACK, Stone.WHITE)
+        static = _leaf_value(state, Stone.BLACK)
+        assert black_to_move > static
+        assert white_to_move == pytest.approx(static)  # White cannot make a live four
+        assert black_to_move > 0.95
+
+    def test_no_tempo_bonus_under_a_five_threat(self):
+        """Black has an open three, but White threatens five: no bonus."""
+        b = Board(size=15)
+        for c in range(3, 6):
+            b = b.place_stone(Move(row=7, col=c), Stone.BLACK)
+        for c in range(3, 7):
+            b = b.place_stone(Move(row=12, col=c), Stone.WHITE)
+        b = b.place_stone(Move(row=12, col=2), Stone.BLACK)
+        state = SearchState.from_board(b, Stone.BLACK)
+        assert _leaf_value(state, Stone.BLACK, Stone.BLACK) == pytest.approx(_leaf_value(state, Stone.BLACK))
