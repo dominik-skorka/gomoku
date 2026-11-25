@@ -215,6 +215,17 @@ class MCTSBrain(Brain[MCTSBrainSettings], name="mcts"):
         if self.settings.vcf_depth > 0:
             from gomoku_brain.threat import _vcf
 
+            # Our own forced win first: a VCF deeper than the tree reaches
+            # would otherwise be missed (same step as AlphaBeta's root).
+            our_vcf = _vcf(board, stone, self.settings.vcf_depth)
+            if our_vcf is not None:
+                logfire.info("MCTS VCF win: {move}", move=str(our_vcf))
+                if diag is not None:
+                    diag.decision_path = "vcf_win"
+                    diag.chosen_move = our_vcf
+                    diag.our_threats = diag.our_threats.model_copy(update={"vcf_result": "win"})
+                return our_vcf
+
             opp_vcf = _vcf(board, stone.opponent(), self.settings.vcf_depth)
             if opp_vcf is not None:
                 durable, breakers = classify_vcf_breakers(

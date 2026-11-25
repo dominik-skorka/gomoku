@@ -486,3 +486,39 @@ class TestForcedReplies:
         # The open four itself is now a proven win at the root.
         four = [c for c in root.children if c.move in {(7, 4), (7, 8)}]
         assert four and all(c.terminal == 1.0 for c in four)
+
+
+class TestOwnVCF:
+    @staticmethod
+    def _vcf_board() -> Board:
+        """Black wins by fours: (7,6) makes a four on row 7 and a split four
+        on column 6 at once.  No immediate five for either side."""
+        b = Board(size=15)
+        for r, c in [(7, 3), (7, 4), (7, 5), (3, 6), (4, 6), (5, 6)]:
+            b = b.place_stone(Move(row=r, col=c), Stone.BLACK)
+        for r, c in [(7, 2), (2, 6), (0, 14), (14, 0), (14, 14)]:
+            b = b.place_stone(Move(row=r, col=c), Stone.WHITE)
+        return b
+
+    def test_plays_its_vcf_with_a_tiny_budget(self):
+        from gomoku_brain.threat import _find_winning_move, _vcf
+
+        b = self._vcf_board()
+        assert _find_winning_move(b, Stone.BLACK) is None
+        vcf = _vcf(b, Stone.BLACK, 10)
+        assert vcf is not None
+        assert MCTSBrain(iterations=1).get_move(b, Stone.BLACK) == vcf
+
+    def test_vcf_depth_zero_disables_it(self, monkeypatch):
+        import gomoku_brain.threat as threat
+
+        calls: list[Stone] = []
+        real = threat._vcf
+
+        def spy(board, stone, depth, *args, **kwargs):
+            calls.append(stone)
+            return real(board, stone, depth, *args, **kwargs)
+
+        monkeypatch.setattr(threat, "_vcf", spy)
+        MCTSBrain(iterations=5, vcf_depth=0).get_move(self._vcf_board(), Stone.BLACK)
+        assert calls == []
