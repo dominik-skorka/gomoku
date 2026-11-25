@@ -3,6 +3,7 @@ name = "gomoku"
 version = "0.1.0"
 description = "Gomoku core engine — board, rules, and game loop"
 requires-python = ">=3.14"
+license = "MIT"
 dependencies = [
     "pydantic>=2.14.4",
     "logfire>=6.0.0",
