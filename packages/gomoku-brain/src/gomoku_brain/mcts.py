@@ -29,6 +29,8 @@ or occupied-set copies.
 
 import math
 import random as _random
+import threading
+import time
 from typing import override
 
 import logfire
@@ -112,6 +114,7 @@ class _Node:
         "_untried",
         "_untried_priors",
         "children",
+        "generated",
         "move",
         "parent",
         "prior",
@@ -126,7 +129,7 @@ class _Node:
         move: tuple[int, int] | None,
         stone: Stone,
         parent: _Node | None,
-        untried: list[tuple[int, int]],
+        untried: list[tuple[int, int]] | None,
         prior: float = 0.0,
         untried_priors: list[float] | None = None,
     ) -> None:
@@ -142,14 +145,26 @@ class _Node:
         # an immediate five); ``None`` for an undecided position.  A
         # terminal node is never expanded: every visit backs up this value.
         self.terminal: float | None = None
-        if untried_priors is None:
+        # ``untried=None`` defers move generation to the node's first
+        # expansion (:meth:`MCTSBrain._generate`): most leaves are scored
+        # once and never revisited, so they never pay for it.
+        self.generated = untried is not None
+        self._untried: list[tuple[int, int]] = []
+        self._untried_priors: list[float] = []
+        if untried is not None:
+            self.set_untried(untried, untried_priors)
+
+    def set_untried(self, untried: list[tuple[int, int]], priors: list[float] | None = None) -> None:
+        """Set the moves still to expand, with their priors (uniform if ``None``)."""
+        if priors is None:
             n = len(untried)
-            untried_priors = [1.0 / n] * n if n else []
-        # Untried moves sorted by ascending prior, so ``pop()`` takes the
-        # most promising one (the order PUCT would visit them in).
-        order = sorted(range(len(untried)), key=untried_priors.__getitem__)
+            priors = [1.0 / n] * n if n else []
+        # Sorted by ascending prior, so ``pop()`` takes the most promising
+        # move (the order PUCT would visit them in).
+        order = sorted(range(len(untried)), key=priors.__getitem__)
         self._untried = [untried[i] for i in order]
-        self._untried_priors = [untried_priors[i] for i in order]
+        self._untried_priors = [priors[i] for i in order]
+        self.generated = True
 
     def puct(self, exploration: float) -> float:
         """AGZ-style PUCT score: Q + c · P · √N / (n + 1)."""
@@ -201,6 +216,15 @@ class _Node:
 
 class MCTSBrain(Brain[MCTSBrainSettings], name="mcts"):
     """Player using Monte Carlo Tree Search with PUCT."""
+
+    def __init__(self, settings: MCTSBrainSettings | None = None, /, **overrides: object) -> None:
+        super().__init__(settings, **overrides)
+        # Tree kept for the next move when ``reuse_tree`` is on: the node
+        # reached by our move, the stones on the board after it, and our
+        # stone.  Taken under the lock, so two concurrent searches never
+        # share a tree.
+        self._kept: tuple[_Node, dict[tuple[int, int], Stone], Stone] | None = None
+        self._kept_lock = threading.Lock()
 
     # -- Public interface ----------------------------------------------------
 
@@ -292,16 +316,29 @@ class MCTSBrain(Brain[MCTSBrainSettings], name="mcts"):
                 self.settings.dirichlet_weight,
             )
 
-        root = _Node(
-            move=None,
-            stone=stone.opponent(),
-            parent=None,
-            untried=root_untried,
-            untried_priors=root_priors,
-        )
+        reused = None if vcf_gated else self._take_kept(board, stone)
+        if reused is not None:
+            # Dirichlet noise is not re-applied: the reused root's moves
+            # already carry visits, and noise would only shift its priors.
+            root = reused
+        else:
+            root = _Node(
+                move=None,
+                stone=stone.opponent(),
+                parent=None,
+                untried=root_untried,
+                untried_priors=root_priors,
+            )
+        reused_visits = root.visits
 
-        for _ in range(self.settings.iterations):
+        limit = self.settings.time_limit_s
+        deadline = time.monotonic() + limit if limit > 0 else 0.0
+        iterations = 0
+        while iterations < self.settings.iterations:
             self._run_iteration(root, state, stone)
+            iterations += 1
+            if deadline and time.monotonic() >= deadline:
+                break
 
         best = max(root.children, key=lambda c: c.visits)
         assert best.move is not None
@@ -316,6 +353,12 @@ class MCTSBrain(Brain[MCTSBrainSettings], name="mcts"):
 
         chosen = Move(row=br, col=bc)
 
+        if self.settings.reuse_tree:
+            after = {(r, c): board.at(r, c) for r, c in board.occupied}
+            after[(br, bc)] = stone
+            with self._kept_lock:
+                self._kept = (best, after, stone)
+
         if diag is not None:
             from gomoku.diagnostics import CandidateInfo, SearchStats
 
@@ -325,7 +368,7 @@ class MCTSBrain(Brain[MCTSBrainSettings], name="mcts"):
             )
             diag.chosen_move = chosen
             diag.search_stats = SearchStats(
-                iterations=self.settings.iterations,
+                iterations=iterations,
                 nodes_searched=root.visits,
                 time_ms=search_ms,
             )
@@ -343,6 +386,8 @@ class MCTSBrain(Brain[MCTSBrainSettings], name="mcts"):
             ]
             if diag.top_candidates and diag.top_candidates[0].move != chosen:
                 diag.alternative_best = diag.top_candidates[0]
+            if reused is not None:
+                diag.notes.append(f"Reused tree: {reused_visits} visits from the previous move")
             diag.notes.append(
                 f"Best: {chosen} visits={best.visits}/{root.visits} "
                 f"wr={best.wins / best.visits:.1%}"
@@ -351,6 +396,32 @@ class MCTSBrain(Brain[MCTSBrainSettings], name="mcts"):
             )
 
         return chosen
+
+    def _take_kept(self, board: Board, stone: Stone) -> _Node | None:
+        """The kept subtree for *board*, or ``None``.
+
+        Usable when *board* is the kept position plus exactly one
+        opponent stone and that reply was searched: its node becomes the
+        new root.  The kept tree is consumed either way.
+        """
+        with self._kept_lock:
+            kept, self._kept = self._kept, None
+        if kept is None or not self.settings.reuse_tree:
+            return None
+        node, after, kept_stone = kept
+        if kept_stone is not stone or len(board.occupied) != len(after) + 1:
+            return None
+        if any(board.at(r, c) is not s for (r, c), s in after.items()):
+            return None
+        (reply,) = board.occupied - after.keys()
+        if board.at(*reply) is not stone.opponent():
+            return None
+        for child in node.children:
+            if child.move == reply and child.terminal is None and child.generated:
+                child.parent = None
+                child.move = None
+                return child
+        return None
 
     # -- Core MCTS loop (operates entirely on one SearchState) ---------------
 
@@ -376,11 +447,11 @@ class MCTSBrain(Brain[MCTSBrainSettings], name="mcts"):
         # every move before the search goes deeper.
         exploration = self.settings.exploration
         fpu_reduction = self.settings.fpu_reduction
-        while (
-            node.terminal is None
-            and not node.is_leaf()
-            and not node.wants_expansion(exploration, fpu_reduction)
-        ):
+        while node.terminal is None:
+            if not node.generated:
+                self._generate(node, state)
+            if node.is_leaf() or node.wants_expansion(exploration, fpu_reduction):
+                break
             node = node.best_child(exploration)
             r, c = node.move  # type: ignore[misc]
             state.make(r, c, node.stone)
@@ -413,25 +484,12 @@ class MCTSBrain(Brain[MCTSBrainSettings], name="mcts"):
                 self._restore(state, depth)
                 return
 
-            if forced is not None:
-                child_untried = [forced]
-                child_priors = [1.0]
-            else:
-                child_moves = get_candidate_moves(state, radius=2)
-                child_untried = [(m.row, m.col) for m in child_moves]
-                child_priors = _compute_priors(
-                    state,
-                    child_untried,
-                    int(child_stone.opponent()),
-                    int(child_stone),
-                )
             child = _Node(
                 move=move_rc,
                 stone=child_stone,
                 parent=node,
-                untried=child_untried,
+                untried=[forced] if forced is not None else None,
                 prior=move_prior,
-                untried_priors=child_priors,
             )
             node.children.append(child)
             node = child
@@ -442,6 +500,13 @@ class MCTSBrain(Brain[MCTSBrainSettings], name="mcts"):
         # 4. Backpropagation + restore the shared state to the root position.
         self._backpropagate(node, value, root_stone)
         self._restore(state, depth)
+
+    @staticmethod
+    def _generate(node: _Node, state: SearchState) -> None:
+        """Fill *node*'s untried moves and priors; *state* is at *node*."""
+        moves = [(m.row, m.col) for m in get_candidate_moves(state, radius=2)]
+        to_move = node.stone.opponent()
+        node.set_untried(moves, _compute_priors(state, moves, int(to_move), int(node.stone)))
 
     @staticmethod
     def _restore(state: SearchState, depth: int) -> None:

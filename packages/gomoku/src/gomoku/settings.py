@@ -244,6 +244,8 @@ class MCTSBrainSettings(BaseBrainSettings):
     dirichlet_alpha: float = Field(default=0.03, ge=0.0, le=1.0)
     dirichlet_weight: float = Field(default=0.25, ge=0.0, le=1.0)
     vcf_depth: int = Field(default=10, ge=0, le=40)
+    time_limit_s: float = Field(default=0.0, ge=0.0, le=600.0)
+    reuse_tree: bool = Field(default=False)
 
 
 # ── Recording settings ──────────────────────────────────────────────────────
@@ -329,8 +331,8 @@ class ApiSettings(BaseModel):
         description=(
             "Upper bound, in seconds, on the wall-clock search budget of a single "
             "API request.  Applied to ``time_limit_s`` of alpha-beta brains (an "
-            "unlimited ``0`` becomes this value), to the alpha-beta fallback of "
-            "the threat brain and to its ``pns_time_s``.  Brain overrides cannot "
+            "unlimited ``0`` becomes this value), to ``time_limit_s`` of MCTS brains, "
+            "to the alpha-beta fallback of the threat brain and to its ``pns_time_s``.  Brain overrides cannot "
             "exceed it.  ``0`` disables the cap.  The CLI is unaffected."
         ),
     )

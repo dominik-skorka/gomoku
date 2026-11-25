@@ -550,3 +550,71 @@ class TestLeafTempo:
         b = b.place_stone(Move(row=12, col=2), Stone.BLACK)
         state = SearchState.from_board(b, Stone.BLACK)
         assert _leaf_value(state, Stone.BLACK, Stone.BLACK) == pytest.approx(_leaf_value(state, Stone.BLACK))
+
+
+class TestBudgetAndReuse:
+    @staticmethod
+    def _quiet_board() -> Board:
+        b = Board(size=15)
+        stone = Stone.BLACK
+        for r, c in [(7, 7), (7, 8), (8, 6), (6, 8), (9, 9), (8, 9)]:
+            b = b.place_stone(Move(row=r, col=c), stone)
+            stone = stone.opponent()
+        return b
+
+    def test_time_limit_stops_the_search(self):
+        import time
+
+        brain = MCTSBrain(iterations=1_000_000, time_limit_s=0.3)
+        brain.get_move(self._quiet_board(), Stone.BLACK)  # warm up the JIT kernels
+        t0 = time.monotonic()
+        brain.get_move(self._quiet_board(), Stone.BLACK)
+        assert time.monotonic() - t0 < 1.5
+
+    def test_diagnostics_report_the_iterations_run(self):
+        from gomoku.diagnostics import MoveDiagnostics
+        from gomoku_brain.brain_base import BrainSession
+
+        diag = MoveDiagnostics(move_number=7, stone=Stone.BLACK)
+        session = BrainSession(diag=diag, _t0=0.0)
+        MCTSBrain(iterations=123).choose_move(self._quiet_board(), Stone.BLACK, session)
+        assert diag.search_stats is not None
+        assert diag.search_stats.iterations == 123
+
+    def test_lazy_generation_leaves_unvisited_leaves_empty(self):
+        root = _search_tree(self._quiet_board(), Stone.BLACK, iterations=500)
+        once = [n for n in _walk(root) if n.parent is not None and n.visits == 1 and n.terminal is None]
+        assert once
+        # A leaf visited once was scored, never expanded: no moves generated
+        # unless it is a forced node (its single block is set at creation).
+        assert all(not n.generated or len(n._untried) == 1 for n in once)
+
+    def test_reuses_the_subtree_of_the_reply(self):
+        board = self._quiet_board()
+        brain = MCTSBrain(iterations=400, reuse_tree=True, dirichlet_weight=0.0)
+        ours = brain.get_move(board, Stone.BLACK)
+        assert brain._kept is not None
+        kept_node = brain._kept[0]
+        reply_node = max(kept_node.children, key=lambda c: c.visits)
+        assert reply_node.move is not None
+        visits = reply_node.visits
+        board = board.place_stone(ours, Stone.BLACK)
+        board = board.place_stone(Move(row=reply_node.move[0], col=reply_node.move[1]), Stone.WHITE)
+        root = brain._take_kept(board, Stone.BLACK)
+        assert root is reply_node
+        assert root.parent is None and root.visits == visits
+
+    def test_no_reuse_after_an_unexpected_position(self):
+        board = self._quiet_board()
+        brain = MCTSBrain(iterations=200, reuse_tree=True)
+        brain.get_move(board, Stone.BLACK)
+        # A different game: the kept tree must not be used.
+        other = Board(size=15).place_stone(Move(row=3, col=3), Stone.BLACK)
+        other = other.place_stone(Move(row=3, col=4), Stone.WHITE)
+        assert brain._take_kept(other, Stone.BLACK) is None
+        assert brain._kept is None
+
+    def test_reuse_is_off_by_default(self):
+        brain = MCTSBrain(iterations=50)
+        brain.get_move(self._quiet_board(), Stone.BLACK)
+        assert brain._kept is None

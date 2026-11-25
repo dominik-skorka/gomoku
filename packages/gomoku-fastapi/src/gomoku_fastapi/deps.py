@@ -65,7 +65,7 @@ SessionStoreDep = Annotated[SessionStore, Depends(get_session_store)]
 def _cap_time_budget(brain_type: str, kwargs: dict[str, Any], cap: float) -> dict[str, Any]:
     """Clamp the search time budget in *kwargs* to *cap* seconds (``cap > 0``).
 
-    ``time_limit_s == 0`` means "unlimited" for alpha-beta, so it is
+    ``time_limit_s == 0`` means "unlimited" for alpha-beta and MCTS, so it is
     replaced by the cap rather than min()-ed.  The threat brain carries
     its alpha-beta tuning under ``fallback``; when none is configured an
     entry holding only the cap is added (the fallback keeps the
@@ -76,7 +76,7 @@ def _cap_time_budget(brain_type: str, kwargs: dict[str, Any], cap: float) -> dic
     def capped(limit: float) -> float:
         return min(limit, cap) if limit > 0 else cap
 
-    if brain_type == "alphabeta":
+    if brain_type in ("alphabeta", "mcts"):
         kwargs["time_limit_s"] = capped(kwargs.get("time_limit_s", 0.0))
     elif brain_type == "threat":
         fallback = dict(kwargs.get("fallback") or {})
