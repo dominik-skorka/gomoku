@@ -224,8 +224,10 @@ class Player(Protocol):  # chooses moves for one side
     def name(self) -> str: ...
     def get_move(self, board: Board, stone: Stone) -> Move: ...
 
-class Evaluator[B: BoardView = BoardView](Protocol):      # static score
+
+class Evaluator[B: BoardView = BoardView](Protocol):  # static score
     def __call__(self, board: B, stone: Stone, /) -> float: ...
+
 
 class MoveGenerator[B: BoardView = BoardView](Protocol):  # moves to search
     def __call__(self, board: B, stone: Stone, /) -> Sequence[Move]: ...
@@ -357,12 +359,14 @@ by name from their settings, like brains are taken by name:
 ```python
 from gomoku.strategies import register_evaluator
 
+
 def stones_only(board: BoardView, stone: Stone, /) -> float:
     own = sum(1 for r, c in board.occupied if board.at(r, c) is stone)
     return float(2 * own - len(board.occupied))
 
+
 register_evaluator("stones", stones_only)
-AlphaBetaBrain(evaluator="stones")           # or alphabeta,evaluator=stones on the CLI
+AlphaBetaBrain(evaluator="stones")  # or alphabeta,evaluator=stones on the CLI
 ```
 
 - The names live in the core package so the settings models can check

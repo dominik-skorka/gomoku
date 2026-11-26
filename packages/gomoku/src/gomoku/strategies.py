@@ -10,8 +10,9 @@ models can validate them; the implementations are registered by
 
     from gomoku.strategies import register_evaluator
 
-    def stones_only(board, stone, /):
-        ...
+
+    def stones_only(board, stone, /): ...
+
 
     register_evaluator("stones", stones_only)
     # gomoku play --black alphabeta,evaluator=stones
