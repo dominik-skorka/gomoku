@@ -14,9 +14,10 @@ finished code is in [`examples/greedy-brain/`](../examples/greedy-brain).
 5. [Settings and aliases](#settings-and-aliases)
 6. [Measure it](#measure-it)
 7. [Test it](#test-it)
-8. [Diagnostics (optional)](#diagnostics-optional)
-9. [A built-in brain instead of a plug-in](#a-built-in-brain-instead-of-a-plug-in)
-10. [Limitations](#limitations)
+8. [On the website](#on-the-website)
+9. [Diagnostics (optional)](#diagnostics-optional)
+10. [A built-in brain instead of a plug-in](#a-built-in-brain-instead-of-a-plug-in)
+11. [Limitations](#limitations)
 
 ---
 
@@ -272,6 +273,62 @@ Call `get_move`, not `choose_move`, in tests: it is what the game calls.
 The example's tests run in the project's CI (see `pytest.pythonpath` in the
 root `pyproject.toml`), so the code in this tutorial stays working.
 
+## On the website
+
+The website's engine runs in the API image
+(`packages/gomoku-fastapi/Dockerfile`), which has its own environment, so
+the plug-in must be installed in the image.  The build arg
+`BRAIN_PLUGINS` lists what to install: pip requirement specs separated by
+spaces.  Local packages come from the `plugins` build context, mounted at
+`/plugins` during the build.
+
+With Docker Compose, two variables set them:
+
+| Variable | Default | Meaning |
+|----------|---------|---------|
+| `GOMOKU_BRAIN_PLUGINS` | empty (no plug-ins) | Value of `BRAIN_PLUGINS` |
+| `GOMOKU_PLUGINS_DIR` | `./examples` | Host directory mounted at `/plugins` |
+
+The example plug-in:
+
+```bash
+GOMOKU_BRAIN_PLUGINS=/plugins/greedy-brain docker compose up --build
+```
+
+Your own packages, kept in another directory:
+
+```bash
+GOMOKU_PLUGINS_DIR=../my-brains \
+GOMOKU_BRAIN_PLUGINS="/plugins/brain-one /plugins/brain-two" \
+docker compose up --build
+```
+
+A plug-in published as an archive needs no directory, for example a
+GitHub repository's branch archive (a `git+https://` spec does not work:
+the build image has no git):
+
+```bash
+GOMOKU_BRAIN_PLUGINS="https://github.com/you/my-brain/archive/refs/heads/main.zip" docker compose up --build
+```
+
+Without Compose:
+
+```bash
+docker build --build-context plugins=examples \
+  --build-arg BRAIN_PLUGINS=/plugins/greedy-brain \
+  -t gomoku-api -f packages/gomoku-fastapi/Dockerfile .
+```
+
+The build prints `brain plug-ins: greedy`.  **It fails if a plug-in does
+not load**, so a server never starts with a brain quietly missing.  Once
+the image runs, `GET /v1/brains` lists the brain and the website's level
+settings (gear icon) offer it, with a form built from its settings model.
+Its settings can be set like any brain's: an alias in `gomoku.toml`, or
+`brain_overrides` in API requests.
+
+A plug-in's dependency on `gomoku-brain` is met by the copy already in
+the image; its other dependencies are installed from PyPI.
+
 ## Diagnostics (optional)
 
 With `gomoku play --diagnostics`, each move gets a `MoveDiagnostics`
@@ -309,10 +366,7 @@ No entry point is needed: `gomoku_brain` imports it directly.
   plug-in support have no `load_plugins` and report `Unknown brain`.  In
   later revisions, the plug-in comes from your environment (the code you
   installed), not from the revision.
-- **The Docker image.**  The API image installs `gomoku-fastapi` and its
-  dependencies only (`packages/gomoku-fastapi/Dockerfile`).  A plug-in
-  played on the website must be installed in that image too.  Once it is,
-  `GET /v1/brains` lists it and the website offers it in the level
-  settings with a form built from its settings.
+- **The Docker image** contains the plug-ins it was built with.  After
+  changing a plug-in, rebuild the image (`docker compose up --build`).
 - **Brain names are global.**  Two plug-ins with the same name cannot both
   load; the second is skipped with a `PluginWarning`.

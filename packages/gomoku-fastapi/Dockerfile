@@ -17,9 +17,23 @@
 #
 # Behind a TLS-intercepting proxy, pass its CA to every download step:
 #   docker build --secret id=extra_ca,src=/path/to/ca.pem ...
+#
+# Brain plug-ins (docs/WRITING_A_BRAIN.md): BRAIN_PLUGINS lists pip
+# requirement specs installed into the venv, separated by spaces.  Local
+# packages come from the ``plugins`` build context, mounted at /plugins
+# (empty unless given):
+#   docker build --build-context plugins=examples \
+#     --build-arg BRAIN_PLUGINS=/plugins/greedy-brain ...
+#   docker build --build-arg BRAIN_PLUGINS="https://host/me/my-brain/archive/main.zip" ...
+# (an archive URL, not git+https: the image has no git)
+# The build fails if a plug-in does not load.
 
 ARG UV_VERSION=0.11.32
 ARG PYTHON_VERSION=3.14t
+
+# Default ``plugins`` build context: empty.  ``--build-context plugins=DIR``
+# (compose: ``additional_contexts``) replaces this stage with DIR.
+FROM scratch AS plugins
 
 FROM python:3.14-slim-trixie AS builder
 ARG UV_VERSION
@@ -67,6 +81,19 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     --mount=type=secret,id=extra_ca,required=false \
     if [ -f /run/secrets/extra_ca ]; then export SSL_CERT_FILE=/run/secrets/extra_ca; fi; \
     uv sync --frozen --no-dev --no-editable --package gomoku-fastapi
+
+# Brain plug-ins, after the locked sync so changing them rebuilds only this
+# layer.  ``uv pip install`` keeps what the sync installed (gomoku-brain is
+# not on PyPI; the venv's copy satisfies a plug-in's dependency on it) and
+# resolves a plug-in's other dependencies from the index.
+ARG BRAIN_PLUGINS=""
+RUN --mount=type=bind,from=plugins,target=/plugins \
+    --mount=type=cache,target=/root/.cache/uv \
+    --mount=type=secret,id=extra_ca,required=false \
+    if [ -f /run/secrets/extra_ca ]; then export SSL_CERT_FILE=/run/secrets/extra_ca; fi; \
+    if [ -n "${BRAIN_PLUGINS}" ]; then \
+        uv pip install --python /app/.venv/bin/python ${BRAIN_PLUGINS}; \
+    fi
 
 
 # ---------------------------------------------------------------------------
@@ -123,11 +150,20 @@ for root, _dirs, files in os.walk(site):
             st = os.stat(path)
             os.utime(path, (int(st.st_atime), int(st.st_mtime)))
 
+import warnings
+
 from gomoku.board import Board
 from gomoku.models import Move, Stone
 from gomoku.settings import GomokuSettings
-from gomoku_brain import BRAINS, resolve_brain
+from gomoku_brain import BRAINS, PluginWarning, load_plugins, resolve_brain
 from gomoku_brain.evaluate import evaluate_board
+
+# A plug-in that does not load fails the build instead of a running server
+# quietly missing a brain.
+with warnings.catch_warnings():
+    warnings.simplefilter("error", PluginWarning)
+    loaded = load_plugins()
+print("brain plug-ins:", ", ".join(loaded) or "none")
 
 settings = GomokuSettings()
 board = Board(size=15)

@@ -24,6 +24,13 @@ services:
       args:
         VERSION: ${GOMOKU_VERSION:-dev}
         REVISION: ${GOMOKU_REVISION:-unknown}
+        # Brain plug-ins to install (docs/WRITING_A_BRAIN.md): pip specs
+        # separated by spaces; local packages are under /plugins, the
+        # directory GOMOKU_PLUGINS_DIR names.  For the example plug-in:
+        #   GOMOKU_BRAIN_PLUGINS=/plugins/greedy-brain docker compose up --build
+        BRAIN_PLUGINS: ${GOMOKU_BRAIN_PLUGINS:-}
+      additional_contexts:
+        plugins: ${GOMOKU_PLUGINS_DIR:-./examples}
     image: ${GOMOKU_REGISTRY:-ghcr.io/dominik-skorka}/gomoku-api:${GOMOKU_VERSION:-dev}
     environment:
       # The edge strips /api, so the interactive docs live at /api/docs.
