@@ -103,9 +103,7 @@ class TestTempDirCleanup:
         rec.mkdir()
         diag.mkdir()
         (rec / "game.json").write_text("{}")
-        session = store.create(
-            _runner(), black_brain=None, white_brain=None, record_dir=str(rec), diag_dir=str(diag)
-        )
+        session = store.create(_runner(), black_brain=None, white_brain=None, record_dir=str(rec), diag_dir=str(diag))
         return session, rec, diag
 
     def test_delete_removes_dirs(self, tmp_path):
@@ -142,7 +140,5 @@ class TestTempDirCleanup:
 
     def test_missing_dir_is_ignored(self, tmp_path):
         store = SessionStore()
-        session = store.create(
-            _runner(), black_brain=None, white_brain=None, record_dir=str(tmp_path / "gone")
-        )
+        session = store.create(_runner(), black_brain=None, white_brain=None, record_dir=str(tmp_path / "gone"))
         assert store.delete(session.id) is True

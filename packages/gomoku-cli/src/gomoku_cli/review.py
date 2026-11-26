@@ -545,8 +545,10 @@ def _classify(
             return (
                 "unsound_proof",
                 None,
-                (f"the oracle proved a win starting {cell_name(oracle_move)}, it was played, "
-                "and after the reply the oracle disproves the win"),
+                (
+                    f"the oracle proved a win starting {cell_name(oracle_move)}, it was played, "
+                    "and after the reply the oracle disproves the win"
+                ),
             )
         if opponent_wins_next or after_reply == "DISPROVED":
             return "missed_win", oracle_move, f"forced win starting {cell_name(oracle_move)}; gone after the reply"
@@ -797,8 +799,10 @@ def format_blunder(blunder: Blunder, labels: dict[str, str], moves: list[Cell] |
     """One blunder; with the game's *moves*, also the position before it."""
     who = f"{blunder.engine.upper()} ({labels[blunder.engine]}, {blunder.stone})"
     lines = [
-        (f"game {blunder.game + 1}, move {blunder.ply + 1}: {who} played {cell_name(blunder.played)} — "
-        f"{_KIND_TEXT[blunder.kind]}: {blunder.detail}"),
+        (
+            f"game {blunder.game + 1}, move {blunder.ply + 1}: {who} played {cell_name(blunder.played)} — "
+            f"{_KIND_TEXT[blunder.kind]}: {blunder.detail}"
+        ),
         f"    decision: {blunder.path or 'n/a'}, {blunder.ms / 1000:.1f} s",
     ]
     if blunder.attempts:
