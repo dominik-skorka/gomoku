@@ -16,10 +16,12 @@ name to settings model lives alongside the brain classes themselves in
 
 import os
 from pathlib import Path
-from typing import override
+from typing import Annotated, override
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict, TomlConfigSettingsSource
+
+from gomoku.strategies import check_evaluator, check_move_generator
 
 CONFIG_FILENAME = "gomoku.toml"
 """Canonical config filename — searched for during the walk-up."""
@@ -81,6 +83,27 @@ _PROBE_THREADS_DOC = (
 )
 
 
+type EvaluatorName = Annotated[str, AfterValidator(check_evaluator)]
+"""A name registered in :data:`gomoku.strategies.EVALUATORS`."""
+
+type MoveGeneratorName = Annotated[str, AfterValidator(check_move_generator)]
+"""A name registered in :data:`gomoku.strategies.MOVE_GENERATORS`."""
+
+
+def _evaluator_field() -> EvaluatorName:
+    return Field(
+        default="pattern",
+        description="Static evaluation, by name (gomoku.strategies): 'pattern' is the built-in pattern scan.",
+    )
+
+
+def _move_generator_field() -> MoveGeneratorName:
+    return Field(
+        default="radius",
+        description="Candidate moves searched, by name (gomoku.strategies): 'radius' is empty cells near stones.",
+    )
+
+
 class BaseBrainSettings(BaseModel):
     """Base of every brain's settings model (and of its nested tables).
 
@@ -108,12 +131,16 @@ class MinimaxBrainSettings(BaseBrainSettings):
     """Settings for the minimax brain."""
 
     depth: int = Field(default=3, ge=1, le=10)
+    evaluator: EvaluatorName = _evaluator_field()
+    move_generator: MoveGeneratorName = _move_generator_field()
 
 
 class NegamaxBrainSettings(BaseBrainSettings):
     """Settings for the negamax brain."""
 
     depth: int = Field(default=3, ge=1, le=10)
+    evaluator: EvaluatorName = _evaluator_field()
+    move_generator: MoveGeneratorName = _move_generator_field()
 
 
 class AlphaBetaBrainSettings(BaseBrainSettings):
@@ -157,6 +184,8 @@ class AlphaBetaBrainSettings(BaseBrainSettings):
         default=2.0, ge=0.1, le=60.0, description="Time cap for all the breaker probes of one move."
     )
     probe_threads: int = Field(default=1, ge=1, le=64, description=_PROBE_THREADS_DOC)
+    evaluator: EvaluatorName = _evaluator_field()
+    move_generator: MoveGeneratorName = _move_generator_field()
 
 
 class ThreatAttackSettings(BaseBrainSettings):
@@ -246,6 +275,13 @@ class MCTSBrainSettings(BaseBrainSettings):
     vcf_depth: int = Field(default=10, ge=0, le=40)
     time_limit_s: float = Field(default=0.0, ge=0.0, le=600.0)
     reuse_tree: bool = Field(default=False)
+    evaluator: EvaluatorName = Field(
+        default="pattern",
+        description=(
+            "Leaf evaluation, by name (gomoku.strategies).  Priors still come from the pattern "
+            "priors (priors.py), and the expansion candidates from the radius scan."
+        ),
+    )
 
 
 # ── Recording settings ──────────────────────────────────────────────────────

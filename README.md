@@ -124,6 +124,17 @@ extensions.
 `name="yours"` and implement `choose_move`; declaring the class registers it.
 See [ARCHITECTURE.md](docs/ARCHITECTURE.md#ai-brains).
 
+**Trying another evaluation:** the search brains take their evaluation and
+candidate moves by name (`evaluator`, default `"pattern"`; `move_generator`,
+default `"radius"`).  Register one with `gomoku.strategies.register_evaluator`
+and compare it with the built-in:
+
+```bash
+uv run gomoku match --a brain=alphabeta --b brain=alphabeta,evaluator=yours --games 300
+```
+
+See [ARCHITECTURE.md](docs/ARCHITECTURE.md#search-strategies).
+
 ---
 
 ## CLI Commands

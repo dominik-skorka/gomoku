@@ -221,6 +221,12 @@ class Player(Protocol):             # chooses moves for one side
     @property
     def name(self) -> str: ...
     def get_move(self, board: Board, stone: Stone) -> Move: ...
+
+class Evaluator[B: BoardView = BoardView](Protocol):      # static score
+    def __call__(self, board: B, stone: Stone, /) -> float: ...
+
+class MoveGenerator[B: BoardView = BoardView](Protocol):  # moves to search
+    def __call__(self, board: B, stone: Stone, /) -> Sequence[Move]: ...
 ```
 
 - `Board` (immutable, for games) and `SearchState` (mutable, for searches)
@@ -233,6 +239,12 @@ class Player(Protocol):             # chooses moves for one side
   `get_move()` each turn and expects a valid `Move` back.  The registry
   (`BrainSpec.brain_cls: type[Player]`) is checked against it.
   `MoveProvider` is the old name, kept as an alias.
+- `Evaluator` and `MoveGenerator` are the search strategies a brain plugs
+  in (see [Search strategies](#search-strategies)).  Plain functions
+  conform: `evaluate_board` is an `Evaluator`, and
+  `candidates.radius_generator(radius)` returns a `MoveGenerator`.  Both
+  are generic over the board type, so an evaluator that needs
+  `SearchState` internals is an `Evaluator[SearchState]`.
 - Overriding methods are marked `@typing.override`; pyright reports one
   that is not (`reportImplicitOverride`), so renaming a base method cannot
   leave a subclass silently defining a new one.
@@ -327,6 +339,44 @@ Public surface:
   `unregister_brain(name)` removes an entry.
 - `available_brains(brain_settings)` — sorted list of all resolvable
   names (built-ins + TOML aliases).
+
+### Search strategies
+
+The search brains take their static evaluation and their candidate moves
+by name from their settings, like brains are taken by name:
+
+| Setting | Built-in | Registry | In |
+|---|---|---|---|
+| `evaluator` | `"pattern"` = `evaluate_board` | `gomoku.strategies.EVALUATORS` | minimax, negamax, alphabeta (and the threat brain's `fallback`), mcts (leaf values) |
+| `move_generator` | `"radius"` = `get_candidate_moves` at the brain's radius | `gomoku.strategies.MOVE_GENERATORS` | minimax, negamax, alphabeta (and `fallback`) |
+
+```python
+from gomoku.strategies import register_evaluator
+
+def stones_only(board: BoardView, stone: Stone, /) -> float:
+    own = sum(1 for r, c in board.occupied if board.at(r, c) is stone)
+    return float(2 * own - len(board.occupied))
+
+register_evaluator("stones", stones_only)
+AlphaBetaBrain(evaluator="stones")           # or alphabeta,evaluator=stones on the CLI
+```
+
+- The names live in the core package so the settings models can check
+  them (`AfterValidator`): an unknown name is a settings error listing the
+  registered ones, in code, on the command line and in `gomoku.toml`.
+  `gomoku_brain` registers the built-ins when imported
+  (`gomoku_brain/strategies.py`).
+- A move generator is registered as a factory of the candidate radius,
+  so one name serves every radius a brain searches at.
+- An evaluator must stay within ±99,000 (the win score is 100,000) and,
+  like a generator, be stateless or thread-safe: `probe_threads` runs
+  searches in parallel.
+- The threat-space searches (VCF, VCT, PNS) do not take a generator: their
+  proofs depend on exactly which threats and defences are generated
+  ([THREATS.md](THREATS.md)).
+- MCTS priors stay `priors.compute_priors`.
+- Wiring into the brains: minimax / negamax in #103, alpha-beta and MCTS
+  in #104 (plan in #77).
 
 | Brain | Module | Algorithm | Strength |
 |-------|--------|-----------|----------|
