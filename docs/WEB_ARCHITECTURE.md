@@ -232,12 +232,12 @@ docker compose up --build
 Then open <http://localhost:8080>.  The API's interactive docs are at
 <http://localhost:8080/api/docs>.
 
-To serve your own brain plug-ins (see
+To serve your own plug-ins (see
 [WRITING_A_BRAIN.md](WRITING_A_BRAIN.md#on-the-website)), name them when
 building:
 
 ```bash
-GOMOKU_BRAIN_PLUGINS=/plugins/greedy-brain docker compose up --build
+GOMOKU_PLUGINS=/plugins/greedy-brain docker compose up --build
 ```
 
 For frontend development with hot reload, run the API (from source or in

@@ -11,7 +11,7 @@ dependencies = [
 # The line that makes this package a brain plug-in: gomoku imports the
 # module ``greedy_brain`` on start-up, and the class statement inside it
 # registers the brain under its name.
-[project.entry-points."gomoku.brains"]
+[project.entry-points."gomoku.plugins"]
 greedy = "greedy_brain"
 
 [build-system]

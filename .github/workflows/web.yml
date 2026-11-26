@@ -65,17 +65,17 @@ jobs:
           push: false
           cache-from: type=gha,scope=api
           cache-to: type=gha,scope=api,mode=max
-      # The same image with the example brain plug-in
+      # The same image with the example plug-in
       # (docs/WRITING_A_BRAIN.md): the build fails if the plug-in does not
       # install or load.  Reuses the layers above; only the plug-in layer
       # and the runtime stage are rebuilt.
-      - name: gomoku-api with a brain plug-in
+      - name: gomoku-api with a plug-in
         uses: docker/build-push-action@v7
         with:
           context: .
           file: packages/gomoku-fastapi/Dockerfile
           build-contexts: plugins=examples
-          build-args: BRAIN_PLUGINS=/plugins/greedy-brain
+          build-args: PLUGINS=/plugins/greedy-brain
           push: false
           cache-from: type=gha,scope=api
       - name: gomoku-web

@@ -16,19 +16,22 @@ External consumers:
   pair without instantiating.
 * :func:`register_brain` — add a brain at runtime (used by the CLI to
   register the keyboard provider).
-* :func:`load_plugins` — import the brains other installed packages
-  declare under the ``gomoku.brains`` entry-point group.  The registry
+* :func:`load_plugins` — import the modules other installed packages
+  declare under the ``gomoku.plugins`` entry-point group.  The registry
   calls it on first use, so the CLI, the API and match workers all see
-  plug-in brains without doing anything.
+  what plug-ins register without doing anything.
 
-A plug-in package declares its brain module in its ``pyproject.toml``::
+A plug-in package declares its module in its ``pyproject.toml``::
 
-    [project.entry-points."gomoku.brains"]
+    [project.entry-points."gomoku.plugins"]
     greedy = "greedy_brain"
 
-Importing the module registers the brain, as for a built-in one.  A
-plug-in that fails to import (or whose brain name is taken) is skipped
-with a :class:`PluginWarning`; the other brains still work.  See
+Importing the module registers what it defines, as for the built-ins: a
+brain by its class statement, a search strategy by
+:func:`gomoku.strategies.register_evaluator` or
+:func:`~gomoku.strategies.register_move_generator`.  A plug-in that fails
+to import (or whose brain name is taken) is skipped with a
+:class:`PluginWarning`; everything else still works.  See
 ``docs/WRITING_A_BRAIN.md``.
 """
 
@@ -52,23 +55,26 @@ from gomoku_brain.negamax import NegamaxBrain
 from gomoku_brain.random import RandomBrain
 from gomoku_brain.threat import ThreatBrain
 
-#: Entry-point group plug-in packages declare their brain modules under.
-PLUGIN_GROUP = "gomoku.brains"
+#: Entry-point group plug-in packages declare their modules under.
+PLUGIN_GROUP = "gomoku.plugins"
 
 
 class PluginWarning(RuntimeWarning):
-    """A plug-in brain could not be loaded and was skipped."""
+    """A plug-in could not be loaded and was skipped."""
 
 
 _plugins_loaded = False
 
 
 def load_plugins() -> list[str]:
-    """Import every module declared under the ``gomoku.brains`` entry points.
+    """Import every module declared under the ``gomoku.plugins`` entry points.
 
     Runs once per process (later calls do nothing and return ``[]``); the
-    registry calls it on first use.  Returns the entry-point names that
-    loaded.  A plug-in that raises while importing, for example because
+    brain registry calls it on first use, which comes before any brain's
+    settings are validated, so evaluators and move generators a plug-in
+    registers are known by then.  Code that validates brain settings
+    without looking a brain up first calls it itself.  Returns the
+    entry-point names that loaded.  A plug-in that raises while importing, for example because
     its brain name is already taken, is skipped with a
     :class:`PluginWarning`.
     """
@@ -81,7 +87,7 @@ def load_plugins() -> list[str]:
         try:
             ep.load()
         except Exception as exc:
-            msg = f"brain plug-in {ep.name!r} ({ep.value}) failed to load: {exc}"
+            msg = f"plug-in {ep.name!r} ({ep.value}) failed to load: {exc}"
             warnings.warn(msg, PluginWarning, stacklevel=2)
         else:
             loaded.append(ep.name)

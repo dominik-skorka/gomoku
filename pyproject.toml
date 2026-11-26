@@ -65,7 +65,7 @@ testpaths = [
     "packages/gomoku-fastapi/tests",
     "examples/greedy-brain/tests",
 ]
-# The example brain plug-in (docs/WRITING_A_BRAIN.md) is not a workspace
+# The example plug-in (docs/WRITING_A_BRAIN.md) is not a workspace
 # member; putting its source on the path keeps its tests in the suite
 # without installing it.
 pythonpath = ["examples/greedy-brain/src"]

@@ -1,4 +1,4 @@
-"""Brain plug-ins: modules declared under the ``gomoku.brains`` entry points."""
+"""Plug-ins: modules declared under the ``gomoku.plugins`` entry points."""
 
 import sys
 import textwrap
@@ -7,7 +7,17 @@ from pathlib import Path
 
 import gomoku_brain
 import pytest
-from gomoku_brain import BRAINS, PLUGIN_GROUP, PluginWarning, get_brain, load_plugins, unregister_brain
+from gomoku.settings import BrainSettings
+from gomoku.strategies import EVALUATORS, unregister_strategy
+from gomoku_brain import (
+    BRAINS,
+    PLUGIN_GROUP,
+    PluginWarning,
+    get_brain,
+    get_brain_from_settings,
+    load_plugins,
+    unregister_brain,
+)
 
 _PLUGIN = """
 from typing import override
@@ -51,7 +61,21 @@ def plugins(monkeypatch, tmp_path: Path):
     yield install
     for module in created:
         unregister_brain(module)
+        unregister_strategy(module)
         sys.modules.pop(module, None)
+
+
+_STRATEGY_PLUGIN = """
+from gomoku.strategies import register_evaluator
+
+
+def material(board, stone, /):
+    own = sum(1 for r, c in board.occupied if board.at(r, c) is stone)
+    return float(2 * own - len(board.occupied))
+
+
+register_evaluator("{name}", material)
+"""
 
 
 def test_registry_loads_plugins_on_first_use(plugins):
@@ -79,3 +103,14 @@ def test_plugin_cannot_take_a_built_in_name(plugins):
     with pytest.warns(PluginWarning, match="'threat' is taken"):
         load_plugins()
     assert BRAINS["threat"].brain_cls is gomoku_brain.ThreatBrain
+
+
+def test_plugin_strategy_is_known_before_settings_are_validated(plugins):
+    """A plug-in evaluator works in an alias, as on the CLI and in the API:
+    resolving the brain loads plug-ins before its settings are checked."""
+    plugins(plug_eval=_STRATEGY_PLUGIN.format(name="plug_eval"))
+    assert "plug_eval" not in EVALUATORS  # not loaded yet
+    aliases = BrainSettings.model_validate({"ab_plug": {"type": "alphabeta", "evaluator": "plug_eval", "depth": 1}})
+    brain = get_brain_from_settings("ab_plug", aliases)
+    assert "plug_eval" in EVALUATORS
+    assert brain.settings.evaluator == "plug_eval"

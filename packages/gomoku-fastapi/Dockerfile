@@ -18,13 +18,13 @@
 # Behind a TLS-intercepting proxy, pass its CA to every download step:
 #   docker build --secret id=extra_ca,src=/path/to/ca.pem ...
 #
-# Brain plug-ins (docs/WRITING_A_BRAIN.md): BRAIN_PLUGINS lists pip
+# Plug-ins (brains, search strategies; docs/WRITING_A_BRAIN.md): PLUGINS lists pip
 # requirement specs installed into the venv, separated by spaces.  Local
 # packages come from the ``plugins`` build context, mounted at /plugins
 # (empty unless given):
 #   docker build --build-context plugins=examples \
-#     --build-arg BRAIN_PLUGINS=/plugins/greedy-brain ...
-#   docker build --build-arg BRAIN_PLUGINS="git+https://host/me/my-brain.git" ...
+#     --build-arg PLUGINS=/plugins/greedy-brain ...
+#   docker build --build-arg PLUGINS="git+https://host/me/my-brain.git" ...
 # The build fails if a plug-in does not load.
 
 ARG UV_VERSION=0.11.32
@@ -45,7 +45,7 @@ RUN --mount=type=secret,id=extra_ca,required=false \
     if [ -f /run/secrets/extra_ca ]; then export PIP_CERT=/run/secrets/extra_ca; fi; \
     pip install --no-cache-dir "uv==${UV_VERSION}"
 
-# git, for brain plug-ins given as ``git+https://`` specs (BRAIN_PLUGINS
+# git, for plug-ins given as ``git+https://`` specs (PLUGINS
 # below).  Builder stage only: the runtime image does not get it.  apt
 # fetches over HTTPS (the image has ca-certificates), so the extra CA of a
 # TLS-intercepting proxy applies to it as to the other downloads (readable
@@ -93,19 +93,19 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     if [ -f /run/secrets/extra_ca ]; then export SSL_CERT_FILE=/run/secrets/extra_ca; fi; \
     uv sync --frozen --no-dev --no-editable --package gomoku-fastapi
 
-# Brain plug-ins, after the locked sync so changing them rebuilds only this
+# Plug-ins, after the locked sync so changing them rebuilds only this
 # layer.  ``uv pip install`` keeps what the sync installed (gomoku-brain is
 # not on PyPI; the venv's copy satisfies a plug-in's dependency on it) and
 # resolves a plug-in's other dependencies from the index.
-ARG BRAIN_PLUGINS=""
+ARG PLUGINS=""
 RUN --mount=type=bind,from=plugins,target=/plugins \
     --mount=type=cache,target=/root/.cache/uv \
     --mount=type=secret,id=extra_ca,required=false \
     if [ -f /run/secrets/extra_ca ]; then \
         export SSL_CERT_FILE=/run/secrets/extra_ca GIT_SSL_CAINFO=/run/secrets/extra_ca; \
     fi; \
-    if [ -n "${BRAIN_PLUGINS}" ]; then \
-        uv pip install --python /app/.venv/bin/python ${BRAIN_PLUGINS}; \
+    if [ -n "${PLUGINS}" ]; then \
+        uv pip install --python /app/.venv/bin/python ${PLUGINS}; \
     fi
 
 
@@ -172,11 +172,11 @@ from gomoku_brain import BRAINS, PluginWarning, load_plugins, resolve_brain
 from gomoku_brain.evaluate import evaluate_board
 
 # A plug-in that does not load fails the build instead of a running server
-# quietly missing a brain.
+# quietly missing a brain or a strategy.
 with warnings.catch_warnings():
     warnings.simplefilter("error", PluginWarning)
     loaded = load_plugins()
-print("brain plug-ins:", ", ".join(loaded) or "none")
+print("plug-ins:", ", ".join(loaded) or "none")
 
 settings = GomokuSettings()
 board = Board(size=15)

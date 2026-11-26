@@ -327,13 +327,14 @@ That is the whole contract:
   registry, so it can be played, aliased in `gomoku.toml` and matched like
   a built-in brain.  Built-in brains are imported by `gomoku_brain` so they
   register on import.
-- **Plug-ins** are brains in other installed packages.  A package declares
-  its brain module under the `gomoku.brains` entry-point group, and
-  `gomoku_brain.load_plugins()` imports those modules on the first lookup
-  in `BRAINS` (once per process), so the CLI, the API and match workers
-  all see them.  A plug-in that fails to import or takes a used name is
-  skipped with a `PluginWarning`.  Tutorial:
-  [WRITING_A_BRAIN.md](WRITING_A_BRAIN.md).
+- **Plug-ins** are brains and search strategies (below) in other
+  installed packages.  A package declares its module under the
+  `gomoku.plugins` entry-point group, and `gomoku_brain.load_plugins()`
+  imports those modules on the first lookup in `BRAINS` (once per
+  process, before any brain's settings are validated), so the CLI, the
+  API and match workers all see what they register.  A plug-in that fails
+  to import or takes a used brain name is skipped with a `PluginWarning`.
+  Tutorial: [WRITING_A_BRAIN.md](WRITING_A_BRAIN.md).
 
 `gomoku_brain.BRAINS` is a live mapping from name to `BrainSpec` (brain
 class + settings model) over those registrations, plus players added with
@@ -395,6 +396,10 @@ AlphaBetaBrain(evaluator="stones")  # or alphabeta,evaluator=stones on the CLI
   (`gomoku_brain/strategies.py`).
 - A move generator is registered as a factory of the candidate radius,
   so one name serves every radius a brain searches at.
+- Strategies from other packages arrive as plug-ins: a module under the
+  `gomoku.plugins` entry points that calls `register_evaluator` /
+  `register_move_generator` when imported
+  ([WRITING_A_BRAIN.md](WRITING_A_BRAIN.md#a-strategy-instead-of-a-brain)).
 - An evaluator must stay within ±99,000 (the win score is 100,000) and,
   like a generator, be stateless or thread-safe: `probe_threads` runs
   searches in parallel.

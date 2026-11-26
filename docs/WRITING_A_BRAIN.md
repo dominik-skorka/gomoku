@@ -5,6 +5,10 @@ every part of the project: `gomoku play`, `gomoku.toml` aliases,
 `gomoku match`, the HTTP API and the website's level settings.  The
 finished code is in [`examples/greedy-brain/`](../examples/greedy-brain).
 
+The same mechanism plugs in a search strategy (an evaluator or a move
+generator for the built-in search brains) instead of a whole brain; see
+[A strategy instead of a brain](#a-strategy-instead-of-a-brain).
+
 ## Table of Contents
 
 1. [How brains are found](#how-brains-are-found)
@@ -16,8 +20,9 @@ finished code is in [`examples/greedy-brain/`](../examples/greedy-brain).
 7. [Test it](#test-it)
 8. [On the website](#on-the-website)
 9. [Diagnostics (optional)](#diagnostics-optional)
-10. [A built-in brain instead of a plug-in](#a-built-in-brain-instead-of-a-plug-in)
-11. [Limitations](#limitations)
+10. [A strategy instead of a brain](#a-strategy-instead-of-a-brain)
+11. [A built-in brain instead of a plug-in](#a-built-in-brain-instead-of-a-plug-in)
+12. [Limitations](#limitations)
 
 ---
 
@@ -30,11 +35,11 @@ that plays brains (CLI, API, match workers) looks names up there.  See
 
 A brain only registers when its module is imported.  Built-in brains are
 imported by `gomoku_brain` itself; a brain in another package is imported
-through an **entry point** in the `gomoku.brains` group:
+through an **entry point** in the `gomoku.plugins` group:
 
 ```mermaid
 flowchart LR
-    A["pyproject.toml<br/>[project.entry-points.&quot;gomoku.brains&quot;]<br/>greedy = &quot;greedy_brain&quot;"] -->|installed| B["package metadata"]
+    A["pyproject.toml<br/>[project.entry-points.&quot;gomoku.plugins&quot;]<br/>greedy = &quot;greedy_brain&quot;"] -->|installed| B["package metadata"]
     C["first use of BRAINS<br/>(play, match, API)"] --> D["load_plugins()"]
     D -->|reads| B
     D -->|import greedy_brain| E["class GreedyBrain(Brain, name=&quot;greedy&quot;)"]
@@ -42,8 +47,8 @@ flowchart LR
 ```
 
 `load_plugins()` runs once per process, on the first lookup in `BRAINS`.
-A plug-in that fails to import, or whose name is already taken, is skipped
-with a `PluginWarning` and the other brains keep working.
+A plug-in that fails to import, or whose brain name is already taken, is
+skipped with a `PluginWarning` and everything else keeps working.
 
 ## The package
 
@@ -70,7 +75,7 @@ dependencies = [
 # The line that makes this package a brain plug-in: gomoku imports the
 # module ``greedy_brain`` on start-up, and the class statement inside it
 # registers the brain under its name.
-[project.entry-points."gomoku.brains"]
+[project.entry-points."gomoku.plugins"]
 greedy = "greedy_brain"
 
 [build-system]
@@ -278,7 +283,7 @@ root `pyproject.toml`), so the code in this tutorial stays working.
 The website's engine runs in the API image
 (`packages/gomoku-fastapi/Dockerfile`), which has its own environment, so
 the plug-in must be installed in the image.  The build arg
-`BRAIN_PLUGINS` lists what to install: pip requirement specs separated by
+`PLUGINS` lists what to install: pip requirement specs separated by
 spaces.  Local packages come from the `plugins` build context, mounted at
 `/plugins` during the build.
 
@@ -286,20 +291,20 @@ With Docker Compose, two variables set them:
 
 | Variable | Default | Meaning |
 |----------|---------|---------|
-| `GOMOKU_BRAIN_PLUGINS` | empty (no plug-ins) | Value of `BRAIN_PLUGINS` |
+| `GOMOKU_PLUGINS` | empty (no plug-ins) | Value of `PLUGINS` |
 | `GOMOKU_PLUGINS_DIR` | `./examples` | Host directory mounted at `/plugins` |
 
 The example plug-in:
 
 ```bash
-GOMOKU_BRAIN_PLUGINS=/plugins/greedy-brain docker compose up --build
+GOMOKU_PLUGINS=/plugins/greedy-brain docker compose up --build
 ```
 
 Your own packages, kept in another directory:
 
 ```bash
 GOMOKU_PLUGINS_DIR=../my-brains \
-GOMOKU_BRAIN_PLUGINS="/plugins/brain-one /plugins/brain-two" \
+GOMOKU_PLUGINS="/plugins/brain-one /plugins/brain-two" \
 docker compose up --build
 ```
 
@@ -308,21 +313,22 @@ directory (`#subdirectory=` points into a repository with more than the
 plug-in, `@` picks a branch, tag or commit):
 
 ```bash
-GOMOKU_BRAIN_PLUGINS="git+https://github.com/you/my-brain.git" docker compose up --build
-GOMOKU_BRAIN_PLUGINS="git+https://github.com/you/repo.git@v1.0#subdirectory=brains/mine" docker compose up --build
-GOMOKU_BRAIN_PLUGINS="https://example.com/my-brain-1.0.tar.gz" docker compose up --build
+GOMOKU_PLUGINS="git+https://github.com/you/my-brain.git" docker compose up --build
+GOMOKU_PLUGINS="git+https://github.com/you/repo.git@v1.0#subdirectory=brains/mine" docker compose up --build
+GOMOKU_PLUGINS="https://example.com/my-brain-1.0.tar.gz" docker compose up --build
 ```
 
 Without Compose:
 
 ```bash
 docker build --build-context plugins=examples \
-  --build-arg BRAIN_PLUGINS=/plugins/greedy-brain \
+  --build-arg PLUGINS=/plugins/greedy-brain \
   -t gomoku-api -f packages/gomoku-fastapi/Dockerfile .
 ```
 
-The build prints `brain plug-ins: greedy`.  **It fails if a plug-in does
-not load**, so a server never starts with a brain quietly missing.  Once
+The build prints `plug-ins: greedy`.  **It fails if a plug-in does not
+load**, so a server never starts with a brain or a strategy quietly
+missing.  Once
 the image runs, `GET /v1/brains` lists the brain and the website's level
 settings (gear icon) offer it, with a form built from its settings model.
 Its settings can be set like any brain's: an alias in `gomoku.toml`, or
@@ -349,6 +355,70 @@ record that `gomoku analyze` and playback read
 Search statistics go in `session.diag.search_stats`
 (`SearchStats(time_ms=session.elapsed_ms(), nodes_searched=...)`).
 
+## A strategy instead of a brain
+
+The search brains (minimax, negamax, alphabeta and the threat brain's
+alpha-beta `fallback`, MCTS for its leaf values) take their evaluation and
+their candidate moves by name, from the `evaluator` and `move_generator`
+settings ([ARCHITECTURE.md](ARCHITECTURE.md#search-strategies)).  To try a
+new evaluation inside the full alpha-beta search, plug in an evaluator
+rather than writing a brain.
+
+The package looks the same, with an entry point in the same group.  The
+module registers the strategy when it is imported:
+
+```python
+"""Evaluator plug-in: material only, for comparison with "pattern"."""
+
+from gomoku.interfaces import BoardView
+from gomoku.models import Stone
+from gomoku.strategies import register_evaluator
+
+
+def stones(board: BoardView, stone: Stone, /) -> float:
+    own = sum(1 for r, c in board.occupied if board.at(r, c) is stone)
+    return float(2 * own - len(board.occupied))
+
+
+register_evaluator("stones", stones)
+```
+
+```toml
+[project.entry-points."gomoku.plugins"]
+stones = "stones_eval"
+```
+
+Then choose it like a built-in one:
+
+```bash
+uv run gomoku play --black alphabeta,evaluator=stones --white alphabeta
+uv run gomoku match --a brain=alphabeta,evaluator=stones --b brain=alphabeta --games 40
+```
+
+```toml
+[brains.ab_stones]
+type = "alphabeta"
+evaluator = "stones"
+```
+
+The rules an evaluator must keep:
+
+- **Range:** stay within ±99,000; the search uses ±100,000 for won and lost
+  positions.
+- **Thread safety:** be stateless or thread-safe, since `probe_threads`
+  runs searches in parallel.
+- **Speed:** be fast; the search calls it at every node.
+
+A move generator is registered with `register_move_generator(name,
+factory)`, where `factory(radius)` returns a function
+`(board, stone) -> list[Move]` of candidate cells, best first if it orders
+them.
+
+A strategy name is checked when a brain's settings are validated.  The CLI,
+the API and match workers load plug-ins before that.  Your own code that
+builds settings directly, such as `AlphaBetaBrainSettings(evaluator="stones")`,
+calls `gomoku_brain.load_plugins()` first.
+
 ## A built-in brain instead of a plug-in
 
 A brain meant to ship with the project goes in
@@ -370,5 +440,7 @@ No entry point is needed: `gomoku_brain` imports it directly.
   installed), not from the revision.
 - **The Docker image** contains the plug-ins it was built with.  After
   changing a plug-in, rebuild the image (`docker compose up --build`).
-- **Brain names are global.**  Two plug-ins with the same name cannot both
-  load; the second is skipped with a `PluginWarning`.
+- **Brain names are global.**  Two plug-ins with the same brain name
+  cannot both load; the second is skipped with a `PluginWarning`.  A
+  strategy name registered twice is replaced silently by the later one
+  (`gomoku.strategies` allows that), so pick distinctive names.
