@@ -375,7 +375,8 @@ AlphaBetaBrain(evaluator="stones")  # or alphabeta,evaluator=stones on the CLI
   weights own it and is cleared when another set takes it over).
   `"pattern_open3"` doubles the open-three bonus (1,500 → 3,000): in #105 it
   beat `"pattern"` by +28 Elo (95% interval +1 to +55, 300 games,
-  alpha-beta at 0.4 s a move), the only one of five single-weight changes
+  alpha-beta at 0.4 s a move) and by +50 (+16 to +85) on other openings,
+  the only one of five single-weight changes
   that did not score as a draw.  It is not the default.
 - The names live in the core package so the settings models can check
   them (`AfterValidator`): an unknown name is a settings error listing the

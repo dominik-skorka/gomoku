@@ -39,7 +39,8 @@ depth = 3
 # Default: "pattern" / "radius" | Built-ins: "pattern", "pattern_open3" / "radius"
 # "pattern_open3" (open-three bonus 3_000 instead of 1_500) vs "pattern",
 # alpha-beta depth 10 at time_limit_s = 0.4: +28 Elo (95% interval +1 to
-# +55, 300 games, #105).  Screened at depth 3 (100 games each): dead four
+# +55, 300 games, #105); confirmed on other openings (--seed 2): +50 Elo
+# (+16 to +85, 300 games).  Screened at depth 3 (100 games each): dead four
 # x3, live three x2, fork bonus x2, live two x3 all within +-7 Elo.
 # evaluator = "pattern"
 # move_generator = "radius"

@@ -24,6 +24,7 @@ register_evaluator(DEFAULT_EVALUATOR, evaluate_board)
 register_move_generator(DEFAULT_MOVE_GENERATOR, radius_generator)
 
 # Measured in #105: open_three_bonus 3_000 (built-in 1_500) beat "pattern"
-# by +28 Elo (95% interval +1 to +55, 300 games, alpha-beta at 0.4 s a move).
+# by +28 Elo (95% interval +1 to +55, 300 games, alpha-beta at 0.4 s a move)
+# and by +50 (+16 to +85) on other openings (--seed 2).
 OPEN_THREE_EVALUATOR = "pattern_open3"
 register_evaluator(OPEN_THREE_EVALUATOR, pattern_evaluator(PatternWeights(open_three_bonus=3_000)))
