@@ -241,15 +241,6 @@ class MCTSBrainSettings(BaseBrainSettings):
     iterations: int = Field(default=10_000, ge=1, le=1_000_000)
     exploration: float = Field(default=2.0, ge=0.1, le=5.0)
     fpu_reduction: float = Field(default=0.2, ge=0.0, le=1.0)
-    minimax_weight: float = Field(default=0.0, ge=0.0, le=1.0)
-    # MCTS–minimax hybrids (0 = off): shallow-search priors at the root
-    # (and at nodes with ab_prior_visits visits), VCF at visited nodes.
-    ab_prior_depth: int = Field(default=0, ge=0, le=4)
-    ab_prior_k: int = Field(default=8, ge=2, le=30)
-    ab_prior_weight: float = Field(default=0.5, ge=0.0, le=1.0)
-    ab_prior_visits: int = Field(default=0, ge=0, le=100_000)
-    vcf_expand_depth: int = Field(default=0, ge=0, le=20)
-    vcf_expand_visits: int = Field(default=16, ge=1, le=100_000)
     dirichlet_alpha: float = Field(default=0.25, ge=0.0, le=1.0)
     dirichlet_weight: float = Field(default=0.0, ge=0.0, le=1.0)
     vcf_depth: int = Field(default=10, ge=0, le=40)
