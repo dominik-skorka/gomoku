@@ -24,8 +24,7 @@
 # (empty unless given):
 #   docker build --build-context plugins=examples \
 #     --build-arg BRAIN_PLUGINS=/plugins/greedy-brain ...
-#   docker build --build-arg BRAIN_PLUGINS="https://host/me/my-brain/archive/main.zip" ...
-# (an archive URL, not git+https: the image has no git)
+#   docker build --build-arg BRAIN_PLUGINS="git+https://host/me/my-brain.git" ...
 # The build fails if a plug-in does not load.
 
 ARG UV_VERSION=0.11.32
@@ -45,6 +44,18 @@ ARG PYTHON_VERSION
 RUN --mount=type=secret,id=extra_ca,required=false \
     if [ -f /run/secrets/extra_ca ]; then export PIP_CERT=/run/secrets/extra_ca; fi; \
     pip install --no-cache-dir "uv==${UV_VERSION}"
+
+# git, for brain plug-ins given as ``git+https://`` specs (BRAIN_PLUGINS
+# below).  Builder stage only: the runtime image does not get it.  apt
+# fetches over HTTPS (the image has ca-certificates), so the extra CA of a
+# TLS-intercepting proxy applies to it as to the other downloads (readable
+# by all: apt downloads as the unprivileged _apt user).
+RUN --mount=type=secret,id=extra_ca,required=false,mode=0444 \
+    sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.list.d/debian.sources; \
+    ca=""; if [ -f /run/secrets/extra_ca ]; then ca="-o Acquire::https::CAInfo=/run/secrets/extra_ca"; fi; \
+    apt-get $ca update \
+    && apt-get $ca install -y --no-install-recommends git \
+    && rm -rf /var/lib/apt/lists/*
 
 # UV_COMPILE_BYTECODE: .pyc files in the image, no compile cost at start.
 # UV_LINK_MODE=copy: no hardlinks across the cache mount boundary.
@@ -90,7 +101,9 @@ ARG BRAIN_PLUGINS=""
 RUN --mount=type=bind,from=plugins,target=/plugins \
     --mount=type=cache,target=/root/.cache/uv \
     --mount=type=secret,id=extra_ca,required=false \
-    if [ -f /run/secrets/extra_ca ]; then export SSL_CERT_FILE=/run/secrets/extra_ca; fi; \
+    if [ -f /run/secrets/extra_ca ]; then \
+        export SSL_CERT_FILE=/run/secrets/extra_ca GIT_SSL_CAINFO=/run/secrets/extra_ca; \
+    fi; \
     if [ -n "${BRAIN_PLUGINS}" ]; then \
         uv pip install --python /app/.venv/bin/python ${BRAIN_PLUGINS}; \
     fi

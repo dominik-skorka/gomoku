@@ -303,12 +303,14 @@ GOMOKU_BRAIN_PLUGINS="/plugins/brain-one /plugins/brain-two" \
 docker compose up --build
 ```
 
-A plug-in published as an archive needs no directory, for example a
-GitHub repository's branch archive (a `git+https://` spec does not work:
-the build image has no git):
+A plug-in in a git repository, or published as an archive, needs no
+directory (`#subdirectory=` points into a repository with more than the
+plug-in, `@` picks a branch, tag or commit):
 
 ```bash
-GOMOKU_BRAIN_PLUGINS="https://github.com/you/my-brain/archive/refs/heads/main.zip" docker compose up --build
+GOMOKU_BRAIN_PLUGINS="git+https://github.com/you/my-brain.git" docker compose up --build
+GOMOKU_BRAIN_PLUGINS="git+https://github.com/you/repo.git@v1.0#subdirectory=brains/mine" docker compose up --build
+GOMOKU_BRAIN_PLUGINS="https://example.com/my-brain-1.0.tar.gz" docker compose up --build
 ```
 
 Without Compose:
