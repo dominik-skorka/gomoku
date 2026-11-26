@@ -17,9 +17,22 @@
 #
 # Behind a TLS-intercepting proxy, pass its CA to every download step:
 #   docker build --secret id=extra_ca,src=/path/to/ca.pem ...
+#
+# Plug-ins (brains, search strategies; docs/WRITING_A_BRAIN.md): PLUGINS lists pip
+# requirement specs installed into the venv, separated by spaces.  Local
+# packages come from the ``plugins`` build context, mounted at /plugins
+# (empty unless given):
+#   docker build --build-context plugins=examples \
+#     --build-arg PLUGINS=/plugins/greedy-brain ...
+#   docker build --build-arg PLUGINS="git+https://host/me/my-brain.git" ...
+# The build fails if a plug-in does not load.
 
 ARG UV_VERSION=0.11.32
 ARG PYTHON_VERSION=3.14t
+
+# Default ``plugins`` build context: empty.  ``--build-context plugins=DIR``
+# (compose: ``additional_contexts``) replaces this stage with DIR.
+FROM scratch AS plugins
 
 FROM python:3.14-slim-trixie AS builder
 ARG UV_VERSION
@@ -31,6 +44,18 @@ ARG PYTHON_VERSION
 RUN --mount=type=secret,id=extra_ca,required=false \
     if [ -f /run/secrets/extra_ca ]; then export PIP_CERT=/run/secrets/extra_ca; fi; \
     pip install --no-cache-dir "uv==${UV_VERSION}"
+
+# git, for plug-ins given as ``git+https://`` specs (PLUGINS
+# below).  Builder stage only: the runtime image does not get it.  apt
+# fetches over HTTPS (the image has ca-certificates), so the extra CA of a
+# TLS-intercepting proxy applies to it as to the other downloads (readable
+# by all: apt downloads as the unprivileged _apt user).
+RUN --mount=type=secret,id=extra_ca,required=false,mode=0444 \
+    sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.list.d/debian.sources; \
+    ca=""; if [ -f /run/secrets/extra_ca ]; then ca="-o Acquire::https::CAInfo=/run/secrets/extra_ca"; fi; \
+    apt-get $ca update \
+    && apt-get $ca install -y --no-install-recommends git \
+    && rm -rf /var/lib/apt/lists/*
 
 # UV_COMPILE_BYTECODE: .pyc files in the image, no compile cost at start.
 # UV_LINK_MODE=copy: no hardlinks across the cache mount boundary.
@@ -67,6 +92,21 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     --mount=type=secret,id=extra_ca,required=false \
     if [ -f /run/secrets/extra_ca ]; then export SSL_CERT_FILE=/run/secrets/extra_ca; fi; \
     uv sync --frozen --no-dev --no-editable --package gomoku-fastapi
+
+# Plug-ins, after the locked sync so changing them rebuilds only this
+# layer.  ``uv pip install`` keeps what the sync installed (gomoku-brain is
+# not on PyPI; the venv's copy satisfies a plug-in's dependency on it) and
+# resolves a plug-in's other dependencies from the index.
+ARG PLUGINS=""
+RUN --mount=type=bind,from=plugins,target=/plugins \
+    --mount=type=cache,target=/root/.cache/uv \
+    --mount=type=secret,id=extra_ca,required=false \
+    if [ -f /run/secrets/extra_ca ]; then \
+        export SSL_CERT_FILE=/run/secrets/extra_ca GIT_SSL_CAINFO=/run/secrets/extra_ca; \
+    fi; \
+    if [ -n "${PLUGINS}" ]; then \
+        uv pip install --python /app/.venv/bin/python ${PLUGINS}; \
+    fi
 
 
 # ---------------------------------------------------------------------------
@@ -123,11 +163,20 @@ for root, _dirs, files in os.walk(site):
             st = os.stat(path)
             os.utime(path, (int(st.st_atime), int(st.st_mtime)))
 
+import warnings
+
 from gomoku.board import Board
 from gomoku.models import Move, Stone
 from gomoku.settings import GomokuSettings
-from gomoku_brain import BRAINS, resolve_brain
+from gomoku_brain import BRAINS, PluginWarning, load_plugins, resolve_brain
 from gomoku_brain.evaluate import evaluate_board
+
+# A plug-in that does not load fails the build instead of a running server
+# quietly missing a brain or a strategy.
+with warnings.catch_warnings():
+    warnings.simplefilter("error", PluginWarning)
+    loaded = load_plugins()
+print("plug-ins:", ", ".join(loaded) or "none")
 
 settings = GomokuSettings()
 board = Board(size=15)

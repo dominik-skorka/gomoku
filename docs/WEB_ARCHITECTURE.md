@@ -232,6 +232,14 @@ docker compose up --build
 Then open <http://localhost:8080>.  The API's interactive docs are at
 <http://localhost:8080/api/docs>.
 
+To serve your own plug-ins (see
+[WRITING_A_BRAIN.md](WRITING_A_BRAIN.md#on-the-website)), name them when
+building:
+
+```bash
+GOMOKU_PLUGINS=/plugins/greedy-brain docker compose up --build
+```
+
 For frontend development with hot reload, run the API (from source or in
 its container) and Vite separately:
 

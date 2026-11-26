@@ -63,7 +63,12 @@ testpaths = [
     "packages/gomoku-brain/tests",
     "packages/gomoku-cli/tests",
     "packages/gomoku-fastapi/tests",
+    "examples/greedy-brain/tests",
 ]
+# The example plug-in (docs/WRITING_A_BRAIN.md) is not a workspace
+# member; putting its source on the path keeps its tests in the suite
+# without installing it.
+pythonpath = ["examples/greedy-brain/src"]
 markers = [
     "bench: slow benchmarks (opt-in via `-m bench`)",
 ]
@@ -72,7 +77,13 @@ addopts = "-m 'not bench'"
 [tool.pyright]
 # Static type checking in CI.  The interfaces in gomoku.interfaces (and the
 # brain base class) only mean something if a checker enforces them.
-include = ["packages/gomoku/src", "packages/gomoku-brain/src", "packages/gomoku-cli/src", "packages/gomoku-fastapi/src"]
+include = [
+    "packages/gomoku/src",
+    "packages/gomoku-brain/src",
+    "packages/gomoku-cli/src",
+    "packages/gomoku-fastapi/src",
+    "examples/greedy-brain/src",
+]
 pythonVersion = "3.14"
 typeCheckingMode = "basic"
 # An overriding method must say so with @typing.override, so renaming or

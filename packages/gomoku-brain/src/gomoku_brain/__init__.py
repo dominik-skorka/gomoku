@@ -16,10 +16,29 @@ External consumers:
   pair without instantiating.
 * :func:`register_brain` — add a brain at runtime (used by the CLI to
   register the keyboard provider).
+* :func:`load_plugins` — import the modules other installed packages
+  declare under the ``gomoku.plugins`` entry-point group.  The registry
+  calls it on first use, so the CLI, the API and match workers all see
+  what plug-ins register without doing anything.
+
+A plug-in package declares its module in its ``pyproject.toml``::
+
+    [project.entry-points."gomoku.plugins"]
+    greedy = "greedy_brain"
+
+Importing the module registers what it defines, as for the built-ins: a
+brain by its class statement, a search strategy by
+:func:`gomoku.strategies.register_evaluator` or
+:func:`~gomoku.strategies.register_move_generator`.  A plug-in that fails
+to import (or whose brain name is taken) is skipped with a
+:class:`PluginWarning`; everything else still works.  See
+``docs/WRITING_A_BRAIN.md``.
 """
 
+import warnings
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
+from importlib.metadata import entry_points
 from typing import Any, override
 
 from gomoku.interfaces import Player
@@ -35,6 +54,44 @@ from gomoku_brain.minimax import MinimaxBrain
 from gomoku_brain.negamax import NegamaxBrain
 from gomoku_brain.random import RandomBrain
 from gomoku_brain.threat import ThreatBrain
+
+#: Entry-point group plug-in packages declare their modules under.
+PLUGIN_GROUP = "gomoku.plugins"
+
+
+class PluginWarning(RuntimeWarning):
+    """A plug-in could not be loaded and was skipped."""
+
+
+_plugins_loaded = False
+
+
+def load_plugins() -> list[str]:
+    """Import every module declared under the ``gomoku.plugins`` entry points.
+
+    Runs once per process (later calls do nothing and return ``[]``); the
+    brain registry calls it on first use, which comes before any brain's
+    settings are validated, so evaluators and move generators a plug-in
+    registers are known by then.  Code that validates brain settings
+    without looking a brain up first calls it itself.  Returns the
+    entry-point names that loaded.  A plug-in that raises while importing, for example because
+    its brain name is already taken, is skipped with a
+    :class:`PluginWarning`.
+    """
+    global _plugins_loaded
+    if _plugins_loaded:
+        return []
+    _plugins_loaded = True
+    loaded: list[str] = []
+    for ep in entry_points(group=PLUGIN_GROUP):
+        try:
+            ep.load()
+        except Exception as exc:
+            msg = f"plug-in {ep.name!r} ({ep.value}) failed to load: {exc}"
+            warnings.warn(msg, PluginWarning, stacklevel=2)
+        else:
+            loaded.append(ep.name)
+    return loaded
 
 
 @dataclass(frozen=True)
@@ -56,17 +113,20 @@ class _Registry(Mapping[str, BrainSpec]):
     declared with a ``name=`` (they register themselves), plus players
     added with :func:`register_brain`.  A live view, so a brain defined
     after this module is imported (a plug-in, a test) shows up too.
+    Plug-ins (:func:`load_plugins`) are imported on first access.
     """
 
     def __init__(self) -> None:
         self._extra: dict[str, BrainSpec] = {}
 
     def _specs(self) -> dict[str, BrainSpec]:
+        load_plugins()
         specs = {name: BrainSpec(name, cls, cls.settings_type) for name, cls in REGISTRY.items()}
         return {**specs, **self._extra}
 
     @override
     def __getitem__(self, name: str) -> BrainSpec:
+        load_plugins()
         if name in self._extra:
             return self._extra[name]
         cls = REGISTRY[name]
@@ -173,6 +233,7 @@ def get_brain_from_settings(name: str, brain_settings: BrainSettings | None = No
 
 __all__ = [
     "BRAINS",
+    "PLUGIN_GROUP",
     "AlphaBetaBrain",
     "BaseBrainSettings",
     "Brain",
@@ -180,11 +241,13 @@ __all__ = [
     "MCTSBrain",
     "MinimaxBrain",
     "NegamaxBrain",
+    "PluginWarning",
     "RandomBrain",
     "ThreatBrain",
     "available_brains",
     "get_brain",
     "get_brain_from_settings",
+    "load_plugins",
     "register_brain",
     "resolve_brain",
     "unregister_brain",

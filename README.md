@@ -122,7 +122,10 @@ extensions.
 
 **Writing a brain:** subclass `gomoku_brain.base.Brain[YourSettings]` with
 `name="yours"` and implement `choose_move`; declaring the class registers it.
-See [ARCHITECTURE.md](docs/ARCHITECTURE.md#ai-brains).
+A brain or a search strategy in its own package plugs in through a
+`gomoku.plugins` entry point.
+See the tutorial [docs/WRITING_A_BRAIN.md](docs/WRITING_A_BRAIN.md) and
+[ARCHITECTURE.md](docs/ARCHITECTURE.md#ai-brains).
 
 **Trying another evaluation:** the search brains take their evaluation and
 candidate moves by name (`evaluator`, default `"pattern"`; `move_generator`,
@@ -373,6 +376,7 @@ lmr = true
 | Document | Description |
 |----------|-------------|
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Workspace structure, packages, data models, configuration system |
+| [docs/WRITING_A_BRAIN.md](docs/WRITING_A_BRAIN.md) | Tutorial: write a plug-in (a brain or a search strategy), install it, play, match and test it |
 | [docs/THREATS.md](docs/THREATS.md) | Threat classification, pattern scoring, fork detection, defensive strategies |
 | [docs/OPENING_BOOK.md](docs/OPENING_BOOK.md) | 8-fold symmetry, hardcoded and file-based books, generation |
 | [docs/DIAGNOSTICS.md](docs/DIAGNOSTICS.md) | Per-move diagnostics: format, context API, reading and analysing output |
