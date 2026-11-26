@@ -133,12 +133,8 @@ def create_game(
 
     # Resolve brains up-front.  ``build_brain`` raises HTTPException on
     # unknown brains / invalid overrides — propagate as-is.
-    black_brain = (
-        build_brain(req.black.brain, req.black.brain_overrides, settings) if req.black.brain else None
-    )
-    white_brain = (
-        build_brain(req.white.brain, req.white.brain_overrides, settings) if req.white.brain else None
-    )
+    black_brain = build_brain(req.black.brain, req.black.brain_overrides, settings) if req.black.brain else None
+    white_brain = build_brain(req.white.brain, req.white.brain_overrides, settings) if req.white.brain else None
 
     # Recording / diagnostics live in a per-session temp dir so two
     # sessions can't fight over filenames.  ``mkdtemp`` returns an
@@ -224,9 +220,7 @@ def delete_game(game_id: GameIdPath, store: SessionStoreDep) -> Response:
         422: {"description": "Wrong turn, illegal move, or game already over."},
     },
 )
-def submit_move(
-    game_id: GameIdPath, req: SubmitMoveRequest, store: SessionStoreDep
-) -> GameStateResponse:
+def submit_move(game_id: GameIdPath, req: SubmitMoveRequest, store: SessionStoreDep) -> GameStateResponse:
     """Apply *req.move* on behalf of the external player at *req.stone*.
 
     The runner enforces side-of-move and legality; mismatches surface

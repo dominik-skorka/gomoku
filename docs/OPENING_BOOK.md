@@ -73,10 +73,7 @@ def _canonicalize(stones, size):
     best_key = None
     best_t = 0
     for t in range(8):
-        key = tuple(sorted(
-            (stone_val, *_transform(r, c, size, t))
-            for stone_val, r, c in stones
-        ))
+        key = tuple(sorted((stone_val, *_transform(r, c, size, t)) for stone_val, r, c in stones))
         if best_key is None or key < best_key:
             best_key = key
             best_t = t
@@ -170,9 +167,9 @@ with positions evaluated by a brain (typically alpha-beta at high depth).
 
 ```python
 class BookEntry(BaseModel):
-    move: tuple[int, int]   # best move in canonical frame
-    score: float            # minimax evaluation score
-    depth: int              # search depth used
+    move: tuple[int, int]  # best move in canonical frame
+    score: float  # minimax evaluation score
+    depth: int  # search depth used
 ```
 
 ---
@@ -273,5 +270,6 @@ brain = AlphaBetaBrain(depth=4, opening_book="books/15x15.json")
 # lookup_opening_book() — currently alphabeta does this as a fallback
 # when no file book is loaded or the file book has no match)
 from gomoku_brain.opening import lookup_opening_book
+
 move = lookup_opening_book(board, stone)  # Move or None
 ```
