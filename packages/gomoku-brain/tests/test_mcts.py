@@ -732,3 +732,94 @@ class TestImplicitMinimax:
         child.visits, child.wins, child.v_mm = 2, 1.6, 0.2  # Q = 0.8, minimax 0.2
         assert child.puct(1.0) == pytest.approx(0.8)
         assert child.puct(1.0, mm_weight=0.5) == pytest.approx(0.5)
+
+
+class TestHybrids:
+    @staticmethod
+    def _open_three_for_white() -> Board:
+        """White open three on row 7 (cols 5-7); Black to move must block."""
+        b = Board(size=15)
+        for r, c in [(7, 5), (7, 6), (7, 7), (3, 10)]:
+            b = b.place_stone(Move(row=r, col=c), Stone.WHITE)
+        for r, c in [(2, 2), (12, 3), (2, 12), (12, 12)]:
+            b = b.place_stone(Move(row=r, col=c), Stone.BLACK)
+        return b
+
+    def test_search_priors_rank_the_blocks_first(self):
+        from gomoku_brain.candidates import get_candidate_moves
+        from gomoku_brain.mcts_hybrid import search_priors
+
+        b = self._open_three_for_white()
+        state = SearchState.from_board(b, Stone.BLACK)
+        moves = [(m.row, m.col) for m in get_candidate_moves(b)]
+        for depth in (2, 3):
+            priors = search_priors(state, moves, Stone.BLACK, depth, k=8)
+            assert sum(priors) == pytest.approx(1.0)
+            top = {m for _, m in sorted(zip(priors, moves, strict=True), reverse=True)[:2]}
+            assert top == {(7, 4), (7, 8)}
+        assert state.ply == 0
+
+    def test_deeper_search_concentrates_on_the_blocks(self):
+        from gomoku_brain.candidates import get_candidate_moves
+        from gomoku_brain.mcts_hybrid import search_priors
+
+        b = self._open_three_for_white()
+        state = SearchState.from_board(b, Stone.BLACK)
+        moves = [(m.row, m.col) for m in get_candidate_moves(b)]
+
+        def blocks(depth: int) -> float:
+            priors = search_priors(state, moves, Stone.BLACK, depth, k=8)
+            return sum(p for p, m in zip(priors, moves, strict=True) if m in {(7, 4), (7, 8)})
+
+        assert blocks(3) > blocks(1)
+
+    def test_vcf_at_a_visited_node_proves_it(self):
+        board = TestOwnVCF._vcf_board()  # Black (to move) has a VCF
+        state = SearchState.from_board(board, Stone.BLACK)
+        brain = MCTSBrain(vcf_expand_depth=10, vcf_expand_visits=4)
+        root = _Node(move=None, stone=Stone.BLACK, parent=None, untried=[])
+        node = _Node(move=(0, 0), stone=Stone.WHITE, parent=root, untried=[(1, 1)])  # White just moved
+        root.children.append(node)
+        node.visits = 3
+        brain._boost(node, state, Stone.WHITE)
+        assert node.terminal is None  # not visited enough yet
+        node.visits = 4
+        brain._boost(node, state, Stone.WHITE)
+        assert node.proven == -1  # White's move loses to Black's VCF
+        assert node.terminal == 0.0  # from White's (root stone's) side
+        assert root.proven == 1  # White's only move here loses: the root is won for Black
+        assert state.ply == 0
+
+    def test_reprior_blends_and_reorders(self):
+        b = self._open_three_for_white()
+        state = SearchState.from_board(b, Stone.BLACK)
+        brain = MCTSBrain(ab_prior_depth=2, ab_prior_visits=1, ab_prior_weight=1.0)
+        node = _Node(move=(0, 14), stone=Stone.WHITE, parent=None, untried=None)
+        node.set_untried([(13, 13), (7, 4), (0, 13)], [0.6, 0.1, 0.3])
+        brain._reprior(node, state, Stone.BLACK)
+        assert sum(node._untried_priors) == pytest.approx(1.0)
+        assert node._untried[-1] == (7, 4)  # the block is now expanded first
+
+    def test_search_with_every_hybrid_on(self):
+        root = _search_tree(
+            self._open_three_for_white(),
+            Stone.BLACK,
+            iterations=800,
+            ab_prior_depth=2,
+            ab_prior_visits=8,
+            vcf_expand_depth=6,
+            vcf_expand_visits=8,
+        )
+        best = max(root.children, key=lambda c: c.visits)
+        assert best.move in {(7, 4), (7, 8), (7, 3), (7, 9)}
+        for n in _walk(root):
+            if n.proven and n.children:
+                if n.proven < 0:
+                    assert any(c.proven > 0 for c in n.children)
+                else:
+                    assert all(c.proven < 0 for c in n.children)
+
+    def test_root_prior_from_the_search(self):
+        brain = MCTSBrain(iterations=50, ab_prior_depth=2, vcf_depth=0)
+        move = brain.get_move(self._open_three_for_white(), Stone.BLACK)
+        assert move in {Move(row=7, col=4), Move(row=7, col=8)}

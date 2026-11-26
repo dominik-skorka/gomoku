@@ -269,6 +269,27 @@ place of Q, so a single refuting reply lowers a move's value at once
 instead of being averaged with its siblings.  `w = 0` skips the
 bookkeeping entirely.
 
+### MCTS–minimax hybrids
+
+Shallow searches with the static evaluation can feed the tree (Baier,
+Winands: *Monte-Carlo Tree Search and Minimax Hybrids with Heuristic
+Evaluation Functions*, CIG 2013; *MCTS-Minimax Hybrids with State
+Evaluations*, JAIR 2018; as node priors they gave the strongest
+hybrid).  `gomoku_brain.mcts_hybrid` scores moves with a small negamax
+that searches only the `ab_prior_k` best moves by pattern prior at each
+inner node (k-best pruning), treats a five threat of the side to move
+as a win and leaves only the block against the other side's.  All
+variants are off by default:
+
+| Setting | Variant |
+|---------|---------|
+| `ab_prior_depth` > 0 | Root priors = blend of the pattern priors and a softmax (temperature 1000 eval points) over `ab_prior_depth`-ply scores, weight `ab_prior_weight` |
+| … and `ab_prior_visits` > 0 | The same re-ranking for every node once it has that many visits |
+| `vcf_expand_depth` > 0 | Once a node has `vcf_expand_visits` visits, a VCF of the side to move (depth `vcf_expand_depth`) proves the node lost for its mover |
+
+They make an iteration more expensive, so compare them at the same
+time budget (`time_limit_s`), not the same `iterations`.
+
 ### MCTS-Solver
 
 Proofs propagate up the tree (Winands, Björnsson, Saito, *Monte-Carlo
@@ -416,6 +437,12 @@ Because MCTS candidate scores are winrates (not eval units), the
 | `exploration` | 2.0 | 0.1 – 5.0 | PUCT constant `c` | More exploration, less exploitation |
 | `fpu_reduction` | 0.2 | 0.0 – 1.0 | First Play Urgency: Q of an untried move = node value − this | Deeper, narrower tree |
 | `minimax_weight` | 0.0 | 0.0 – 1.0 | Weight of the implicit minimax value in Q | Reacts faster to refutations; `0` = plain mean |
+| `ab_prior_depth` | 0 | 0 – 4 | Plies of the shallow search for priors (`0` = off) | Better priors, slower |
+| `ab_prior_k` | 8 | 2 – 30 | Moves searched per inner node of that search | Wider, slower |
+| `ab_prior_weight` | 0.5 | 0.0 – 1.0 | Weight of the search prior against the pattern prior | |
+| `ab_prior_visits` | 0 | 0 – 100 000 | Re-rank a node's moves at this many visits (`0` = root only) | |
+| `vcf_expand_depth` | 0 | 0 – 20 | VCF depth at visited nodes (`0` = off) | More nodes proven, slower |
+| `vcf_expand_visits` | 16 | 1 – 100 000 | Visits before that VCF check | |
 | `reuse_tree` | false (`gomoku.toml`: true) | bool | Continue from the kept subtree of the opponent's reply | More visits per move when the same brain plays on |
 | `dirichlet_alpha` | 0.25 | 0.0 – 1.0 | Dirichlet shape | Larger = flatter noise |
 | `dirichlet_weight` | 0.0 | 0.0 – 1.0 | Noise mix weight | `0.0` = deterministic priors; `1.0` = pure noise |

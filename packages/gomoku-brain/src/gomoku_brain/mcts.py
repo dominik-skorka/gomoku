@@ -102,6 +102,11 @@ def _leaf_value(state: SearchState, root_stone: Stone, to_move: Stone | None = N
     return 1.0 / (1.0 + math.exp(-clamped))
 
 
+# Bits of ``_Node.boosted``: which hybrid steps already ran on a node.
+_REPRIORED = 1
+_VCF_CHECKED = 2
+
+
 # ---------------------------------------------------------------------------
 # MCTS Node — uses raw (row, col) tuples, not Pydantic Move objects
 # ---------------------------------------------------------------------------
@@ -113,6 +118,7 @@ class _Node:
     __slots__ = (
         "_untried",
         "_untried_priors",
+        "boosted",
         "children",
         "generated",
         "move",
@@ -155,6 +161,8 @@ class _Node:
         # al., CIG 2014), from the mover's side; ``None`` until evaluated.
         # Maintained only when ``minimax_weight > 0``.
         self.v_mm: float | None = None
+        # Hybrid steps already run on this node (bits _REPRIORED, _VCF_CHECKED).
+        self.boosted = 0
         # ``untried=None`` defers move generation to the node's first
         # expansion (:meth:`MCTSBrain._generate`): most leaves are scored
         # once and never revisited, so they never pay for it.
@@ -336,6 +344,14 @@ class MCTSBrain(Brain[MCTSBrainSettings], name="mcts"):
 
         root_untried = [(m.row, m.col) for m in candidates]
         root_priors = _compute_priors(state, root_untried, stone_val, opp_val)
+        if self.settings.ab_prior_depth > 0:
+            # MCTS–minimax hybrid: shallow search as the root prior.
+            from gomoku_brain.mcts_hybrid import blend, search_priors
+
+            searched = search_priors(
+                state, root_untried, stone, self.settings.ab_prior_depth, self.settings.ab_prior_k
+            )
+            root_priors = blend(root_priors, searched, self.settings.ab_prior_weight)
 
         # Dirichlet noise for exploration breadth (AGZ §14.4).  Skipped
         # on a VCF-gated root — the candidate set is tiny and every move
@@ -499,6 +515,10 @@ class MCTSBrain(Brain[MCTSBrainSettings], name="mcts"):
         while node.terminal is None:
             if not node.generated:
                 self._generate(node, state)
+            if node.parent is not None and node.boosted != _REPRIORED | _VCF_CHECKED:
+                self._boost(node, state, root_stone)
+                if node.terminal is not None:
+                    break
             if node.is_leaf() or node.wants_expansion(exploration, fpu_reduction, mm_weight):
                 break
             node = node.best_child(exploration, mm_weight)
@@ -549,6 +569,54 @@ class MCTSBrain(Brain[MCTSBrainSettings], name="mcts"):
         # 4. Backpropagation + restore the shared state to the root position.
         self._backpropagate(node, value, root_stone, mm_weight > 0)
         self._restore(state, depth)
+
+    def _boost(self, node: _Node, state: SearchState, root_stone: Stone) -> None:
+        """MCTS–minimax hybrid steps for a node visited often enough.
+
+        * ``vcf_expand_depth`` > 0: once the node has ``vcf_expand_visits``
+          visits, look for a VCF of the side to move; one found proves
+          the node (a loss for its mover).
+        * ``ab_prior_visits`` > 0 (with ``ab_prior_depth`` > 0): once the
+          node has that many visits, re-rank its moves with a shallow
+          search, blended into the pattern priors.
+
+        Each step runs at most once per node; *state* is at *node*.
+        """
+        settings = self.settings
+        side = node.stone.opponent()
+        if not node.boosted & _VCF_CHECKED:
+            if settings.vcf_expand_depth <= 0:
+                node.boosted |= _VCF_CHECKED
+            elif node.visits >= settings.vcf_expand_visits:
+                node.boosted |= _VCF_CHECKED
+                from gomoku_brain.threat import _find_winning_move, _vcf
+
+                # A forced node (the mover threatens five) has only the block.
+                if _find_winning_move(state, node.stone) is None and _vcf(state, side, settings.vcf_expand_depth):
+                    node.prove(0.0 if node.stone is root_stone else 1.0, root_stone)
+                    self._propagate_proof(node, root_stone)
+                    return
+        if not node.boosted & _REPRIORED:
+            if settings.ab_prior_depth <= 0 or settings.ab_prior_visits <= 0:
+                node.boosted |= _REPRIORED
+            elif node.visits >= settings.ab_prior_visits:
+                node.boosted |= _REPRIORED
+                self._reprior(node, state, side)
+
+    def _reprior(self, node: _Node, state: SearchState, side: Stone) -> None:
+        """Blend a shallow-search prior into every move of *node*."""
+        from gomoku_brain.mcts_hybrid import blend, search_priors
+
+        moves = [c.move for c in node.children if c.move is not None] + node._untried
+        if len(moves) < 2:
+            return
+        old = [c.prior for c in node.children] + node._untried_priors
+        searched = search_priors(state, moves, side, self.settings.ab_prior_depth, self.settings.ab_prior_k)
+        new = blend(old, searched, self.settings.ab_prior_weight)
+        n_children = len(node.children)
+        for child, prior in zip(node.children, new[:n_children], strict=True):
+            child.prior = prior
+        node.set_untried(list(node._untried), new[n_children:])
 
     @staticmethod
     def _generate(node: _Node, state: SearchState) -> None:
