@@ -4,7 +4,8 @@
   the pattern evaluation with its incremental ``SearchState`` cache.
 * ``"pattern_open3"`` evaluator: the same patterns with the open-three
   bonus doubled (:mod:`~gomoku_brain.pattern_weights`), measured stronger
-  in #105; not the default.
+  in #105; chosen in ``gomoku.toml`` for alpha-beta and the threat
+  brain's fallback, the code default stays ``"pattern"``.
 * ``"radius"`` move generator: :func:`~gomoku_brain.candidates.radius_generator`,
   the empty cells within the radius of a stone.
 

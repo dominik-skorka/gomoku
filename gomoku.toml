@@ -165,6 +165,13 @@ early_game_futility_margin = 800
 # Default: 0 | Valid range: 0–600
 time_limit_s = 120.0
 
+# Static evaluation, by name (see [brains.minimax]).  "pattern_open3" doubles
+# the open-three bonus: vs "pattern", depth 10 at time_limit_s = 0.4, +28 Elo
+# (95% interval +1 to +55, 300 games) and +50 (+16 to +85, 300 games, other
+# openings), #105.
+# Default: "pattern"
+evaluator = "pattern_open3"
+
 # -----------------------------------------------------------------------------
 # Brain: alphabeta_depth_6 — Deeper alpha-beta variant (stronger, slower)
 # -----------------------------------------------------------------------------
@@ -306,6 +313,11 @@ eval_ordering_depth = 11
 # Candidate moves kept per node after the early game.
 # Default: 20 | Valid range: 5–60
 max_candidates = 12
+# Static evaluation of the fallback, as in [brains.alphabeta].  The whole
+# threat brain with it vs "pattern": +8 Elo (95% interval -16 to +33, 300
+# games, #105): no loss, kept for one evaluation across both brains.
+# Default: "pattern"
+evaluator = "pattern_open3"
 
 # -- Threat spaces ------------------------------------------------------------
 # Which threats the forced-win searches (VCF, PNS / VCT) play and answer.

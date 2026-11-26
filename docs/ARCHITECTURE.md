@@ -377,7 +377,10 @@ AlphaBetaBrain(evaluator="stones")  # or alphabeta,evaluator=stones on the CLI
   beat `"pattern"` by +28 Elo (95% interval +1 to +55, 300 games,
   alpha-beta at 0.4 s a move) and by +50 (+16 to +85) on other openings,
   the only one of five single-weight changes
-  that did not score as a draw.  It is not the default.
+  that did not score as a draw.  The code default stays `"pattern"`;
+  `gomoku.toml` selects `"pattern_open3"` for `[brains.alphabeta]` and
+  `[brains.threat.fallback]` (the whole threat brain with it: +8 Elo,
+  −16 to +33, 300 games).
 - The names live in the core package so the settings models can check
   them (`AfterValidator`): an unknown name is a settings error listing the
   registered ones, in code, on the command line and in `gomoku.toml`.
