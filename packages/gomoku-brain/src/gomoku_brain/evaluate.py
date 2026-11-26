@@ -1,5 +1,7 @@
 """Heuristic board evaluation for Gomoku AI."""
 
+from typing import TYPE_CHECKING
+
 from gomoku.interfaces import BoardView
 from gomoku.models import Move, Stone
 
@@ -529,3 +531,15 @@ def evaluate_board(board: BoardView, stone: Stone) -> float:
         )
         return max(-_EVAL_CLAMP, min(_EVAL_CLAMP, raw))
     return max(-_EVAL_CLAMP, min(_EVAL_CLAMP, _evaluate_board_python(board, stone)))
+
+
+if TYPE_CHECKING:
+    from gomoku.interfaces import Evaluator
+
+    from gomoku_brain.search_state import SearchState
+
+    def _is_an_evaluator() -> Evaluator:
+        return evaluate_board  # pyright checks that evaluate_board is an Evaluator
+
+    def _is_a_search_state_evaluator() -> Evaluator[SearchState]:
+        return evaluate_board  # ... and usable where a SearchState evaluator is expected

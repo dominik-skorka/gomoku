@@ -4,8 +4,14 @@ Instead of evaluating all empty cells (up to 225 on a 15x15 board),
 restrict candidates to cells within a radius of existing stones.
 """
 
+from typing import TYPE_CHECKING
+
 from gomoku.interfaces import BoardView
 from gomoku.models import Move
+
+if TYPE_CHECKING:
+    from gomoku.interfaces import MoveGenerator
+    from gomoku.models import Stone
 
 _RADIUS = 2
 
@@ -77,3 +83,17 @@ def get_candidate_moves(board: BoardView, radius: int = _RADIUS) -> list[Move]:
         return [Move(row=int(result[i, 0]), col=int(result[i, 1])) for i in range(result.shape[0])]
 
     return _get_candidates_python(board, radius)
+
+
+def radius_generator(radius: int = _RADIUS) -> MoveGenerator:
+    """:func:`get_candidate_moves` at *radius* as a :class:`~gomoku.interfaces.MoveGenerator`.
+
+    The cells do not depend on the side to move, so *stone* is ignored.
+    The returned function holds no state, so threads can share it.
+    """
+
+    def radius_candidates(board: BoardView, stone: Stone, /) -> list[Move]:
+        return get_candidate_moves(board, radius)
+
+    radius_candidates.__qualname__ = f"radius_generator({radius})"
+    return radius_candidates
