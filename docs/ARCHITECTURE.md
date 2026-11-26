@@ -223,6 +223,14 @@ class Player(Protocol):  # chooses moves for one side
     @property
     def name(self) -> str: ...
     def get_move(self, board: Board, stone: Stone) -> Move: ...
+
+
+class Evaluator[B: BoardView = BoardView](Protocol):  # static score
+    def __call__(self, board: B, stone: Stone, /) -> float: ...
+
+
+class MoveGenerator[B: BoardView = BoardView](Protocol):  # moves to search
+    def __call__(self, board: B, stone: Stone, /) -> Sequence[Move]: ...
 ```
 
 - `Board` (immutable, for games) and `SearchState` (mutable, for searches)
@@ -235,6 +243,12 @@ class Player(Protocol):  # chooses moves for one side
   `get_move()` each turn and expects a valid `Move` back.  The registry
   (`BrainSpec.brain_cls: type[Player]`) is checked against it.
   `MoveProvider` is the old name, kept as an alias.
+- `Evaluator` and `MoveGenerator` are the search strategies a brain plugs
+  in (see [Search strategies](#search-strategies)).  Plain functions
+  conform: `evaluate_board` is an `Evaluator`, and
+  `candidates.radius_generator(radius)` returns a `MoveGenerator`.  Both
+  are generic over the board type, so an evaluator that needs
+  `SearchState` internals is an `Evaluator[SearchState]`.
 - Overriding methods are marked `@typing.override`; pyright reports one
   that is not (`reportImplicitOverride`), so renaming a base method cannot
   leave a subclass silently defining a new one.
@@ -331,6 +345,68 @@ Public surface:
   `unregister_brain(name)` removes an entry.
 - `available_brains(brain_settings)` — sorted list of all resolvable
   names (built-ins + TOML aliases).
+
+### Search strategies
+
+The search brains take their static evaluation and their candidate moves
+by name from their settings, like brains are taken by name:
+
+| Setting | Built-in | Registry | In |
+|---|---|---|---|
+| `evaluator` | `"pattern"` = `evaluate_board`; `"pattern_open3"` (below) | `gomoku.strategies.EVALUATORS` | minimax, negamax, alphabeta (and the threat brain's `fallback`), mcts (leaf values) |
+| `move_generator` | `"radius"` = `get_candidate_moves` at the brain's radius | `gomoku.strategies.MOVE_GENERATORS` | minimax, negamax, alphabeta (and `fallback`) |
+
+```python
+from gomoku.strategies import register_evaluator
+
+
+def stones_only(board: BoardView, stone: Stone, /) -> float:
+    own = sum(1 for r, c in board.occupied if board.at(r, c) is stone)
+    return float(2 * own - len(board.occupied))
+
+
+register_evaluator("stones", stones_only)
+AlphaBetaBrain(evaluator="stones")  # or alphabeta,evaluator=stones on the CLI
+```
+
+- `gomoku_brain.pattern_weights.pattern_evaluator(PatternWeights(...))`
+  builds the pattern evaluation with other weights, on the same Numba
+  kernels and incremental `SearchState` cache (the cache records which
+  weights own it and is cleared when another set takes it over).
+  `"pattern_open3"` doubles the open-three bonus (1,500 → 3,000): in #105 it
+  beat `"pattern"` by +28 Elo (95% interval +1 to +55, 300 games,
+  alpha-beta at 0.4 s a move) and by +50 (+16 to +85) on other openings,
+  the only one of five single-weight changes
+  that did not score as a draw.  The code default stays `"pattern"`;
+  `gomoku.toml` selects `"pattern_open3"` for `[brains.alphabeta]` and
+  `[brains.threat.fallback]` (the whole threat brain with it: +8 Elo,
+  −16 to +33, 300 games).
+- The names live in the core package so the settings models can check
+  them (`AfterValidator`): an unknown name is a settings error listing the
+  registered ones, in code, on the command line and in `gomoku.toml`.
+  `gomoku_brain` registers the built-ins when imported
+  (`gomoku_brain/strategies.py`).
+- A move generator is registered as a factory of the candidate radius,
+  so one name serves every radius a brain searches at.
+- An evaluator must stay within ±99,000 (the win score is 100,000) and,
+  like a generator, be stateless or thread-safe: `probe_threads` runs
+  searches in parallel.
+- Brains resolve the names once, in `__init__` (`self._evaluate`,
+  `self._candidates`), never per node.  The defaults *are*
+  `evaluate_board` and `get_candidate_moves`, so alpha-beta keeps the
+  incremental `SearchState` evaluation cache and plays exactly as before
+  (`gomoku bench`, 48 positions).
+- In alpha-beta the evaluator scores the leaves, quiescence's stand-pat,
+  move ordering, futility and null-move pruning and the diagnostics; the
+  generator gives the moves searched at each node (made for both
+  `early_game_radius` and the mid-game radius).  Ordering (TT move,
+  killers, history, priors) stays alpha-beta's own.
+- Not pluggable, on purpose: the threat-space searches (VCF, VCT, PNS),
+  quiescence's threat moves, alpha-beta's root VCF pre-check and the
+  threat brain's own breaker choice.  Their proofs depend on exactly which
+  threats and defences are generated ([THREATS.md](THREATS.md)).  MCTS
+  priors stay `priors.compute_priors`, and its expansion candidates the
+  radius scan.
 
 | Brain | Module | Algorithm | Strength |
 |-------|--------|-----------|----------|

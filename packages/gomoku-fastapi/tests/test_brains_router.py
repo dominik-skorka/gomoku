@@ -46,7 +46,11 @@ class TestBrainSettings:
         response = client.get("/v1/brains/negamax/settings")
         assert response.status_code == 200
         body = response.json()
-        assert body == {"name": "negamax", "type": "negamax", "settings": {"depth": 3}}
+        assert body == {
+            "name": "negamax",
+            "type": "negamax",
+            "settings": {"depth": 3, "evaluator": "pattern", "move_generator": "radius"},
+        }
 
     def test_alias_values_win_over_defaults(self, client, tmp_path):
         (tmp_path / "gomoku.toml").write_text('[brains.alphabeta]\ntype = "alphabeta"\ndepth = 2\nvcf_depth = 20\n')

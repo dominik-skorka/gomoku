@@ -14,6 +14,7 @@ import numpy as np
 from gomoku.board import Board
 from gomoku.models import Move, Stone
 from gomoku.settings import AlphaBetaBrainSettings
+from gomoku.strategies import get_evaluator, get_move_generator
 
 from gomoku_brain.alphabeta_ordering import (
     _check_win,
@@ -24,8 +25,6 @@ from gomoku_brain.alphabeta_quiescence import EvalCache, QuiesceCtx, quiesce
 from gomoku_brain.alphabeta_root import root_vcf
 from gomoku_brain.base import Brain
 from gomoku_brain.brain_base import BrainSession
-from gomoku_brain.candidates import get_candidate_moves
-from gomoku_brain.evaluate import evaluate_board
 from gomoku_brain.opening import deduplicate_by_symmetry, lookup_opening_book
 from gomoku_brain.priors import compute_priors
 from gomoku_brain.search_state import SearchState
@@ -59,6 +58,9 @@ class _SearchTimeout(Exception):
 # the move is unlikely to raise alpha.
 _FUTILITY_MARGIN = 1500
 
+# Candidate radius after the early game (``early_game_radius`` before it).
+_MIDGAME_RADIUS = 2
+
 
 class AlphaBetaBrain(Brain[AlphaBetaBrainSettings], name="alphabeta"):
     """Player using alpha-beta pruning on top of negamax."""
@@ -74,6 +76,11 @@ class AlphaBetaBrain(Brain[AlphaBetaBrainSettings], name="alphabeta"):
         # Per-search quiescence context — created once per get_move so the
         # leaf entry points don't allocate a fresh ctx each call.
         self._qs_ctx: QuiesceCtx | None = None
+        # Strategies, resolved once (the search calls them at every node).
+        # The generator is made for both radii the search uses.
+        self._evaluate = get_evaluator(s.evaluator)
+        self._candidates = get_move_generator(s.move_generator, _MIDGAME_RADIUS)
+        self._early_candidates = get_move_generator(s.move_generator, s.early_game_radius)
         self._file_book = None
         if s.opening_book:
             from pathlib import Path
@@ -141,7 +148,9 @@ class AlphaBetaBrain(Brain[AlphaBetaBrainSettings], name="alphabeta"):
         # History table shared across all ID iterations so it accumulates.
         history: HistoryTable = {}
         eval_cache: EvalCache = {}
-        self._qs_ctx = QuiesceCtx(qs_vcf_depth=self.settings.qs_vcf_depth, eval_cache=eval_cache)
+        self._qs_ctx = QuiesceCtx(
+            qs_vcf_depth=self.settings.qs_vcf_depth, eval_cache=eval_cache, evaluate=self._evaluate
+        )
         prev_score: float | None = None
         aspiration_resets = 0
 
@@ -152,7 +161,7 @@ class AlphaBetaBrain(Brain[AlphaBetaBrainSettings], name="alphabeta"):
 
         # Static eval before the move (for diagnostics).
         if diag is not None:
-            diag.eval_before = evaluate_board(board, stone)
+            diag.eval_before = self._evaluate(board, stone)
 
         # Iterative deepening: search at increasing depths so that each
         # pass seeds the TT with best-move info for the next, deeper pass.
@@ -259,13 +268,13 @@ class AlphaBetaBrain(Brain[AlphaBetaBrainSettings], name="alphabeta"):
                 aspiration_resets=aspiration_resets,
             )
             # Collect top candidates from TT root entry and eval scores.
-            root_candidates = get_candidate_moves(board, radius=2)
+            root_candidates = list(self._candidates(board, stone))
             if len(root_candidates) > 8 and len(board.occupied) <= 8:
                 root_candidates = deduplicate_by_symmetry(board, root_candidates)
             scored_cands: list[tuple[float, Move]] = []
             for m in root_candidates[:20]:
                 trial = board.place_stone(m, stone)
-                sc = evaluate_board(trial, stone)
+                sc = self._evaluate(trial, stone)
                 scored_cands.append((sc, m))
             scored_cands.sort(key=lambda x: x[0], reverse=True)
             diag.top_candidates = [CandidateInfo(move=m, score=sc, score_type="eval") for sc, m in scored_cands[:10]]
@@ -289,7 +298,7 @@ class AlphaBetaBrain(Brain[AlphaBetaBrainSettings], name="alphabeta"):
                 )
             # Eval after the chosen move.
             after_board = board.place_stone(best_move, stone)
-            diag.eval_after = evaluate_board(after_board, stone)
+            diag.eval_after = self._evaluate(after_board, stone)
 
         return best_move
 
@@ -428,6 +437,7 @@ class AlphaBetaBrain(Brain[AlphaBetaBrainSettings], name="alphabeta"):
         stone_int = int(stone)
 
         opponent = stone.opponent()
+        evaluate = self._evaluate
 
         def _score_move(move: Move) -> float:
             state.make(move.row, move.col, stone)
@@ -441,7 +451,7 @@ class AlphaBetaBrain(Brain[AlphaBetaBrainSettings], name="alphabeta"):
                 if eval_cache is not None and zh in eval_cache:
                     score = -eval_cache[zh]
                 else:
-                    to_move_eval = evaluate_board(state, opponent)
+                    to_move_eval = evaluate(state, opponent)
                     if eval_cache is not None:
                         eval_cache[zh] = to_move_eval
                     score = -to_move_eval
@@ -548,7 +558,7 @@ class AlphaBetaBrain(Brain[AlphaBetaBrainSettings], name="alphabeta"):
             if zh in eval_cache:
                 null_eval = eval_cache[zh]
             else:
-                null_eval = evaluate_board(state, stone)
+                null_eval = self._evaluate(state, stone)
                 eval_cache[zh] = null_eval
 
             if null_eval >= beta:
@@ -591,8 +601,10 @@ class AlphaBetaBrain(Brain[AlphaBetaBrainSettings], name="alphabeta"):
         # -- Candidate generation --------------------------------------------
         occ_count = state.occ_count
         is_early = occ_count <= self.settings.early_game_threshold
-        radius = self.settings.early_game_radius if is_early else 2
-        candidates = get_candidate_moves(state, radius=radius)
+        generate = self._early_candidates if is_early else self._candidates
+        generated = generate(state, stone)
+        # The search reorders and slices it; the built-in returns a fresh list.
+        candidates = generated if isinstance(generated, list) else list(generated)
         if not candidates:
             return 0.0, None
 
@@ -660,7 +672,7 @@ class AlphaBetaBrain(Brain[AlphaBetaBrainSettings], name="alphabeta"):
                             # Unmake briefly to evaluate the pre-move position,
                             # then redo.  Cheaper than an isinstance-heavy view.
                             state.unmake()
-                            futility_eval = evaluate_board(state, stone)
+                            futility_eval = self._evaluate(state, stone)
                             eval_cache[zh] = futility_eval
                             state.make(move.row, move.col, stone)
                     if futility_eval + futility_margin <= alpha:

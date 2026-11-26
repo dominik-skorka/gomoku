@@ -17,9 +17,14 @@ from it; the type checker (pyright, in CI) verifies that it does.
   game, such as :class:`~gomoku.recorder.GameRecorder` and
   :class:`~gomoku.diagnostics.DiagnosticsRecorder`.  ``Game`` and the
   runner notify all of theirs.
+* :class:`Evaluator` and :class:`MoveGenerator`: the strategies a search
+  brain plugs in, a static score of a position and the candidate moves
+  to search.  Plain functions with the right parameters are both; the
+  built-ins are ``gomoku_brain.evaluate.evaluate_board`` and
+  ``gomoku_brain.candidates.radius_generator``.
 """
 
-from collections.abc import Collection
+from collections.abc import Collection, Sequence
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
@@ -83,4 +88,36 @@ class GameObserver(Protocol):
 
     def on_game_end(self, result: GameResult) -> None:
         """The game ended; called once, after the last :meth:`on_move`."""
+        ...
+
+
+class Evaluator[B: BoardView = BoardView](Protocol):
+    """Static score of a position for *stone*; higher is better for *stone*.
+
+    The score must stay inside the search's win/loss scores (±100 000):
+    ``|score| <= 99_000``, as ``gomoku_brain.evaluate.evaluate_board`` clamps
+    it.  Searches call it millions of times and, with ``probe_threads``,
+    from several threads at once, so it must be fast and stateless or
+    thread-safe.
+
+    *B* is the board type it needs: an evaluator that reads internals of
+    ``SearchState`` (an incremental cache) is an ``Evaluator[SearchState]``;
+    one that only reads the position works on any :class:`BoardView`.
+    """
+
+    def __call__(self, board: B, stone: Stone, /) -> float:
+        """Score of *board* from *stone*'s side."""
+        ...
+
+
+class MoveGenerator[B: BoardView = BoardView](Protocol):
+    """The candidate moves a search tries for *stone*, best first if it orders them.
+
+    Called on a board that is not full; returns at least one empty cell.
+    The same thread-safety rule as :class:`Evaluator` applies.  The
+    caller may reorder or slice the result.
+    """
+
+    def __call__(self, board: B, stone: Stone, /) -> Sequence[Move]:
+        """Candidate moves for *stone* on *board*."""
         ...
