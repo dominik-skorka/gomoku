@@ -366,23 +366,57 @@ split = false
 type = "mcts"
 
 # Number of MCTS simulation iterations per move.
-# Default: 10_000 | Valid range: 100–1_000_000 | Higher = stronger but slower
+# Default: 10_000 | Valid range: 1–1_000_000 | Higher = stronger but slower
 iterations = 10_000
 
-# PUCT exploration constant (c) in: Q + c·P·√N/(n+1).
+# Hard time limit per move in seconds: the search stops at the deadline
+# even if fewer iterations ran.  0 = unlimited (the API caps it at
+# [api].max_time_limit_s).
+# Default: 0 | Valid range: 0–600
+time_limit_s = 0.0
+
+# PUCT exploration constant (c) in: Q + c·P·√N/(n+1), with Q in [0, 1].
 # Controls exploitation vs exploration balance.
+# Measured with `gomoku match` (2 000 iterations): 1.0 vs 2.0 scored
+# +35 Elo (95% interval -27 to +99, 100 games), then -9 (-53 to +36,
+# 200 games, other openings): no difference, 2.0 kept.
 # Default: 2.0 | Valid range: 0.1–5.0 | Lower = more exploitative
 exploration = 2.0
 
-# Dirichlet distribution parameter for noise injection at root.
-# Controls noise shape — lower = more concentrated.
-# Default: 0.03 | Valid range: 0.0–1.0
-dirichlet_alpha = 0.03
+# First Play Urgency: an untried move counts as a child whose Q is the
+# node's value minus this reduction; the best untried move (by prior) is
+# expanded only when its PUCT score beats every existing child.
+# Default: 0.2 | Valid range: 0.0–1.0 | Higher = deeper, narrower tree
+fpu_reduction = 0.2
 
-# Mixing weight for Dirichlet noise: (1−weight)·prior + weight·noise.
-# 0.0 = no noise (deterministic); 1.0 = pure noise (fully random).
-# Default: 0.25 | Valid range: 0.0–1.0
-dirichlet_weight = 0.25
+# Opponent VCF depth for the root safety gate, and depth of our own root
+# VCF search.  0 disables both.  20 vs 10 (100 games): +0 Elo (95%
+# interval -21 to +21), ~3% more think time; 20 as in the other brains.
+# Default: 10 | Valid range: 0–40
+vcf_depth = 20
+
+# Keep the subtree of the move played and continue from the opponent's
+# reply on the next move (only when the same brain plays on, e.g. a game
+# session or `gomoku play` / `match`; a stateless API move cannot reuse).
+# On vs off (2 000 iterations): +38 Elo (95% interval -5 to +83, 100
+# games), +24 (-6 to +55, 200 games, other openings).
+# Default: false | Valid values: true, false
+reuse_tree = true
+
+# Dirichlet noise mixed into the root priors:
+# (1−weight)·prior + weight·noise.  AlphaZero uses it to explore while
+# generating self-play training data; this brain does not learn, so it is
+# off by default.  Measured with `gomoku match` (100 games, 2 000
+# iterations): weight 0.0 vs 0.25 scored 50.0% (+0 Elo, 95% interval -54
+# to +54), at slightly less think time.
+# alpha shapes the noise: AlphaZero scaled it inversely to the number of
+# legal moves (0.3 chess, 0.15 shogi, 0.03 Go with ~361 moves); for the
+# ~50 candidates of a gomoku root about 0.25 is the equivalent.
+# Use the noise only to vary or weaken play.
+# dirichlet_alpha  Default: 0.25 | Valid range: 0.0–1.0
+# dirichlet_weight Default: 0.0 | Valid range: 0.0–1.0 | 0.0 = no noise
+dirichlet_alpha = 0.25
+dirichlet_weight = 0.0
 
 # =============================================================================
 # Evaluation Settings

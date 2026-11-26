@@ -223,6 +223,36 @@ class TestNodePUCT:
         assert {move1, move2} == {(0, 0), (1, 1)}
         assert math.isclose(prior1 + prior2, 1.0)
 
+    def test_pop_untried_takes_highest_prior_first(self):
+        n = _Node(
+            move=None,
+            stone=Stone.BLACK,
+            parent=None,
+            untried=[(0, 0), (1, 1), (2, 2)],
+            untried_priors=[0.2, 0.5, 0.3],
+        )
+        assert [n.pop_untried()[0] for _ in range(3)] == [(1, 1), (2, 2), (0, 0)]
+
+    def test_expands_while_best_untried_outscores_children(self):
+        parent = _Node(
+            move=None, stone=Stone.WHITE, parent=None, untried=[(0, 0), (1, 1)], untried_priors=[0.1, 0.4]
+        )
+        assert parent.wants_expansion(1.0, 0.2)  # no children yet
+        parent.visits = 4
+        parent.wins = 2.0  # Q = 0.5 for the chooser too
+        child = _Node(move=(2, 2), stone=Stone.BLACK, parent=parent, untried=[], prior=0.5)
+        child.visits = 3
+        child.wins = 2.7  # Q = 0.9: PUCT = 0.9 + 0.5 * 2 / 4 = 1.15
+        parent.children = [child]
+        # Best untried (prior 0.4): FPU 0.3 + 0.4 * 2 = 1.1 < 1.15 -> descend.
+        assert not parent.wants_expansion(1.0, 0.2)
+        child.wins = 1.5  # Q = 0.5: PUCT = 0.75 -> expand
+        assert parent.wants_expansion(1.0, 0.2)
+
+    def test_no_expansion_without_untried(self):
+        parent = _Node(move=None, stone=Stone.WHITE, parent=None, untried=[])
+        assert not parent.wants_expansion(1.0, 0.2)
+
 
 # ---------------------------------------------------------------------------
 # MCTSBrain high-level behaviour
@@ -294,3 +324,379 @@ class TestMCTSBrain:
         brain = MCTSBrain(iterations=20)
         move = brain.get_move(b, Stone.BLACK)
         assert b.is_valid_move(move)
+
+
+# ---------------------------------------------------------------------------
+# Tree invariants (search run directly on a hand-built root)
+# ---------------------------------------------------------------------------
+
+
+def _open_three_board() -> Board:
+    """Black open three on row 7 (cols 5-7), stones far away; Black to move."""
+    b = Board(size=15)
+    stone = Stone.BLACK
+    for r, c in [(7, 5), (2, 2), (7, 6), (2, 12), (7, 7), (12, 2), (10, 10), (12, 12)]:
+        b = b.place_stone(Move(row=r, col=c), stone)
+        stone = stone.opponent()
+    return b
+
+
+def _search_tree(board: Board, stone: Stone, iterations: int, seed: int = 0, **settings) -> _Node:
+    """Run *iterations* MCTS iterations from *board* and return the root."""
+    from gomoku_brain.candidates import get_candidate_moves
+
+    random.seed(seed)
+    brain = MCTSBrain(iterations=iterations, dirichlet_weight=0.0, **settings)
+    state = SearchState.from_board(board, stone)
+    untried = [(m.row, m.col) for m in get_candidate_moves(board)]
+    priors = _compute_priors(state, untried, int(stone), int(stone.opponent()))
+    root = _Node(move=None, stone=stone.opponent(), parent=None, untried=untried, untried_priors=priors)
+    for _ in range(iterations):
+        brain._run_iteration(root, state, stone)
+    assert state.ply == 0  # every iteration restores the root position
+    return root
+
+
+def _walk(root: _Node):
+    stack = [root]
+    while stack:
+        n = stack.pop()
+        yield n
+        stack.extend(n.children)
+
+
+class TestPriorOrderedExpansion:
+    def test_strong_move_gets_searched_deeply(self):
+        """In a quiet position the search goes deeper than one ply per
+        candidate: the most visited root move has a grandchild with visits."""
+        b = Board(size=15)
+        stone = Stone.BLACK
+        for r, c in [(7, 7), (7, 8), (8, 6), (6, 8), (9, 9), (8, 9)]:
+            b = b.place_stone(Move(row=r, col=c), stone)
+            stone = stone.opponent()
+        root = _search_tree(b, Stone.BLACK, iterations=2000)
+        assert root._untried  # weak moves were never expanded
+        depth = 0
+        node = root
+        while node.children:
+            node = max(node.children, key=lambda c: c.visits)
+            depth += 1
+        assert depth >= 6
+
+
+class TestTerminalNodes:
+    def test_terminal_nodes_are_never_expanded(self):
+        """A position decided when its node is created gets no moves and
+        no children (nodes proven later by the solver keep theirs)."""
+        root = _search_tree(_open_three_board(), Stone.BLACK, iterations=3000)
+        decided = [n for n in _walk(root) if n.terminal is not None and not n.children]
+        assert decided, "the open three must lead to decided positions"
+        for n in decided:
+            assert not n.has_untried()
+
+    def test_terminal_value_is_not_diluted(self):
+        """Every visit of a decided leaf backs up the same 0 / 1 value."""
+        root = _search_tree(_open_three_board(), Stone.BLACK, iterations=3000)
+        for n in _walk(root):
+            if n.terminal is not None and not n.children:
+                assert n.terminal in (0.0, 1.0)
+                q = n.wins / n.visits
+                # Q is stored from the mover's perspective.
+                expected = n.terminal if n.stone is Stone.BLACK else 1.0 - n.terminal
+                assert q == pytest.approx(expected)
+
+    def test_no_node_below_five_in_a_row(self):
+        board = _open_three_board()
+        root = _search_tree(board, Stone.BLACK, iterations=3000)
+
+        def wins(state: SearchState, r: int, c: int, stone: Stone) -> bool:
+            from gomoku_brain.mcts import _fast_check_winner_state
+
+            return _fast_check_winner_state(state, r, c, stone)
+
+        state = SearchState.from_board(board, Stone.BLACK)
+
+        def visit(node: _Node) -> None:
+            for child in node.children:
+                assert child.move is not None
+                r, c = child.move
+                state.make(r, c, child.stone)
+                if wins(state, r, c, child.stone):
+                    assert child.children == []
+                visit(child)
+                state.unmake()
+
+        visit(root)
+
+
+class TestForcedReplies:
+    @staticmethod
+    def _status(board: Board, mover: Stone, last: tuple[int, int]):
+        state = SearchState.from_board(board, mover.opponent())
+        return MCTSBrain._node_status(state, last[0], last[1], mover, Stone.BLACK)
+
+    @staticmethod
+    def _board(black: list[tuple[int, int]], white: list[tuple[int, int]]) -> Board:
+        b = Board(size=15)
+        for r, c in black:
+            b = b.place_stone(Move(row=r, col=c), Stone.BLACK)
+        for r, c in white:
+            b = b.place_stone(Move(row=r, col=c), Stone.WHITE)
+        return b
+
+    def test_single_four_forces_the_block(self):
+        # Black four (7,3..7,6) with (7,2) blocked: White must play (7,7).
+        b = self._board([(7, 3), (7, 4), (7, 5), (7, 6)], [(7, 2), (0, 0), (0, 14)])
+        assert self._status(b, Stone.BLACK, (7, 6)) == (None, (7, 7))
+
+    def test_open_four_is_a_win_for_the_mover(self):
+        b = self._board([(7, 3), (7, 4), (7, 5), (7, 6)], [(0, 0), (0, 14), (14, 0)])
+        assert self._status(b, Stone.BLACK, (7, 6)) == (1.0, None)
+
+    def test_side_to_move_with_a_five_threat_wins(self):
+        # Black just played a quiet move, White already has a four.
+        b = self._board([(0, 0), (0, 2)], [(7, 3), (7, 4), (7, 5), (7, 6)])
+        assert self._status(b, Stone.BLACK, (0, 2)) == (0.0, None)
+
+    def test_five_is_terminal(self):
+        b = self._board([(7, 3), (7, 4), (7, 5), (7, 6), (7, 7)], [(0, 0), (0, 14), (14, 0), (14, 14)])
+        assert self._status(b, Stone.BLACK, (7, 7)) == (1.0, None)
+
+    def test_quiet_position_is_open(self):
+        b = self._board([(7, 7), (7, 8)], [(8, 8), (6, 6)])
+        assert self._status(b, Stone.BLACK, (7, 8)) == (None, None)
+
+    def test_tree_keeps_only_the_block_under_a_four(self):
+        root = _search_tree(_open_three_board(), Stone.BLACK, iterations=3000)
+        state = SearchState.from_board(_open_three_board(), Stone.BLACK)
+
+        def visit(node: _Node) -> None:
+            for child in node.children:
+                assert child.move is not None
+                state.make(child.move[0], child.move[1], child.stone)
+                if child.terminal is None:
+                    threat = _find_winning_move(state, child.stone)
+                    if threat is not None:
+                        assert len(child.children) + len(child._untried) == 1
+                visit(child)
+                state.unmake()
+
+        from gomoku_brain.threat import _find_winning_move
+
+        visit(root)
+        # The open four itself is now a proven win at the root.
+        four = [c for c in root.children if c.move in {(7, 4), (7, 8)}]
+        assert four and all(c.terminal == 1.0 for c in four)
+
+
+class TestOwnVCF:
+    @staticmethod
+    def _vcf_board() -> Board:
+        """Black wins by fours: (7,6) makes a four on row 7 and a split four
+        on column 6 at once.  No immediate five for either side."""
+        b = Board(size=15)
+        for r, c in [(7, 3), (7, 4), (7, 5), (3, 6), (4, 6), (5, 6)]:
+            b = b.place_stone(Move(row=r, col=c), Stone.BLACK)
+        for r, c in [(7, 2), (2, 6), (0, 14), (14, 0), (14, 14)]:
+            b = b.place_stone(Move(row=r, col=c), Stone.WHITE)
+        return b
+
+    def test_plays_its_vcf_with_a_tiny_budget(self):
+        from gomoku_brain.threat import _find_winning_move, _vcf
+
+        b = self._vcf_board()
+        assert _find_winning_move(b, Stone.BLACK) is None
+        vcf = _vcf(b, Stone.BLACK, 10)
+        assert vcf is not None
+        assert MCTSBrain(iterations=1).get_move(b, Stone.BLACK) == vcf
+
+    def test_vcf_depth_zero_disables_it(self, monkeypatch):
+        import gomoku_brain.threat as threat
+
+        calls: list[Stone] = []
+        real = threat._vcf
+
+        def spy(board, stone, depth, *args, **kwargs):
+            calls.append(stone)
+            return real(board, stone, depth, *args, **kwargs)
+
+        monkeypatch.setattr(threat, "_vcf", spy)
+        MCTSBrain(iterations=5, vcf_depth=0).get_move(self._vcf_board(), Stone.BLACK)
+        assert calls == []
+
+
+class TestLeafTempo:
+    def test_open_three_is_worth_more_for_the_side_to_move(self):
+        """Black open three (row 7, cols 3-5), White stones far away."""
+        b = Board(size=15)
+        for c in range(3, 6):
+            b = b.place_stone(Move(row=7, col=c), Stone.BLACK)
+        for r, c in [(0, 0), (14, 14)]:
+            b = b.place_stone(Move(row=r, col=c), Stone.WHITE)
+        state = SearchState.from_board(b, Stone.BLACK)
+        black_to_move = _leaf_value(state, Stone.BLACK, Stone.BLACK)
+        white_to_move = _leaf_value(state, Stone.BLACK, Stone.WHITE)
+        static = _leaf_value(state, Stone.BLACK)
+        assert black_to_move > static
+        assert white_to_move == pytest.approx(static)  # White cannot make a live four
+        assert black_to_move > 0.95
+
+    def test_no_tempo_bonus_under_a_five_threat(self):
+        """Black has an open three, but White threatens five: no bonus."""
+        b = Board(size=15)
+        for c in range(3, 6):
+            b = b.place_stone(Move(row=7, col=c), Stone.BLACK)
+        for c in range(3, 7):
+            b = b.place_stone(Move(row=12, col=c), Stone.WHITE)
+        b = b.place_stone(Move(row=12, col=2), Stone.BLACK)
+        state = SearchState.from_board(b, Stone.BLACK)
+        assert _leaf_value(state, Stone.BLACK, Stone.BLACK) == pytest.approx(_leaf_value(state, Stone.BLACK))
+
+
+class TestBudgetAndReuse:
+    @staticmethod
+    def _quiet_board() -> Board:
+        b = Board(size=15)
+        stone = Stone.BLACK
+        for r, c in [(7, 7), (7, 8), (8, 6), (6, 8), (9, 9), (8, 9)]:
+            b = b.place_stone(Move(row=r, col=c), stone)
+            stone = stone.opponent()
+        return b
+
+    def test_time_limit_stops_the_search(self):
+        import time
+
+        brain = MCTSBrain(iterations=1_000_000, time_limit_s=0.3)
+        brain.get_move(self._quiet_board(), Stone.BLACK)  # warm up the JIT kernels
+        t0 = time.monotonic()
+        brain.get_move(self._quiet_board(), Stone.BLACK)
+        assert time.monotonic() - t0 < 1.5
+
+    def test_diagnostics_report_the_iterations_run(self):
+        from gomoku.diagnostics import MoveDiagnostics
+        from gomoku_brain.brain_base import BrainSession
+
+        diag = MoveDiagnostics(move_number=7, stone=Stone.BLACK)
+        session = BrainSession(diag=diag, _t0=0.0)
+        MCTSBrain(iterations=123).choose_move(self._quiet_board(), Stone.BLACK, session)
+        assert diag.search_stats is not None
+        assert diag.search_stats.iterations == 123
+
+    def test_lazy_generation_leaves_unvisited_leaves_empty(self):
+        root = _search_tree(self._quiet_board(), Stone.BLACK, iterations=500)
+        once = [n for n in _walk(root) if n.parent is not None and n.visits == 1 and n.terminal is None]
+        assert once
+        # A leaf visited once was scored, never expanded: no moves generated
+        # unless it is a forced node (its single block is set at creation).
+        assert all(not n.generated or len(n._untried) == 1 for n in once)
+
+    def test_reuses_the_subtree_of_the_reply(self):
+        board = self._quiet_board()
+        brain = MCTSBrain(iterations=400, reuse_tree=True, dirichlet_weight=0.0)
+        ours = brain.get_move(board, Stone.BLACK)
+        assert brain._kept is not None
+        kept_node = brain._kept[0]
+        reply_node = max(kept_node.children, key=lambda c: c.visits)
+        assert reply_node.move is not None
+        visits = reply_node.visits
+        board = board.place_stone(ours, Stone.BLACK)
+        board = board.place_stone(Move(row=reply_node.move[0], col=reply_node.move[1]), Stone.WHITE)
+        root = brain._take_kept(board, Stone.BLACK)
+        assert root is reply_node
+        assert root.parent is None and root.visits == visits
+
+    def test_no_reuse_after_an_unexpected_position(self):
+        board = self._quiet_board()
+        brain = MCTSBrain(iterations=200, reuse_tree=True)
+        brain.get_move(board, Stone.BLACK)
+        # A different game: the kept tree must not be used.
+        other = Board(size=15).place_stone(Move(row=3, col=3), Stone.BLACK)
+        other = other.place_stone(Move(row=3, col=4), Stone.WHITE)
+        assert brain._take_kept(other, Stone.BLACK) is None
+        assert brain._kept is None
+
+    def test_reuse_is_off_by_default(self):
+        brain = MCTSBrain(iterations=50)
+        brain.get_move(self._quiet_board(), Stone.BLACK)
+        assert brain._kept is None
+
+
+class TestSolver:
+    @staticmethod
+    def _node(stone: Stone, parent: _Node | None, untried=None) -> _Node:
+        n = _Node(move=(0, 0) if parent else None, stone=stone, parent=parent, untried=untried)
+        if parent is not None:
+            parent.children.append(n)
+        return n
+
+    def test_a_winning_child_proves_the_parent(self):
+        root = self._node(Stone.WHITE, None, untried=[])  # Black chooses at the root
+        mid = self._node(Stone.BLACK, root, untried=[(1, 1)])  # White chooses here
+        win_for_white = self._node(Stone.WHITE, mid, untried=[])
+        win_for_white.prove(0.0, Stone.BLACK)  # Black (root stone) loses
+        MCTSBrain._backpropagate(win_for_white, 0.0, Stone.BLACK)
+        assert mid.proven == -1 and mid.terminal == 0.0  # Black's move there loses
+        # The root has no untried move left and its only child loses for
+        # Black, so the root is lost for Black too (a win for its "mover").
+        assert root.proven == 1 and root.terminal == 0.0
+
+    def test_parent_with_open_moves_is_not_proven_lost(self):
+        root = self._node(Stone.WHITE, None, untried=[(5, 5)])
+        lost = self._node(Stone.BLACK, root, untried=[])
+        lost.prove(0.0, Stone.BLACK)  # Black's move loses
+        MCTSBrain._backpropagate(lost, 0.0, Stone.BLACK)
+        assert root.proven == 0 and root.terminal is None
+        # ...and the untried move is expanded rather than the lost one revisited.
+        assert root.wants_expansion(2.0, 0.2)
+
+    def test_best_child_skips_proven_losses(self):
+        root = self._node(Stone.WHITE, None, untried=[])
+        root.visits = 10
+        lost = self._node(Stone.BLACK, root, untried=[])
+        lost.prior, lost.visits, lost.wins = 0.9, 1, 1.0
+        lost.prove(0.0, Stone.BLACK)
+        other = self._node(Stone.BLACK, root, untried=[])
+        other.prior, other.visits, other.wins = 0.1, 5, 1.0
+        assert root.best_child(2.0) is other
+
+    def test_final_choice_prefers_a_proven_win(self):
+        root = self._node(Stone.WHITE, None, untried=[])
+        busy = self._node(Stone.BLACK, root, untried=[])
+        busy.visits = 100
+        win = self._node(Stone.BLACK, root, untried=[])
+        win.visits = 3
+        win.prove(1.0, Stone.BLACK)
+        assert MCTSBrain._final_choice(root) is win
+
+    def test_final_choice_avoids_proven_losses(self):
+        root = self._node(Stone.WHITE, None, untried=[])
+        lost = self._node(Stone.BLACK, root, untried=[])
+        lost.visits = 100
+        lost.prove(0.0, Stone.BLACK)
+        other = self._node(Stone.BLACK, root, untried=[])
+        other.visits = 3
+        assert MCTSBrain._final_choice(root) is other
+
+    def test_proofs_in_the_tree_are_consistent(self):
+        """Every proven node with children agrees with them."""
+        root = _search_tree(_open_three_board(), Stone.BLACK, iterations=3000)
+        assert root.proven == -1  # Black to move wins: a loss for White, who "moved" into the root
+        for n in _walk(root):
+            if n.proven and n.children:
+                if n.proven < 0:
+                    assert any(c.proven > 0 for c in n.children)
+                else:
+                    assert not n._untried and all(c.proven < 0 for c in n.children)
+
+    def test_search_stops_once_the_root_is_solved(self):
+        from gomoku.diagnostics import MoveDiagnostics
+        from gomoku_brain.brain_base import BrainSession
+
+        diag = MoveDiagnostics(move_number=9, stone=Stone.BLACK)
+        session = BrainSession(diag=diag, _t0=0.0)
+        brain = MCTSBrain(iterations=5000, vcf_depth=0)  # no root VCF: the tree must solve it
+        move = brain.choose_move(_open_three_board(), Stone.BLACK, session)
+        assert move in {Move(row=7, col=4), Move(row=7, col=8)}
+        assert diag.search_stats is not None
+        assert diag.search_stats.iterations < 5000
+        assert diag.decision_path == "mcts_proven_win"

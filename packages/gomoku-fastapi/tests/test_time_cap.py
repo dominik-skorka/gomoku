@@ -28,9 +28,16 @@ class TestCapTimeBudget:
         assert out["fallback"] == {"depth": 3, "time_limit_s": 5.0}
         assert out["pns_time_s"] == 1.0
 
+    def test_unlimited_mcts_gets_cap(self):
+        out = _cap_time_budget("mcts", {"iterations": 100, "time_limit_s": 0.0}, 5.0)
+        assert out == {"iterations": 100, "time_limit_s": 5.0}
+
+    def test_short_mcts_limit_is_kept(self):
+        assert _cap_time_budget("mcts", {"time_limit_s": 2.0}, 5.0)["time_limit_s"] == 2.0
+
     def test_other_brains_untouched(self):
-        kwargs = {"iterations": 100}
-        assert _cap_time_budget("mcts", kwargs, 5.0) == kwargs
+        kwargs = {"depth": 3}
+        assert _cap_time_budget("minimax", kwargs, 5.0) == kwargs
 
     def test_input_not_mutated(self):
         kwargs = {"time_limit_s": 0.0}

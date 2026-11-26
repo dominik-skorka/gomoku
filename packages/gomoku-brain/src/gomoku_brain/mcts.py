@@ -29,6 +29,8 @@ or occupied-set copies.
 
 import math
 import random as _random
+import threading
+import time
 from typing import override
 
 import logfire
@@ -64,17 +66,38 @@ def _apply_dirichlet_noise(
 # ---------------------------------------------------------------------------
 
 
-def _leaf_value(state: SearchState, root_stone: Stone) -> float:
+# Score shift for the side to move when it can make an unblockable four
+# (live four or double four) next move: worth about a proven win, unless
+# the other side refutes it with fours of its own, which only a search sees.
+_TEMPO_WIN = 5_000.0
+
+
+def _leaf_value(state: SearchState, root_stone: Stone, to_move: Stone | None = None) -> float:
     """Return a leaf value in [0, 1] from *root_stone*'s perspective.
 
     Uses the same :func:`gomoku_brain.evaluate.evaluate_board` as
     alpha-beta — keeping MCTS and AB aligned on what a "good" position
     means — and maps the signed heuristic score through a sigmoid.
     ``k = 1000`` so a live-3 advantage (~1000 pts) maps to ~0.73.
+
+    The static evaluation does not know whose turn it is.  When
+    *to_move* is given and that side can make a live four or a double
+    four next move (an open three, or a four-three, of its own) while
+    the other side has no five threat, the score moves by
+    ``_TEMPO_WIN`` towards *to_move*: the same open three is nearly a
+    win for the side to move but only a threat to block for the other.
     """
     from gomoku_brain.evaluate import evaluate_board
+    from gomoku_brain.threat import _find_winning_move
+    from gomoku_brain.threat_detect import _has_unblockable_four
 
     raw = evaluate_board(state, root_stone)
+    if (
+        to_move is not None
+        and _find_winning_move(state, to_move.opponent()) is None
+        and _has_unblockable_four(state, to_move)
+    ):
+        raw += _TEMPO_WIN if to_move is root_stone else -_TEMPO_WIN
     clamped = max(-10.0, min(10.0, raw / 1000.0))
     return 1.0 / (1.0 + math.exp(-clamped))
 
@@ -91,10 +114,13 @@ class _Node:
         "_untried",
         "_untried_priors",
         "children",
+        "generated",
         "move",
         "parent",
         "prior",
+        "proven",
         "stone",
+        "terminal",
         "visits",
         "wins",
     )
@@ -104,7 +130,7 @@ class _Node:
         move: tuple[int, int] | None,
         stone: Stone,
         parent: _Node | None,
-        untried: list[tuple[int, int]],
+        untried: list[tuple[int, int]] | None,
         prior: float = 0.0,
         untried_priors: list[float] | None = None,
     ) -> None:
@@ -115,36 +141,92 @@ class _Node:
         self.children: list[_Node] = []
         self.wins: float = 0.0
         self.visits: int = 0
-        self._untried = untried
-        if untried_priors is not None:
-            self._untried_priors = untried_priors
-        else:
+        # Game-theoretic value from the root player's perspective when the
+        # position is decided (five made, or the side to move cannot stop
+        # an immediate five); ``None`` for an undecided position.  A
+        # terminal node is never expanded: every visit backs up this value.
+        self.terminal: float | None = None
+        # The same result from the mover's side (``stone``): +1 the mover
+        # wins, -1 the mover loses, 0 not proven.  Kept next to
+        # ``terminal`` so selection can read it without the root stone.
+        self.proven = 0
+        # ``untried=None`` defers move generation to the node's first
+        # expansion (:meth:`MCTSBrain._generate`): most leaves are scored
+        # once and never revisited, so they never pay for it.
+        self.generated = untried is not None
+        self._untried: list[tuple[int, int]] = []
+        self._untried_priors: list[float] = []
+        if untried is not None:
+            self.set_untried(untried, untried_priors)
+
+    def prove(self, value: float, root_stone: Stone) -> None:
+        """Mark the position decided: *value* from *root_stone*'s side."""
+        self.terminal = value
+        mover_wins = (value == 1.0) == (self.stone is root_stone)
+        self.proven = 1 if mover_wins else -1
+
+    def set_untried(self, untried: list[tuple[int, int]], priors: list[float] | None = None) -> None:
+        """Set the moves still to expand, with their priors (uniform if ``None``)."""
+        if priors is None:
             n = len(untried)
-            self._untried_priors = [1.0 / n] * n if n else []
+            priors = [1.0 / n] * n if n else []
+        # Sorted by ascending prior, so ``pop()`` takes the most promising
+        # move (the order PUCT would visit them in).
+        order = sorted(range(len(untried)), key=priors.__getitem__)
+        self._untried = [untried[i] for i in order]
+        self._untried_priors = [priors[i] for i in order]
+        self.generated = True
 
     def puct(self, exploration: float) -> float:
-        """AGZ-style PUCT score: Q + c · P · √N / (n + 1)."""
+        """AGZ-style PUCT score: Q + c · P · √N / (n + 1).
+
+        A proven node uses its exact value (1 or 0 for the mover) as Q.
+        """
         q = self.wins / self.visits if self.visits else 0.0
+        if self.proven:
+            q = 1.0 if self.proven > 0 else 0.0
         parent_visits = self.parent.visits if self.parent else 1
         return q + exploration * self.prior * math.sqrt(parent_visits) / (self.visits + 1)
 
     def best_child(self, exploration: float) -> _Node:
-        return max(self.children, key=lambda c: c.puct(exploration))
+        """The child to descend into: highest PUCT, never a proven loss
+        for the player choosing here while another child is unproven."""
+        open_children = [c for c in self.children if c.proven >= 0]
+        return max(open_children or self.children, key=lambda c: c.puct(exploration))
+
+    def untried_puct(self, exploration: float, fpu_reduction: float) -> float:
+        """PUCT score of the best untried move, as an unvisited child.
+
+        Its Q is the First Play Urgency value: this node's value from the
+        perspective of the player choosing here, minus *fpu_reduction*.
+        """
+        q = (1.0 - self.wins / self.visits) if self.visits else 0.5
+        fpu = max(0.0, q - fpu_reduction)
+        return fpu + exploration * self._untried_priors[-1] * math.sqrt(self.visits)
+
+    def wants_expansion(self, exploration: float, fpu_reduction: float) -> bool:
+        """Expand a new child here rather than descend into an existing one?
+
+        True when there are untried moves and either no children yet or
+        the best untried move (highest prior) outscores every child.
+        """
+        if not self._untried:
+            return False
+        if not self.children:
+            return True
+        if all(c.proven < 0 for c in self.children):
+            # Every child loses for the chooser: try another move (and
+            # complete the proof that this node is lost if none is left).
+            return True
+        best = max(c.puct(exploration) for c in self.children)
+        return self.untried_puct(exploration, fpu_reduction) > best
 
     def has_untried(self) -> bool:
         return len(self._untried) > 0
 
     def pop_untried(self) -> tuple[tuple[int, int], float]:
-        """Remove and return a random untried move together with its prior."""
-        idx = _random.randrange(len(self._untried))
-        self._untried[idx], self._untried[-1] = self._untried[-1], self._untried[idx]
-        self._untried_priors[idx], self._untried_priors[-1] = (
-            self._untried_priors[-1],
-            self._untried_priors[idx],
-        )
-        prior = self._untried_priors.pop()
-        move = self._untried.pop()
-        return move, prior
+        """Remove and return the highest-prior untried move with its prior."""
+        return self._untried.pop(), self._untried_priors.pop()
 
     def is_leaf(self) -> bool:
         return len(self.children) == 0
@@ -157,6 +239,15 @@ class _Node:
 
 class MCTSBrain(Brain[MCTSBrainSettings], name="mcts"):
     """Player using Monte Carlo Tree Search with PUCT."""
+
+    def __init__(self, settings: MCTSBrainSettings | None = None, /, **overrides: object) -> None:
+        super().__init__(settings, **overrides)
+        # Tree kept for the next move when ``reuse_tree`` is on: the node
+        # reached by our move, the stones on the board after it, and our
+        # stone.  Taken under the lock, so two concurrent searches never
+        # share a tree.
+        self._kept: tuple[_Node, dict[tuple[int, int], Stone], Stone] | None = None
+        self._kept_lock = threading.Lock()
 
     # -- Public interface ----------------------------------------------------
 
@@ -191,6 +282,17 @@ class MCTSBrain(Brain[MCTSBrainSettings], name="mcts"):
         vcf_gated = False
         if self.settings.vcf_depth > 0:
             from gomoku_brain.threat import _vcf
+
+            # Our own forced win first: a VCF deeper than the tree reaches
+            # would otherwise be missed (same step as AlphaBeta's root).
+            our_vcf = _vcf(board, stone, self.settings.vcf_depth)
+            if our_vcf is not None:
+                logfire.info("MCTS VCF win: {move}", move=str(our_vcf))
+                if diag is not None:
+                    diag.decision_path = "vcf_win"
+                    diag.chosen_move = our_vcf
+                    diag.our_threats = diag.our_threats.model_copy(update={"vcf_result": "win"})
+                return our_vcf
 
             opp_vcf = _vcf(board, stone.opponent(), self.settings.vcf_depth)
             if opp_vcf is not None:
@@ -237,18 +339,33 @@ class MCTSBrain(Brain[MCTSBrainSettings], name="mcts"):
                 self.settings.dirichlet_weight,
             )
 
-        root = _Node(
-            move=None,
-            stone=stone.opponent(),
-            parent=None,
-            untried=root_untried,
-            untried_priors=root_priors,
-        )
+        reused = None if vcf_gated else self._take_kept(board, stone)
+        if reused is not None:
+            # Dirichlet noise is not re-applied: the reused root's moves
+            # already carry visits, and noise would only shift its priors.
+            root = reused
+        else:
+            root = _Node(
+                move=None,
+                stone=stone.opponent(),
+                parent=None,
+                untried=root_untried,
+                untried_priors=root_priors,
+            )
+        reused_visits = root.visits
 
-        for _ in range(self.settings.iterations):
+        limit = self.settings.time_limit_s
+        deadline = time.monotonic() + limit if limit > 0 else 0.0
+        iterations = 0
+        while iterations < self.settings.iterations:
             self._run_iteration(root, state, stone)
+            iterations += 1
+            if root.proven:
+                break  # the root position is solved: no more to learn
+            if deadline and time.monotonic() >= deadline:
+                break
 
-        best = max(root.children, key=lambda c: c.visits)
+        best = self._final_choice(root)
         assert best.move is not None
         br, bc = best.move
         logfire.info(
@@ -261,16 +378,25 @@ class MCTSBrain(Brain[MCTSBrainSettings], name="mcts"):
 
         chosen = Move(row=br, col=bc)
 
+        if self.settings.reuse_tree:
+            after = {(r, c): board.at(r, c) for r, c in board.occupied}
+            after[(br, bc)] = stone
+            with self._kept_lock:
+                self._kept = (best, after, stone)
+
         if diag is not None:
             from gomoku.diagnostics import CandidateInfo, SearchStats
 
             search_ms = session.elapsed_ms()
-            diag.decision_path = diag.decision_path or (
-                "mcts_vcf_gated" if vcf_gated else "mcts"
-            )
+            path = "mcts_vcf_gated" if vcf_gated else "mcts"
+            if best.proven > 0:
+                path = "mcts_proven_win"
+            diag.decision_path = diag.decision_path or path
+            if root.proven > 0:
+                diag.notes.append("Every move is a proven loss")
             diag.chosen_move = chosen
             diag.search_stats = SearchStats(
-                iterations=self.settings.iterations,
+                iterations=iterations,
                 nodes_searched=root.visits,
                 time_ms=search_ms,
             )
@@ -288,6 +414,8 @@ class MCTSBrain(Brain[MCTSBrainSettings], name="mcts"):
             ]
             if diag.top_candidates and diag.top_candidates[0].move != chosen:
                 diag.alternative_best = diag.top_candidates[0]
+            if reused is not None:
+                diag.notes.append(f"Reused tree: {reused_visits} visits from the previous move")
             diag.notes.append(
                 f"Best: {chosen} visits={best.visits}/{root.visits} "
                 f"wr={best.wins / best.visits:.1%}"
@@ -296,6 +424,43 @@ class MCTSBrain(Brain[MCTSBrainSettings], name="mcts"):
             )
 
         return chosen
+
+    @staticmethod
+    def _final_choice(root: _Node) -> _Node:
+        """The root child to play: a proven win if there is one, else the
+        most visited child that is not a proven loss (most visited of all
+        when every move loses)."""
+        wins = [c for c in root.children if c.proven > 0]
+        if wins:
+            return max(wins, key=lambda c: c.visits)
+        open_children = [c for c in root.children if c.proven >= 0]
+        return max(open_children or root.children, key=lambda c: c.visits)
+
+    def _take_kept(self, board: Board, stone: Stone) -> _Node | None:
+        """The kept subtree for *board*, or ``None``.
+
+        Usable when *board* is the kept position plus exactly one
+        opponent stone and that reply was searched: its node becomes the
+        new root.  The kept tree is consumed either way.
+        """
+        with self._kept_lock:
+            kept, self._kept = self._kept, None
+        if kept is None or not self.settings.reuse_tree:
+            return None
+        node, after, kept_stone = kept
+        if kept_stone is not stone or len(board.occupied) != len(after) + 1:
+            return None
+        if any(board.at(r, c) is not s for (r, c), s in after.items()):
+            return None
+        (reply,) = board.occupied - after.keys()
+        if board.at(*reply) is not stone.opponent():
+            return None
+        for child in node.children:
+            if child.move == reply and child.terminal is None and child.generated:
+                child.parent = None
+                child.move = None
+                return child
+        return None
 
     # -- Core MCTS loop (operates entirely on one SearchState) ---------------
 
@@ -316,54 +481,71 @@ class MCTSBrain(Brain[MCTSBrainSettings], name="mcts"):
         depth = 0
 
         # 1. Selection — descend using PUCT, replaying moves into state.
-        while not node.has_untried() and not node.is_leaf():
-            node = node.best_child(self.settings.exploration)
+        # Untried moves compete with the existing children as unvisited
+        # children (FPU), in prior order: a node is not required to expand
+        # every move before the search goes deeper.
+        exploration = self.settings.exploration
+        fpu_reduction = self.settings.fpu_reduction
+        while node.terminal is None:
+            if not node.generated:
+                self._generate(node, state)
+            if node.is_leaf() or node.wants_expansion(exploration, fpu_reduction):
+                break
+            node = node.best_child(exploration)
             r, c = node.move  # type: ignore[misc]
             state.make(r, c, node.stone)
             depth += 1
 
+        # A decided position: back up its proven value, never expand it.
+        if node.terminal is not None:
+            self._backpropagate(node, node.terminal, root_stone)
+            self._restore(state, depth)
+            return
+
         # 2. Expansion — add one child.
         if node.has_untried():
             move_rc, move_prior = node.pop_untried()
-            child_stone = (
-                root_stone if node.stone is not root_stone else root_stone.opponent()
-            )
+            child_stone = node.stone.opponent()
             r, c = move_rc
             state.make(r, c, child_stone)
             depth += 1
 
-            child_moves = get_candidate_moves(state, radius=2)
-            child_untried = [(m.row, m.col) for m in child_moves]
-            child_priors = _compute_priors(
-                state,
-                child_untried,
-                int(child_stone.opponent()),
-                int(child_stone),
-            )
+            # Terminal / forced-reply check at the expansion ply, before
+            # generating any candidates: a decided node keeps no untried
+            # moves, and a node facing a single five threat keeps only
+            # the block.
+            terminal_value, forced = self._node_status(state, r, c, child_stone, root_stone)
+            if terminal_value is not None:
+                child = _Node(move=move_rc, stone=child_stone, parent=node, untried=[], prior=move_prior)
+                child.prove(terminal_value, root_stone)
+                node.children.append(child)
+                self._backpropagate(child, terminal_value, root_stone)
+                self._restore(state, depth)
+                return
+
             child = _Node(
                 move=move_rc,
                 stone=child_stone,
                 parent=node,
-                untried=child_untried,
+                untried=[forced] if forced is not None else None,
                 prior=move_prior,
-                untried_priors=child_priors,
             )
             node.children.append(child)
             node = child
 
-            # Terminal check at the expansion ply.
-            terminal_value = self._terminal_value(state, r, c, child_stone, root_stone)
-            if terminal_value is not None:
-                self._backpropagate(node, terminal_value, root_stone)
-                self._restore(state, depth)
-                return
-
         # 3. Heuristic leaf evaluation (replaces random rollout).
-        value = _leaf_value(state, root_stone)
+        value = _leaf_value(state, root_stone, node.stone.opponent())
 
         # 4. Backpropagation + restore the shared state to the root position.
         self._backpropagate(node, value, root_stone)
         self._restore(state, depth)
+
+    @staticmethod
+    def _generate(node: _Node, state: SearchState) -> None:
+        """Fill *node*'s untried moves and priors; *state* is at *node*."""
+        moves = [(m.row, m.col) for m in get_candidate_moves(state, radius=2)]
+        to_move = node.stone.opponent()
+        node.set_untried(moves, _compute_priors(state, moves, int(to_move), int(node.stone)))
 
     @staticmethod
     def _restore(state: SearchState, depth: int) -> None:
@@ -372,44 +554,88 @@ class MCTSBrain(Brain[MCTSBrainSettings], name="mcts"):
             state.unmake()
 
     @staticmethod
-    def _terminal_value(
+    def _node_status(
         state: SearchState,
         row: int,
         col: int,
         mover: Stone,
         root_stone: Stone,
-    ) -> float | None:
-        """Return a terminal value in [0, 1] (from *root_stone*'s perspective).
+    ) -> tuple[float | None, tuple[int, int] | None]:
+        """Classify the position after *mover* placed at (row, col).
 
-        * *mover* just placed at (row, col).  If that move wins, return 1.0
-          for root_stone or 0.0 otherwise.
-        * If the *opponent* of *mover* can win immediately on the next ply,
-          the position is a decisive loss for *mover* (who has no time to
-          respond) — report that value.
-        * Otherwise return ``None`` (non-terminal leaf).
+        Returns ``(terminal, forced)``:
+
+        * ``terminal`` — value in [0, 1] from *root_stone*'s perspective
+          when the position is decided, else ``None``:
+
+          - *mover* just made five → *mover* wins;
+          - the side to move can make five → *mover* loses;
+          - *mover* threatens five on two or more cells → *mover* wins
+            (the side to move can block only one).
+
+        * ``forced`` — the only sensible reply when *mover* threatens five
+          on exactly one cell (the block), else ``None``.
         """
         from gomoku_brain.evaluate import _should_use_jit
         from gomoku_brain.threat import _find_winning_move
 
+        win = 1.0 if mover is root_stone else 0.0
         if _should_use_jit():
             from gomoku_brain.evaluate_jit import check_winner_grid, get_dirs
 
             if check_winner_grid(state.grid, state.size, row, col, 5, get_dirs()):
-                return 1.0 if mover is root_stone else 0.0
+                return win, None
         elif _fast_check_winner_state(state, row, col, mover):
-            return 1.0 if mover is root_stone else 0.0
+            return win, None
 
-        opp = mover.opponent()
-        if _find_winning_move(state, opp) is not None:
-            return 0.0 if mover is root_stone else 1.0
-        return None
+        side = mover.opponent()
+        if _find_winning_move(state, side) is not None:
+            return 1.0 - win, None
+
+        threat = _find_winning_move(state, mover)
+        if threat is None:
+            return None, None
+        # Block the threat and look again: a second five threat cannot be
+        # stopped.  (The block cannot remove another threat: that cell is
+        # empty, and the stones completing it are the mover's.)
+        state.make(threat.row, threat.col, side)
+        second = _find_winning_move(state, mover)
+        state.unmake()
+        if second is not None:
+            return win, None
+        return None, (threat.row, threat.col)
+
+    @staticmethod
+    def _propagate_proof(node: _Node, root_stone: Stone) -> None:
+        """MCTS-Solver step (Winands, Björnsson, Saito, CG 2008).
+
+        After *node* was proven, mark its ancestors that are now decided:
+        a node is lost for its mover when any child wins for the player
+        choosing there, and won for its mover when every move has been
+        expanded and every child loses for the chooser.
+        """
+        child = node
+        parent = child.parent
+        while parent is not None and parent.terminal is None and child.proven:
+            if child.proven > 0:
+                # The chooser at *parent* (child's mover) has a winning move.
+                parent.prove(0.0 if parent.stone is root_stone else 1.0, root_stone)
+            elif parent.generated and not parent._untried and all(c.proven < 0 for c in parent.children):
+                parent.prove(1.0 if parent.stone is root_stone else 0.0, root_stone)
+            else:
+                return
+            child = parent
+            parent = child.parent
 
     @staticmethod
     def _backpropagate(node: _Node, value: float, root_stone: Stone) -> None:
         """Walk up to root, updating visit counts and wins.
 
-        *value* is in [0, 1] from *root_stone*'s perspective.
+        *value* is in [0, 1] from *root_stone*'s perspective.  A proven
+        *node* first proves the ancestors it decides (MCTS-Solver).
         """
+        if node.proven:
+            MCTSBrain._propagate_proof(node, root_stone)
         n: _Node | None = node
         while n is not None:
             n.visits += 1
@@ -421,7 +647,7 @@ class MCTSBrain(Brain[MCTSBrainSettings], name="mcts"):
 
 
 # ---------------------------------------------------------------------------
-# Non-JIT fallback win detector (used by ``_terminal_value``)
+# Non-JIT fallback win detector (used by ``_node_status``)
 # ---------------------------------------------------------------------------
 
 
