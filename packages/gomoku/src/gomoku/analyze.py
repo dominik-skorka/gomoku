@@ -203,7 +203,7 @@ def _player_providers(header: dict[str, Any]) -> dict[Stone, str]:
     for p in header.get("players", []) or []:
         try:
             stone = Stone(p["stone"])
-        except (KeyError, ValueError):
+        except KeyError, ValueError:
             continue
         provider = p.get("provider")
         if provider is not None:
@@ -211,9 +211,7 @@ def _player_providers(header: dict[str, Any]) -> dict[Stone, str]:
     return out
 
 
-def _compute_player_stats(
-    moves: list[MoveDiagnostics], providers: dict[Stone, str]
-) -> dict[Stone, PlayerStats]:
+def _compute_player_stats(moves: list[MoveDiagnostics], providers: dict[Stone, str]) -> dict[Stone, PlayerStats]:
     stats: dict[Stone, PlayerStats] = {
         Stone.BLACK: PlayerStats(stone=Stone.BLACK, provider=providers.get(Stone.BLACK)),
         Stone.WHITE: PlayerStats(stone=Stone.WHITE, provider=providers.get(Stone.WHITE)),
@@ -254,12 +252,7 @@ def _flag_move(
 
     # 2. Alternative-best deviation (only meaningful for eval-scored candidates).
     alt = move.alternative_best
-    if (
-        alt is not None
-        and move.chosen_move is not None
-        and alt.move != move.chosen_move
-        and alt.score_type == "eval"
-    ):
+    if alt is not None and move.chosen_move is not None and alt.move != move.chosen_move and alt.score_type == "eval":
         chosen_score: float | None = None
         for c in move.top_candidates:
             if c.move == move.chosen_move:
@@ -275,11 +268,7 @@ def _flag_move(
     ps = player_stats.get(move.stone)
     if ps is not None and ps.moves > 2:
         avg_ms = ps.avg_think_ms
-        if (
-            avg_ms > 0
-            and move.think_time_ms >= TIME_SPIKE_MIN_MS
-            and move.think_time_ms >= avg_ms * TIME_SPIKE_FACTOR
-        ):
+        if avg_ms > 0 and move.think_time_ms >= TIME_SPIKE_MIN_MS and move.think_time_ms >= avg_ms * TIME_SPIKE_FACTOR:
             reasons.append("time_spike")
             details["think_ms"] = move.think_time_ms
             details["avg_ms"] = round(avg_ms, 1)

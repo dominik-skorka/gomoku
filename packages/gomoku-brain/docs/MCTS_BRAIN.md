@@ -143,14 +143,14 @@ is scored by the pattern scorer `gomoku_brain.priors.compute_priors`
 ```python
 # (consecutive_stones, open_ends) → raw score
 _PRIOR_PATTERN_SCORES = {
-    (4, 2): 10_000,   # live-4
-    (4, 1):  1_000,   # dead-4
-    (3, 2):  1_000,   # live-3
-    (3, 1):    100,   # dead-3
-    (2, 2):    100,   # live-2
-    (2, 1):     10,   # dead-2
-    (1, 2):     10,
-    (1, 1):      1,
+    (4, 2): 10_000,  # live-4
+    (4, 1): 1_000,  # dead-4
+    (3, 2): 1_000,  # live-3
+    (3, 1): 100,  # dead-3
+    (2, 2): 100,  # live-2
+    (2, 1): 10,  # dead-2
+    (1, 2): 10,
+    (1, 1): 1,
 }
 ```
 

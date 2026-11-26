@@ -172,8 +172,7 @@ class PlayerConfig(BaseModel):
     brain_overrides: dict[str, Any] | None = Field(
         default=None,
         description=(
-            "Per-session tweaks merged on top of the resolved brain "
-            "settings.  Ignored when ``brain`` is ``null``."
+            "Per-session tweaks merged on top of the resolved brain settings.  Ignored when ``brain`` is ``null``."
         ),
     )
 
@@ -308,9 +307,7 @@ class VersionInfo(BaseModel):
 
     version: str = Field(description="Version name, which is also its URL prefix.", examples=["v1"])
     path: str = Field(description="URL prefix of every endpoint in this version.", examples=["/v1"])
-    openapi: str = Field(
-        description="OpenAPI document describing only this version.", examples=["/v1/openapi.json"]
-    )
+    openapi: str = Field(description="OpenAPI document describing only this version.", examples=["/v1/openapi.json"])
     status: Literal["stable", "deprecated"] = Field(
         description=(
             "``deprecated`` versions still work but will be removed after their sunset date.  A "

@@ -699,10 +699,10 @@ brain = get_brain("threat", pns_nodes=30_000)
 
 # Direct construction — PNS mode (default)
 brain = ThreatBrain(
-    vcf_depth=24,        # deeper four-threat search
-    threat_search="pns", # use proof-number search
-    pns_nodes=30_000,    # larger node budget
-    pns_time_s=10.0,     # larger time budget
+    vcf_depth=24,  # deeper four-threat search
+    threat_search="pns",  # use proof-number search
+    pns_nodes=30_000,  # larger node budget
+    pns_time_s=10.0,  # larger time budget
     fallback={"depth": 5, "max_candidates": 12, "eval_ordering_depth": 11},
 )
 

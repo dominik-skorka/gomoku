@@ -234,9 +234,7 @@ class TestNodePUCT:
         assert [n.pop_untried()[0] for _ in range(3)] == [(1, 1), (2, 2), (0, 0)]
 
     def test_expands_while_best_untried_outscores_children(self):
-        parent = _Node(
-            move=None, stone=Stone.WHITE, parent=None, untried=[(0, 0), (1, 1)], untried_priors=[0.1, 0.4]
-        )
+        parent = _Node(move=None, stone=Stone.WHITE, parent=None, untried=[(0, 0), (1, 1)], untried_priors=[0.1, 0.4])
         assert parent.wants_expansion(1.0, 0.2)  # no children yet
         parent.visits = 4
         parent.wins = 2.0  # Q = 0.5 for the chooser too

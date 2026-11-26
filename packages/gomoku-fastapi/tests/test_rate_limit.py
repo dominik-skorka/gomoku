@@ -80,9 +80,7 @@ class TestComputeLimitTrips:
             tight_compute_client.post("/v1/move", json=_move_payload())
         # ...then confirm /think is also blocked even though we never
         # called it directly.  Need a session first.
-        created = tight_compute_client.post(
-            "/v1/games", json={"board_size": 9, "black": {"brain": "random"}}
-        )
+        created = tight_compute_client.post("/v1/games", json={"board_size": 9, "black": {"brain": "random"}})
         assert created.status_code == 201
         gid = created.json()["game_id"]
         r = tight_compute_client.post(f"/v1/games/{gid}/think", json={})

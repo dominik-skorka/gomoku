@@ -296,14 +296,11 @@ class MCTSBrain(Brain[MCTSBrainSettings], name="mcts"):
 
             opp_vcf = _vcf(board, stone.opponent(), self.settings.vcf_depth)
             if opp_vcf is not None:
-                durable, breakers = classify_vcf_breakers(
-                    board, candidates, stone, self.settings.vcf_depth
-                )
+                durable, breakers = classify_vcf_breakers(board, candidates, stone, self.settings.vcf_depth)
                 restricted = durable if durable else breakers
                 if restricted:
                     logfire.info(
-                        "VCF safety gate: opponent VCF at {vcf}, restricting to "
-                        "{n} breakers ({durable} durable)",
+                        "VCF safety gate: opponent VCF at {vcf}, restricting to {n} breakers ({durable} durable)",
                         vcf=str(opp_vcf),
                         n=len(restricted),
                         durable=len(durable),
@@ -311,15 +308,12 @@ class MCTSBrain(Brain[MCTSBrainSettings], name="mcts"):
                     candidates = restricted
                     vcf_gated = True
                     note = (
-                        f"Opponent VCF at {opp_vcf}, restricted to "
-                        f"{len(restricted)} breakers ({len(durable)} durable)"
+                        f"Opponent VCF at {opp_vcf}, restricted to {len(restricted)} breakers ({len(durable)} durable)"
                     )
                 else:
                     note = f"Opponent VCF at {opp_vcf}, no breakers found"
                 if diag is not None:
-                    diag.opp_threats = diag.opp_threats.model_copy(
-                        update={"vcf_result": "win"}
-                    )
+                    diag.opp_threats = diag.opp_threats.model_copy(update={"vcf_result": "win"})
                     diag.notes.append(note)
 
         stone_val = int(stone)
@@ -400,9 +394,7 @@ class MCTSBrain(Brain[MCTSBrainSettings], name="mcts"):
                 nodes_searched=root.visits,
                 time_ms=search_ms,
             )
-            children_sorted = sorted(
-                root.children, key=lambda c: c.visits, reverse=True
-            )
+            children_sorted = sorted(root.children, key=lambda c: c.visits, reverse=True)
             diag.top_candidates = [
                 CandidateInfo(
                     move=Move(row=c.move[0], col=c.move[1]),
@@ -417,8 +409,7 @@ class MCTSBrain(Brain[MCTSBrainSettings], name="mcts"):
             if reused is not None:
                 diag.notes.append(f"Reused tree: {reused_visits} visits from the previous move")
             diag.notes.append(
-                f"Best: {chosen} visits={best.visits}/{root.visits} "
-                f"wr={best.wins / best.visits:.1%}"
+                f"Best: {chosen} visits={best.visits}/{root.visits} wr={best.wins / best.visits:.1%}"
                 if best.visits
                 else f"Best: {chosen} visits=0"
             )
