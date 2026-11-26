@@ -309,6 +309,13 @@ That is the whole contract:
   registry, so it can be played, aliased in `gomoku.toml` and matched like
   a built-in brain.  Built-in brains are imported by `gomoku_brain` so they
   register on import.
+- **Plug-ins** are brains in other installed packages.  A package declares
+  its brain module under the `gomoku.brains` entry-point group, and
+  `gomoku_brain.load_plugins()` imports those modules on the first lookup
+  in `BRAINS` (once per process), so the CLI, the API and match workers
+  all see them.  A plug-in that fails to import or takes a used name is
+  skipped with a `PluginWarning`.  Tutorial:
+  [WRITING_A_BRAIN.md](WRITING_A_BRAIN.md).
 
 `gomoku_brain.BRAINS` is a live mapping from name to `BrainSpec` (brain
 class + settings model) over those registrations, plus players added with

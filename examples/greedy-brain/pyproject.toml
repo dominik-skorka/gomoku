@@ -1,0 +1,22 @@
+[project]
+name = "greedy-brain"
+version = "0.1.0"
+description = "Example Gomoku brain plug-in: win, block, else the best-scoring move"
+requires-python = ">=3.14"
+license = "MIT"
+dependencies = [
+    "gomoku-brain",
+]
+
+# The line that makes this package a brain plug-in: gomoku imports the
+# module ``greedy_brain`` on start-up, and the class statement inside it
+# registers the brain under its name.
+[project.entry-points."gomoku.brains"]
+greedy = "greedy_brain"
+
+[build-system]
+requires = ["hatchling>=1.33.0"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/greedy_brain"]

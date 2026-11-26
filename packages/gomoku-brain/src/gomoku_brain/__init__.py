@@ -16,10 +16,26 @@ External consumers:
   pair without instantiating.
 * :func:`register_brain` — add a brain at runtime (used by the CLI to
   register the keyboard provider).
+* :func:`load_plugins` — import the brains other installed packages
+  declare under the ``gomoku.brains`` entry-point group.  The registry
+  calls it on first use, so the CLI, the API and match workers all see
+  plug-in brains without doing anything.
+
+A plug-in package declares its brain module in its ``pyproject.toml``::
+
+    [project.entry-points."gomoku.brains"]
+    greedy = "greedy_brain"
+
+Importing the module registers the brain, as for a built-in one.  A
+plug-in that fails to import (or whose brain name is taken) is skipped
+with a :class:`PluginWarning`; the other brains still work.  See
+``docs/WRITING_A_BRAIN.md``.
 """
 
+import warnings
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
+from importlib.metadata import entry_points
 from typing import Any, override
 
 from gomoku.interfaces import Player
@@ -33,6 +49,41 @@ from gomoku_brain.minimax import MinimaxBrain
 from gomoku_brain.negamax import NegamaxBrain
 from gomoku_brain.random import RandomBrain
 from gomoku_brain.threat import ThreatBrain
+
+#: Entry-point group plug-in packages declare their brain modules under.
+PLUGIN_GROUP = "gomoku.brains"
+
+
+class PluginWarning(RuntimeWarning):
+    """A plug-in brain could not be loaded and was skipped."""
+
+
+_plugins_loaded = False
+
+
+def load_plugins() -> list[str]:
+    """Import every module declared under the ``gomoku.brains`` entry points.
+
+    Runs once per process (later calls do nothing and return ``[]``); the
+    registry calls it on first use.  Returns the entry-point names that
+    loaded.  A plug-in that raises while importing, for example because
+    its brain name is already taken, is skipped with a
+    :class:`PluginWarning`.
+    """
+    global _plugins_loaded
+    if _plugins_loaded:
+        return []
+    _plugins_loaded = True
+    loaded: list[str] = []
+    for ep in entry_points(group=PLUGIN_GROUP):
+        try:
+            ep.load()
+        except Exception as exc:
+            msg = f"brain plug-in {ep.name!r} ({ep.value}) failed to load: {exc}"
+            warnings.warn(msg, PluginWarning, stacklevel=2)
+        else:
+            loaded.append(ep.name)
+    return loaded
 
 
 @dataclass(frozen=True)
@@ -54,17 +105,20 @@ class _Registry(Mapping[str, BrainSpec]):
     declared with a ``name=`` (they register themselves), plus players
     added with :func:`register_brain`.  A live view, so a brain defined
     after this module is imported (a plug-in, a test) shows up too.
+    Plug-ins (:func:`load_plugins`) are imported on first access.
     """
 
     def __init__(self) -> None:
         self._extra: dict[str, BrainSpec] = {}
 
     def _specs(self) -> dict[str, BrainSpec]:
+        load_plugins()
         specs = {name: BrainSpec(name, cls, cls.settings_type) for name, cls in REGISTRY.items()}
         return {**specs, **self._extra}
 
     @override
     def __getitem__(self, name: str) -> BrainSpec:
+        load_plugins()
         if name in self._extra:
             return self._extra[name]
         cls = REGISTRY[name]
@@ -171,6 +225,7 @@ def get_brain_from_settings(name: str, brain_settings: BrainSettings | None = No
 
 __all__ = [
     "BRAINS",
+    "PLUGIN_GROUP",
     "AlphaBetaBrain",
     "BaseBrainSettings",
     "Brain",
@@ -178,11 +233,13 @@ __all__ = [
     "MCTSBrain",
     "MinimaxBrain",
     "NegamaxBrain",
+    "PluginWarning",
     "RandomBrain",
     "ThreatBrain",
     "available_brains",
     "get_brain",
     "get_brain_from_settings",
+    "load_plugins",
     "register_brain",
     "resolve_brain",
     "unregister_brain",
