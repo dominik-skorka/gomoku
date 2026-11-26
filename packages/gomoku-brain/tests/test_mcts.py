@@ -700,3 +700,35 @@ class TestSolver:
         assert diag.search_stats is not None
         assert diag.search_stats.iterations < 5000
         assert diag.decision_path == "mcts_proven_win"
+
+
+class TestImplicitMinimax:
+    @staticmethod
+    def _quiet_board() -> Board:
+        return TestBudgetAndReuse._quiet_board()
+
+    def test_minimax_values_follow_the_children(self):
+        root = _search_tree(self._quiet_board(), Stone.BLACK, iterations=1500, minimax_weight=0.5)
+        checked = 0
+        for n in _walk(root):
+            evaluated = [c.v_mm for c in n.children if c.v_mm is not None]
+            if evaluated:
+                assert n.v_mm == pytest.approx(1.0 - max(evaluated))
+                checked += 1
+        assert checked > 10
+
+    def test_weight_zero_keeps_the_plain_search(self):
+        a = _search_tree(self._quiet_board(), Stone.BLACK, iterations=800)
+        b = _search_tree(self._quiet_board(), Stone.BLACK, iterations=800, minimax_weight=0.0)
+        assert all(n.v_mm is None for n in _walk(b))
+        visits_a = sorted((c.move, c.visits) for c in a.children)
+        visits_b = sorted((c.move, c.visits) for c in b.children)
+        assert visits_a == visits_b
+
+    def test_puct_blends_the_minimax_value(self):
+        parent = _Node(move=None, stone=Stone.WHITE, parent=None, untried=[])
+        parent.visits = 4
+        child = _Node(move=(1, 1), stone=Stone.BLACK, parent=parent, untried=[], prior=0.0)
+        child.visits, child.wins, child.v_mm = 2, 1.6, 0.2  # Q = 0.8, minimax 0.2
+        assert child.puct(1.0) == pytest.approx(0.8)
+        assert child.puct(1.0, mm_weight=0.5) == pytest.approx(0.5)

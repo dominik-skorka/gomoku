@@ -241,6 +241,7 @@ class MCTSBrainSettings(BaseBrainSettings):
     iterations: int = Field(default=10_000, ge=1, le=1_000_000)
     exploration: float = Field(default=2.0, ge=0.1, le=5.0)
     fpu_reduction: float = Field(default=0.2, ge=0.0, le=1.0)
+    minimax_weight: float = Field(default=0.0, ge=0.0, le=1.0)
     dirichlet_alpha: float = Field(default=0.25, ge=0.0, le=1.0)
     dirichlet_weight: float = Field(default=0.0, ge=0.0, le=1.0)
     vcf_depth: int = Field(default=10, ge=0, le=40)

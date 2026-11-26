@@ -257,6 +257,18 @@ player's view), has no moves and is never expanded: every visit backs
 up the same exact value, so a proven result is never averaged with
 heuristic values.
 
+### Implicit minimax backups
+
+With `minimax_weight` (w) > 0, each node also keeps `v_mm`: the minimax
+of the heuristic leaf values below it (Lanctot, Winands, Pepels,
+Sturtevant, *Monte Carlo Tree Search with Heuristic Evaluations using
+Implicit Minimax Backups*, CIG 2014).  A leaf keeps its evaluation; on
+each backup an ancestor takes the best of its evaluated children for
+the player choosing there.  Selection uses `(1 − w) · Q + w · v_mm` in
+place of Q, so a single refuting reply lowers a move's value at once
+instead of being averaged with its siblings.  `w = 0` skips the
+bookkeeping entirely.
+
 ### MCTS-Solver
 
 Proofs propagate up the tree (Winands, Björnsson, Saito, *Monte-Carlo
@@ -403,6 +415,7 @@ Because MCTS candidate scores are winrates (not eval units), the
 | `time_limit_s` | 0 | 0 – 600 | Hard time limit per move (`0` = unlimited) | The search stops at the deadline |
 | `exploration` | 2.0 | 0.1 – 5.0 | PUCT constant `c` | More exploration, less exploitation |
 | `fpu_reduction` | 0.2 | 0.0 – 1.0 | First Play Urgency: Q of an untried move = node value − this | Deeper, narrower tree |
+| `minimax_weight` | 0.0 | 0.0 – 1.0 | Weight of the implicit minimax value in Q | Reacts faster to refutations; `0` = plain mean |
 | `reuse_tree` | false (`gomoku.toml`: true) | bool | Continue from the kept subtree of the opponent's reply | More visits per move when the same brain plays on |
 | `dirichlet_alpha` | 0.25 | 0.0 – 1.0 | Dirichlet shape | Larger = flatter noise |
 | `dirichlet_weight` | 0.0 | 0.0 – 1.0 | Noise mix weight | `0.0` = deterministic priors; `1.0` = pure noise |

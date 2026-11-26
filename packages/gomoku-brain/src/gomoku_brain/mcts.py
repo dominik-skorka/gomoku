@@ -121,6 +121,7 @@ class _Node:
         "proven",
         "stone",
         "terminal",
+        "v_mm",
         "visits",
         "wins",
     )
@@ -150,6 +151,10 @@ class _Node:
         # wins, -1 the mover loses, 0 not proven.  Kept next to
         # ``terminal`` so selection can read it without the root stone.
         self.proven = 0
+        # Implicit minimax backup of the heuristic leaf values (Lanctot et
+        # al., CIG 2014), from the mover's side; ``None`` until evaluated.
+        # Maintained only when ``minimax_weight > 0``.
+        self.v_mm: float | None = None
         # ``untried=None`` defers move generation to the node's first
         # expansion (:meth:`MCTSBrain._generate`): most leaves are scored
         # once and never revisited, so they never pay for it.
@@ -177,22 +182,26 @@ class _Node:
         self._untried_priors = [priors[i] for i in order]
         self.generated = True
 
-    def puct(self, exploration: float) -> float:
+    def puct(self, exploration: float, mm_weight: float = 0.0) -> float:
         """AGZ-style PUCT score: Q + c · P · √N / (n + 1).
 
-        A proven node uses its exact value (1 or 0 for the mover) as Q.
+        With *mm_weight* > 0, Q is blended with the implicit minimax value:
+        ``(1 − w) · Q + w · v_mm``.  A proven node uses its exact value
+        (1 or 0 for the mover) as Q.
         """
         q = self.wins / self.visits if self.visits else 0.0
+        if mm_weight and self.v_mm is not None:
+            q = (1.0 - mm_weight) * q + mm_weight * self.v_mm
         if self.proven:
             q = 1.0 if self.proven > 0 else 0.0
         parent_visits = self.parent.visits if self.parent else 1
         return q + exploration * self.prior * math.sqrt(parent_visits) / (self.visits + 1)
 
-    def best_child(self, exploration: float) -> _Node:
+    def best_child(self, exploration: float, mm_weight: float = 0.0) -> _Node:
         """The child to descend into: highest PUCT, never a proven loss
         for the player choosing here while another child is unproven."""
         open_children = [c for c in self.children if c.proven >= 0]
-        return max(open_children or self.children, key=lambda c: c.puct(exploration))
+        return max(open_children or self.children, key=lambda c: c.puct(exploration, mm_weight))
 
     def untried_puct(self, exploration: float, fpu_reduction: float) -> float:
         """PUCT score of the best untried move, as an unvisited child.
@@ -204,7 +213,7 @@ class _Node:
         fpu = max(0.0, q - fpu_reduction)
         return fpu + exploration * self._untried_priors[-1] * math.sqrt(self.visits)
 
-    def wants_expansion(self, exploration: float, fpu_reduction: float) -> bool:
+    def wants_expansion(self, exploration: float, fpu_reduction: float, mm_weight: float = 0.0) -> bool:
         """Expand a new child here rather than descend into an existing one?
 
         True when there are untried moves and either no children yet or
@@ -218,7 +227,7 @@ class _Node:
             # Every child loses for the chooser: try another move (and
             # complete the proof that this node is lost if none is left).
             return True
-        best = max(c.puct(exploration) for c in self.children)
+        best = max(c.puct(exploration, mm_weight) for c in self.children)
         return self.untried_puct(exploration, fpu_reduction) > best
 
     def has_untried(self) -> bool:
@@ -486,19 +495,20 @@ class MCTSBrain(Brain[MCTSBrainSettings], name="mcts"):
         # every move before the search goes deeper.
         exploration = self.settings.exploration
         fpu_reduction = self.settings.fpu_reduction
+        mm_weight = self.settings.minimax_weight
         while node.terminal is None:
             if not node.generated:
                 self._generate(node, state)
-            if node.is_leaf() or node.wants_expansion(exploration, fpu_reduction):
+            if node.is_leaf() or node.wants_expansion(exploration, fpu_reduction, mm_weight):
                 break
-            node = node.best_child(exploration)
+            node = node.best_child(exploration, mm_weight)
             r, c = node.move  # type: ignore[misc]
             state.make(r, c, node.stone)
             depth += 1
 
         # A decided position: back up its proven value, never expand it.
         if node.terminal is not None:
-            self._backpropagate(node, node.terminal, root_stone)
+            self._backpropagate(node, node.terminal, root_stone, mm_weight > 0)
             self._restore(state, depth)
             return
 
@@ -519,7 +529,7 @@ class MCTSBrain(Brain[MCTSBrainSettings], name="mcts"):
                 child = _Node(move=move_rc, stone=child_stone, parent=node, untried=[], prior=move_prior)
                 child.prove(terminal_value, root_stone)
                 node.children.append(child)
-                self._backpropagate(child, terminal_value, root_stone)
+                self._backpropagate(child, terminal_value, root_stone, mm_weight > 0)
                 self._restore(state, depth)
                 return
 
@@ -537,7 +547,7 @@ class MCTSBrain(Brain[MCTSBrainSettings], name="mcts"):
         value = _leaf_value(state, root_stone, node.stone.opponent())
 
         # 4. Backpropagation + restore the shared state to the root position.
-        self._backpropagate(node, value, root_stone)
+        self._backpropagate(node, value, root_stone, mm_weight > 0)
         self._restore(state, depth)
 
     @staticmethod
@@ -606,6 +616,26 @@ class MCTSBrain(Brain[MCTSBrainSettings], name="mcts"):
         return None, (threat.row, threat.col)
 
     @staticmethod
+    def _backup_minimax(node: _Node, value: float, root_stone: Stone) -> None:
+        """Implicit minimax backup (Lanctot, Winands, Pepels, Sturtevant,
+        CIG 2014): the leaf keeps its evaluation; each ancestor takes the
+        best of its evaluated children for the player choosing there.
+
+        Values are from each node's mover: the chooser at a node is its
+        children's mover, so ``v_mm(node) = 1 − max(v_mm(child))``.
+        """
+        if node.terminal is not None:
+            value = node.terminal
+        node.v_mm = value if node.stone is root_stone else 1.0 - value
+        n = node.parent
+        while n is not None:
+            best = max((c.v_mm for c in n.children if c.v_mm is not None), default=None)
+            if best is None:
+                return
+            n.v_mm = 1.0 - best
+            n = n.parent
+
+    @staticmethod
     def _propagate_proof(node: _Node, root_stone: Stone) -> None:
         """MCTS-Solver step (Winands, Björnsson, Saito, CG 2008).
 
@@ -628,14 +658,17 @@ class MCTSBrain(Brain[MCTSBrainSettings], name="mcts"):
             parent = child.parent
 
     @staticmethod
-    def _backpropagate(node: _Node, value: float, root_stone: Stone) -> None:
+    def _backpropagate(node: _Node, value: float, root_stone: Stone, minimax: bool = False) -> None:
         """Walk up to root, updating visit counts and wins.
 
         *value* is in [0, 1] from *root_stone*'s perspective.  A proven
-        *node* first proves the ancestors it decides (MCTS-Solver).
+        *node* first proves the ancestors it decides (MCTS-Solver).  With
+        *minimax*, also update the implicit minimax values on the path.
         """
         if node.proven:
             MCTSBrain._propagate_proof(node, root_stone)
+        if minimax:
+            MCTSBrain._backup_minimax(node, value, root_stone)
         n: _Node | None = node
         while n is not None:
             n.visits += 1
