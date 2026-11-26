@@ -97,18 +97,13 @@ def _render_move_diag(diag: MoveDiagnostics) -> None:
 
     # Top candidates (first 5).
     if diag.top_candidates:
-        cand_str = ", ".join(
-            f"{c.move}={c.score:g}" for c in diag.top_candidates[:5]
-        )
+        cand_str = ", ".join(f"{c.move}={c.score:g}" for c in diag.top_candidates[:5])
         _console.print(f"  [dim]top:[/dim] {cand_str}")
 
     # Alternative-best warning when the chosen move was not top.
     if diag.alternative_best is not None and diag.chosen_move is not None:
         alt = diag.alternative_best
-        _console.print(
-            f"  [yellow]alt-best:[/yellow] {alt.move} ({alt.score:g}) "
-            f"— chose {diag.chosen_move} instead"
-        )
+        _console.print(f"  [yellow]alt-best:[/yellow] {alt.move} ({alt.score:g}) — chose {diag.chosen_move} instead")
 
 
 def run_playback(

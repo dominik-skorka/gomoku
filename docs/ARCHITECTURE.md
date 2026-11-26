@@ -162,17 +162,17 @@ class Move(BaseModel, frozen=True):
 
 ```python
 class GameConfig(BaseModel, frozen=True):
-    board_size: int = 15    # NxN grid
-    win_length: int = 5     # consecutive stones to win
+    board_size: int = 15  # NxN grid
+    win_length: int = 5  # consecutive stones to win
 ```
 
 ### GameResult
 
 ```python
 class GameResult(BaseModel):
-    winner: Stone | None          # BLACK, WHITE, or None (draw)
+    winner: Stone | None  # BLACK, WHITE, or None (draw)
     winning_moves: list[Move] | None  # the 5 cells forming the winning line
-    is_draw: bool                 # property: True when winner is None
+    is_draw: bool  # property: True when winner is None
 ```
 
 ### Board
@@ -205,19 +205,21 @@ packages depend on.  A class implements one by having its members, not by
 inheriting; pyright checks this in CI (`uv run pyright`).
 
 ```python
-class BoardView(Protocol):          # a position to read
+class BoardView(Protocol):  # a position to read
     @property
     def size(self) -> int: ...
     @property
     def occupied(self) -> Collection[Cell]: ...
     def at(self, row: int, col: int) -> Stone: ...
 
-class SearchBoard(BoardView, Protocol):   # changed in place by a search
+
+class SearchBoard(BoardView, Protocol):  # changed in place by a search
     def make(self, row: int, col: int, stone: Stone) -> None: ...
     def unmake(self) -> None: ...
 
+
 @runtime_checkable
-class Player(Protocol):             # chooses moves for one side
+class Player(Protocol):  # chooses moves for one side
     @property
     def name(self) -> str: ...
     def get_move(self, board: Board, stone: Stone) -> Move: ...
@@ -297,10 +299,12 @@ settings model `S` (a `gomoku.settings.BaseBrainSettings`):
 class GreedySettings(BaseBrainSettings):
     radius: int = Field(default=2, ge=1, le=4)
 
+
 class GreedyBrain(Brain[GreedySettings], name="greedy"):
     @override
-    def choose_move(self, board: Board, stone: Stone, session: BrainSession) -> Move:
-        ...  # self.settings.radius: validated and typed
+    def choose_move(
+        self, board: Board, stone: Stone, session: BrainSession
+    ) -> Move: ...  # self.settings.radius: validated and typed
 ```
 
 That is the whole contract:

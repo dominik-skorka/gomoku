@@ -7,10 +7,12 @@ name, and implement :meth:`Brain.choose_move`; that is all::
     class GreedySettings(BaseBrainSettings):
         radius: int = Field(default=2, ge=1, le=4)
 
+
     class GreedyBrain(Brain[GreedySettings], name="greedy"):
         @override
-        def choose_move(self, board: Board, stone: Stone, session: BrainSession) -> Move:
-            ...  # self.settings.radius is validated and typed
+        def choose_move(
+            self, board: Board, stone: Stone, session: BrainSession
+        ) -> Move: ...  # self.settings.radius is validated and typed
 
 The class statement registers the brain under its name, so it can be
 played (``gomoku play --black greedy,radius=3``), aliased in
@@ -47,9 +49,9 @@ class Brain[S: BaseBrainSettings = NoBrainSettings](ABC):
     settings are validated with.  Settings come from a model instance or
     as keyword arguments, checked by that model (unknown keys are errors)::
 
-        XBrain()                      # the model's defaults
-        XBrain(depth=6)               # some changed
-        XBrain(XSettings(depth=6))    # a ready model
+        XBrain()  # the model's defaults
+        XBrain(depth=6)  # some changed
+        XBrain(XSettings(depth=6))  # a ready model
     """
 
     #: Registry name, set by the ``name=`` class argument.

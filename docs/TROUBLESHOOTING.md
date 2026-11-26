@@ -444,9 +444,7 @@ moves = [json.loads(l) for l in lines if '"move_number"' in l]
 for m in moves[24:35]:  # moves 25-35
     eb, ea = m.get("eval_before"), m.get("eval_after")
     swing = (ea - eb) if eb and ea else None
-    print(f"#{m['move_number']:3d} {m['decision_path']:20s} "
-          f"opp_fours={m['opp_threats']['four_threats']} "
-          f"Δ={swing}")
+    print(f"#{m['move_number']:3d} {m['decision_path']:20s} opp_fours={m['opp_threats']['four_threats']} Δ={swing}")
 ```
 
 Output:

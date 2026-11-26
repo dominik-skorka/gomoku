@@ -34,10 +34,23 @@ select = [
     "B",   # flake8-bugbear
     "SIM", # flake8-simplify
     "RUF", # ruff-specific
+    "C4",  # flake8-comprehensions
+    "PIE", # flake8-pie
+    "ISC", # flake8-implicit-str-concat
+    "PTH", # flake8-use-pathlib
+    "LOG", # flake8-logging
+    "G",   # flake8-logging-format
     "TID251", # banned imports (below)
 ]
 # "×" is used deliberately in comments, docstrings and user-facing output.
 ignore = ["RUF001", "RUF002", "RUF003"]
+
+[tool.ruff.format]
+# Ruff's defaults (Black-compatible: double quotes, spaces, magic trailing
+# comma) plus formatting of code examples inside docstrings.  Line endings
+# are pinned so a checkout on Windows formats the same as CI.
+docstring-code-format = true
+line-ending = "lf"
 
 [tool.ruff.lint.flake8-tidy-imports.banned-api]
 # Python 3.14 evaluates annotations lazily (PEP 649/749): forward references

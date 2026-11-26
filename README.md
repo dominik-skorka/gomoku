@@ -393,8 +393,8 @@ uv sync
 # Run tests
 uv run pytest
 
-# Lint and format
-uv run ruff check .
+# Lint and format (both enforced in CI: `ruff check` and `ruff format --check`)
+uv run ruff check --fix .
 uv run ruff format .
 
 # Type check (also in CI): the interfaces in gomoku.interfaces are enforced here

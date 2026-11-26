@@ -93,12 +93,17 @@ def _split_threats(
         threat_list: list[Move] = []
         non_threat: list[Move] = []
         for m in moves:
-            if is_four_threat(grid, size, m.row, m.col, stone_int, dirs) or is_four_threat(
-                grid, size, m.row, m.col, opp_int, dirs
-            ) or (include_forks and (
-                _count_open_threes_at(board, m.row, m.col, stone) >= 2
-                or _count_open_threes_at(board, m.row, m.col, stone.opponent()) >= 2
-            )):
+            if (
+                is_four_threat(grid, size, m.row, m.col, stone_int, dirs)
+                or is_four_threat(grid, size, m.row, m.col, opp_int, dirs)
+                or (
+                    include_forks
+                    and (
+                        _count_open_threes_at(board, m.row, m.col, stone) >= 2
+                        or _count_open_threes_at(board, m.row, m.col, stone.opponent()) >= 2
+                    )
+                )
+            ):
                 threat_list.append(m)
             else:
                 non_threat.append(m)
@@ -134,10 +139,13 @@ def _split_threats(
                 if opp >= 4:
                     is_threat = True
                     break
-        if is_threat or (include_forks and (
-            _count_open_threes_at(board, move.row, move.col, stone) >= 2
-            or _count_open_threes_at(board, move.row, move.col, opponent) >= 2
-        )):
+        if is_threat or (
+            include_forks
+            and (
+                _count_open_threes_at(board, move.row, move.col, stone) >= 2
+                or _count_open_threes_at(board, move.row, move.col, opponent) >= 2
+            )
+        ):
             threat_list.append(move)
         else:
             non_threat.append(move)

@@ -121,7 +121,7 @@ class TestLoad:
     def test_annotates_bad_lines(self, tmp_path: Path) -> None:
         p = tmp_path / "corrupt.diag.jsonl"
         p.write_text(
-            _header().model_dump_json() + "\n" + "{\"move_number\": \"nope\"}\n",
+            _header().model_dump_json() + "\n" + '{"move_number": "nope"}\n',
             encoding="utf-8",
         )
         with pytest.raises(ValueError, match="malformed move record"):
