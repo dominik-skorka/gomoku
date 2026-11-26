@@ -5,7 +5,7 @@ from collections.abc import Iterator
 
 import pytest
 from gomoku.board import Board
-from gomoku.interfaces import BoardView
+from gomoku.interfaces import BoardView, MoveGenerator
 from gomoku.models import Move, Stone
 from gomoku.settings import (
     AlphaBetaBrainSettings,
@@ -28,6 +28,8 @@ from gomoku.strategies import (
 from gomoku_brain import resolve_brain
 from gomoku_brain.candidates import get_candidate_moves, radius_generator
 from gomoku_brain.evaluate import evaluate_board
+from gomoku_brain.minimax import MinimaxBrain
+from gomoku_brain.negamax import NegamaxBrain
 from gomoku_brain.search_state import SearchState
 from pydantic import ValidationError
 
@@ -147,3 +149,77 @@ def test_unregister_removes_both() -> None:
     register_move_generator("tmp", radius_generator)
     unregister_strategy("tmp")
     assert "tmp" not in EVALUATORS and "tmp" not in MOVE_GENERATORS
+
+
+# ── Minimax / negamax use the chosen strategies (#103) ─────────────────────
+
+SIMPLE_BRAINS = [MinimaxBrain, NegamaxBrain]
+
+
+@pytest.mark.parametrize("brain_cls", SIMPLE_BRAINS)
+def test_defaults_resolve_to_the_builtins(brain_cls: type[MinimaxBrain | NegamaxBrain]) -> None:
+    brain = brain_cls()
+    assert brain._evaluate is evaluate_board  # the same function: no behaviour change
+    assert brain._candidates.__qualname__ == "radius_generator(2)"
+
+
+def _corner_only(radius: int) -> MoveGenerator:
+    """Toy generator: the first empty cell in reading order."""
+
+    def generate(board: BoardView, stone: Stone, /) -> list[Move]:
+        size = board.size
+        return [next(Move(row=r, col=c) for r in range(size) for c in range(size) if board.at(r, c) is Stone.EMPTY)]
+
+    return generate
+
+
+@pytest.fixture
+def corner_generator() -> Iterator[None]:
+    register_move_generator("corner", _corner_only)
+    yield
+    unregister_strategy("corner")
+
+
+@pytest.mark.usefixtures("corner_generator")
+@pytest.mark.parametrize("brain_cls", SIMPLE_BRAINS)
+def test_generator_by_name_sets_the_moves_searched(brain_cls: type[MinimaxBrain | NegamaxBrain]) -> None:
+    board = _random_board(1, stones=6)
+    move = brain_cls(depth=2, move_generator="corner").get_move(board, Stone.BLACK)
+    assert move == _corner_only(2)(board, Stone.BLACK)[0]
+
+
+def _prefer_centre(board: BoardView, stone: Stone, /) -> float:
+    """Toy evaluator: own stones near the centre are good."""
+    centre = board.size // 2
+    return -float(sum(abs(r - centre) + abs(c - centre) for r, c in board.occupied if board.at(r, c) is stone))
+
+
+@pytest.fixture
+def centre_evaluator() -> Iterator[None]:
+    register_evaluator("centre", _prefer_centre)
+    yield
+    unregister_strategy("centre")
+
+
+@pytest.mark.usefixtures("centre_evaluator")
+@pytest.mark.parametrize("brain_cls", SIMPLE_BRAINS)
+def test_evaluator_by_name_sets_the_choice(brain_cls: type[MinimaxBrain | NegamaxBrain]) -> None:
+    # Black on the 5,5-6,6 diagonal: "pattern" blocks it at (8, 8), the toy
+    # evaluator goes to the centre (7, 7).
+    board = Board(size=15).place_stone(Move(row=5, col=5), Stone.BLACK)
+    board = board.place_stone(Move(row=9, col=9), Stone.WHITE)
+    board = board.place_stone(Move(row=6, col=6), Stone.BLACK)
+    assert brain_cls(depth=1).get_move(board, Stone.WHITE) == Move(row=8, col=8)
+    assert brain_cls(depth=1, evaluator="centre").get_move(board, Stone.WHITE) == Move(row=7, col=7)
+
+
+@pytest.mark.usefixtures("toy_strategies", "corner_generator", "centre_evaluator")
+@pytest.mark.parametrize("brain_cls", SIMPLE_BRAINS)
+def test_every_registered_strategy_plays_legal_moves(brain_cls: type[MinimaxBrain | NegamaxBrain]) -> None:
+    for evaluator in sorted(EVALUATORS):
+        for generator in sorted(MOVE_GENERATORS):
+            brain = brain_cls(depth=2, evaluator=evaluator, move_generator=generator)
+            for seed in range(3):
+                board = _random_board(seed, stones=7)
+                move = brain.get_move(board, Stone.BLACK)
+                assert board.at(move.row, move.col) is Stone.EMPTY, (evaluator, generator, seed)
