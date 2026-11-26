@@ -1,20 +1,26 @@
 """Minimax brain — classic minimax search."""
 
-from typing import override
+from typing import Any, override
 
 from gomoku.board import Board
 from gomoku.models import Move, Stone
 from gomoku.rules import check_winner
 from gomoku.settings import MinimaxBrainSettings
+from gomoku.strategies import get_evaluator, get_move_generator
 
 from gomoku_brain.base import Brain
 from gomoku_brain.brain_base import BrainSession
-from gomoku_brain.candidates import get_candidate_moves
-from gomoku_brain.evaluate import evaluate_board
+from gomoku_brain.candidates import _RADIUS
 
 
 class MinimaxBrain(Brain[MinimaxBrainSettings], name="minimax"):
     """Player using classic minimax search."""
+
+    def __init__(self, settings: MinimaxBrainSettings | None = None, /, **overrides: Any) -> None:
+        super().__init__(settings, **overrides)
+        # Resolved once: the search calls them at every node.
+        self._evaluate = get_evaluator(self.settings.evaluator)
+        self._candidates = get_move_generator(self.settings.move_generator, _RADIUS)
 
     @override
     def choose_move(self, board: Board, stone: Stone, session: BrainSession) -> Move:
@@ -29,7 +35,7 @@ class MinimaxBrain(Brain[MinimaxBrainSettings], name="minimax"):
         current: Stone,
         maximizing_stone: Stone,
     ) -> tuple[float, Move | None]:
-        candidates = get_candidate_moves(board)
+        candidates = self._candidates(board, current)
         if not candidates:
             return 0.0, None
 
@@ -47,7 +53,7 @@ class MinimaxBrain(Brain[MinimaxBrainSettings], name="minimax"):
                 return -(100_000.0 + depth), move
 
             if depth <= 1:
-                score = evaluate_board(new_board, maximizing_stone)
+                score = self._evaluate(new_board, maximizing_stone)
             else:
                 score, _ = self._minimax(new_board, depth - 1, current.opponent(), maximizing_stone)
 

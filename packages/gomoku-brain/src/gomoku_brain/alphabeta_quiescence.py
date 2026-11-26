@@ -21,6 +21,7 @@ signatures clean and lets the search stay a pure free function.
 
 from dataclasses import dataclass, field
 
+from gomoku.interfaces import Evaluator
 from gomoku.models import Move, Stone
 
 from gomoku_brain.alphabeta_ordering import _check_win, _split_threats
@@ -57,12 +58,16 @@ class QuiesceCtx:
       search.  Entries are keyed by zobrist hash (which encodes the side
       to move, i.e. the attacker) and carry the depth they were proven
       at, so a hit returns exactly what a fresh probe would.
+    * ``evaluate`` — the brain's static evaluation (its ``evaluator``
+      setting) for the stand-pat score.  The threat moves searched are
+      found by threat detection, not by the brain's move generator.
     """
 
     qs_vcf_depth: int
     eval_cache: EvalCache
     nodes: int = 0
     vcf_cache: _ThreatCache = field(default_factory=dict)
+    evaluate: Evaluator[SearchState] = evaluate_board
 
 
 def get_threat_moves(state: SearchState, stone: Stone) -> list[Move]:
@@ -136,7 +141,7 @@ def quiesce(
     if zh in ctx.eval_cache:
         stand_pat = ctx.eval_cache[zh]
     else:
-        stand_pat = evaluate_board(state, stone)
+        stand_pat = ctx.evaluate(state, stone)
         ctx.eval_cache[zh] = stand_pat
     if stand_pat >= beta:
         return stand_pat

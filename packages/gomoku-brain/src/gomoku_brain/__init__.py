@@ -42,6 +42,8 @@ from gomoku.interfaces import Player
 from gomoku.settings import BaseBrainSettings, BrainSettings
 from pydantic import BaseModel
 
+# Registers the built-in evaluator and move generator ("pattern", "radius").
+from gomoku_brain import strategies as _strategies  # noqa: F401
 from gomoku_brain.alphabeta import AlphaBetaBrain
 from gomoku_brain.base import REGISTRY, Brain
 from gomoku_brain.mcts import MCTSBrain

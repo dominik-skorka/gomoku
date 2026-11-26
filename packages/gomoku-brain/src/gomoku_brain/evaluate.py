@@ -1,5 +1,7 @@
 """Heuristic board evaluation for Gomoku AI."""
 
+from typing import TYPE_CHECKING
+
 from gomoku.interfaces import BoardView
 from gomoku.models import Move, Stone
 
@@ -336,8 +338,13 @@ _EVAL_WALKBACK_CAP = 4
 _jit_consts: tuple | None = None  # type: ignore[type-arg]
 
 
-def _eval_state_black(state) -> float:  # type: ignore[no-untyped-def]
+def _eval_state_black(state, consts: tuple | None = None) -> float:  # type: ignore[no-untyped-def,type-arg]
     """Black-positive evaluation of a :class:`SearchState`, incrementally.
+
+    *consts* is the kernel bundle ``(dirs, table, fork_threshold,
+    fork_bonus, open_three_bonus)``; ``None`` means the built-in weights.
+    The state's cache belongs to one bundle at a time: a call with
+    another one clears it first (see ``SearchState._eval_owner``).
 
     Uses the per-ply cache on the state: if an ancestor ply within
     ``_EVAL_WALKBACK_CAP`` has a cached value, the gap is filled with
@@ -369,9 +376,14 @@ def _eval_state_black(state) -> float:  # type: ignore[no-untyped-def]
         )
     from gomoku_brain.evaluate_jit import evaluate_delta_grid, evaluate_grid
 
-    dirs, table, fork_threshold, fork_bonus, open_three_bonus = _jit_consts
+    if consts is None:
+        consts = _jit_consts
+    dirs, table, fork_threshold, fork_bonus, open_three_bonus = consts
     p = state.ply
     valid = state._eval_valid
+    if state._eval_owner is not consts:
+        valid[:] = [False] * len(valid)
+        state._eval_owner = consts
     stack = state._eval_stack
     if valid[p]:
         return float(stack[p])
@@ -522,3 +534,15 @@ def evaluate_board(board: BoardView, stone: Stone) -> float:
         )
         return max(-_EVAL_CLAMP, min(_EVAL_CLAMP, raw))
     return max(-_EVAL_CLAMP, min(_EVAL_CLAMP, _evaluate_board_python(board, stone)))
+
+
+if TYPE_CHECKING:
+    from gomoku.interfaces import Evaluator
+
+    from gomoku_brain.search_state import SearchState
+
+    def _is_an_evaluator() -> Evaluator:
+        return evaluate_board  # pyright checks that evaluate_board is an Evaluator
+
+    def _is_a_search_state_evaluator() -> Evaluator[SearchState]:
+        return evaluate_board  # ... and usable where a SearchState evaluator is expected

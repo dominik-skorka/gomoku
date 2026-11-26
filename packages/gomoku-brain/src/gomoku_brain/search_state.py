@@ -50,6 +50,7 @@ class SearchState:
         "_ctx_candidates",
         "_ctx_moves",
         "_ctx_zobrist",
+        "_eval_owner",
         "_eval_stack",
         "_eval_valid",
         "_occ",
@@ -115,8 +116,13 @@ class SearchState:
         # evaluation of the position after k plies; ``make`` invalidates
         # the new ply only, so cached ancestor evaluations survive and
         # ``gomoku_brain.evaluate`` can fill gaps with local deltas.
+        # ``_eval_owner`` is the weight bundle the stack was computed with
+        # (``gomoku_brain.evaluate``): an evaluator with other weights
+        # clears the stack and takes it over, so ``make`` / ``unmake``
+        # need not know how many evaluators exist.
         self._eval_stack = np.zeros(cap, dtype=np.float64)
         self._eval_valid: list[bool] = [False] * cap
+        self._eval_owner: object = None
         # Per-ply memo of the radius-2 candidate scan, keyed by the
         # zobrist hash of the position each slot was derived from (no
         # explicit invalidation: a make at the same ply changes the

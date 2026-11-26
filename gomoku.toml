@@ -33,6 +33,18 @@ type = "minimax"
 # Default: 3 | Valid range: 1–10 | Higher = stronger but exponentially slower
 depth = 3
 
+# Static evaluation and candidate moves, by name (gomoku.strategies; same
+# keys in negamax, alphabeta, the threat brain's fallback, and evaluator in
+# mcts).  An unknown name is an error listing the registered ones.
+# Default: "pattern" / "radius" | Built-ins: "pattern", "pattern_open3" / "radius"
+# "pattern_open3" (open-three bonus 3_000 instead of 1_500) vs "pattern",
+# alpha-beta depth 10 at time_limit_s = 0.4: +28 Elo (95% interval +1 to
+# +55, 300 games, #105); confirmed on other openings (--seed 2): +50 Elo
+# (+16 to +85, 300 games).  Screened at depth 3 (100 games each): dead four
+# x3, live three x2, fork bonus x2, live two x3 all within +-7 Elo.
+# evaluator = "pattern"
+# move_generator = "radius"
+
 # -----------------------------------------------------------------------------
 # Brain: negamax — Negamax simplification of minimax with alpha-beta pruning
 # -----------------------------------------------------------------------------
@@ -152,6 +164,13 @@ early_game_futility_margin = 800
 # iterative-deepening passes and returning the best move found so far.
 # Default: 0 | Valid range: 0–600
 time_limit_s = 120.0
+
+# Static evaluation, by name (see [brains.minimax]).  "pattern_open3" doubles
+# the open-three bonus: vs "pattern", depth 10 at time_limit_s = 0.4, +28 Elo
+# (95% interval +1 to +55, 300 games) and +50 (+16 to +85, 300 games, other
+# openings), #105.
+# Default: "pattern"
+evaluator = "pattern_open3"
 
 # -----------------------------------------------------------------------------
 # Brain: alphabeta_depth_6 — Deeper alpha-beta variant (stronger, slower)
@@ -294,6 +313,11 @@ eval_ordering_depth = 11
 # Candidate moves kept per node after the early game.
 # Default: 20 | Valid range: 5–60
 max_candidates = 12
+# Static evaluation of the fallback, as in [brains.alphabeta].  The whole
+# threat brain with it vs "pattern": +8 Elo (95% interval -16 to +33, 300
+# games, #105): no loss, kept for one evaluation across both brains.
+# Default: "pattern"
+evaluator = "pattern_open3"
 
 # -- Threat spaces ------------------------------------------------------------
 # Which threats the forced-win searches (VCF, PNS / VCT) play and answer.
