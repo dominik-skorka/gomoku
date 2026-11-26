@@ -36,7 +36,11 @@ depth = 3
 # Static evaluation and candidate moves, by name (gomoku.strategies; same
 # keys in negamax, alphabeta, the threat brain's fallback, and evaluator in
 # mcts).  An unknown name is an error listing the registered ones.
-# Default: "pattern" / "radius" | Built-ins: "pattern" / "radius"
+# Default: "pattern" / "radius" | Built-ins: "pattern", "pattern_open3" / "radius"
+# "pattern_open3" (open-three bonus 3_000 instead of 1_500) vs "pattern",
+# alpha-beta depth 10 at time_limit_s = 0.4: +28 Elo (95% interval +1 to
+# +55, 300 games, #105).  Screened at depth 3 (100 games each): dead four
+# x3, live three x2, fork bonus x2, live two x3 all within +-7 Elo.
 # evaluator = "pattern"
 # move_generator = "radius"
 

@@ -74,3 +74,13 @@ def test_other_weights_change_the_score() -> None:
 def test_weights_out_of_range_are_rejected(bad: int) -> None:
     with pytest.raises(ValueError, match="dead_four"):
         PatternWeights(dead_four=bad)
+
+
+def test_open_three_evaluator_is_registered() -> None:
+    from gomoku.settings import AlphaBetaBrainSettings
+    from gomoku.strategies import get_evaluator
+
+    assert AlphaBetaBrainSettings(evaluator="pattern_open3").evaluator == "pattern_open3"
+    evaluate = get_evaluator("pattern_open3")
+    boards = [_random_board(seed) for seed in range(20)]
+    assert any(evaluate(b, Stone.BLACK) != evaluate_board(b, Stone.BLACK) for b in boards)

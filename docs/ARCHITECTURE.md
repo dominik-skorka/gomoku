@@ -353,7 +353,7 @@ by name from their settings, like brains are taken by name:
 
 | Setting | Built-in | Registry | In |
 |---|---|---|---|
-| `evaluator` | `"pattern"` = `evaluate_board` | `gomoku.strategies.EVALUATORS` | minimax, negamax, alphabeta (and the threat brain's `fallback`), mcts (leaf values) |
+| `evaluator` | `"pattern"` = `evaluate_board`; `"pattern_open3"` (below) | `gomoku.strategies.EVALUATORS` | minimax, negamax, alphabeta (and the threat brain's `fallback`), mcts (leaf values) |
 | `move_generator` | `"radius"` = `get_candidate_moves` at the brain's radius | `gomoku.strategies.MOVE_GENERATORS` | minimax, negamax, alphabeta (and `fallback`) |
 
 ```python
@@ -369,6 +369,14 @@ register_evaluator("stones", stones_only)
 AlphaBetaBrain(evaluator="stones")  # or alphabeta,evaluator=stones on the CLI
 ```
 
+- `gomoku_brain.pattern_weights.pattern_evaluator(PatternWeights(...))`
+  builds the pattern evaluation with other weights, on the same Numba
+  kernels and incremental `SearchState` cache (the cache records which
+  weights own it and is cleared when another set takes it over).
+  `"pattern_open3"` doubles the open-three bonus (1,500 → 3,000): in #105 it
+  beat `"pattern"` by +28 Elo (95% interval +1 to +55, 300 games,
+  alpha-beta at 0.4 s a move), the only one of five single-weight changes
+  that did not score as a draw.  It is not the default.
 - The names live in the core package so the settings models can check
   them (`AfterValidator`): an unknown name is a settings error listing the
   registered ones, in code, on the command line and in `gomoku.toml`.
