@@ -257,6 +257,23 @@ player's view), has no moves and is never expanded: every visit backs
 up the same exact value, so a proven result is never averaged with
 heuristic values.
 
+### MCTS-Solver
+
+Proofs propagate up the tree (Winands, Björnsson, Saito, *Monte-Carlo
+Tree Search Solver*, CG 2008).  When a node is proven, its parent is:
+
+- **lost for its mover** when that child wins for the player choosing
+  at the parent;
+- **won for its mover** when every move of the parent has been expanded
+  and every child loses for the chooser.
+
+Proven nodes use their exact value (1 or 0) as Q in PUCT; selection
+never descends into a proven loss while another child is unproven, and
+a node whose children are all proven losses expands its next move.  At
+the root a proven win is played (`decision_path = "mcts_proven_win"`),
+proven losses are avoided, and the search stops as soon as the root is
+solved.
+
 ---
 
 ## Decision Shortcuts
@@ -358,7 +375,7 @@ When a diagnostics context is active, MCTSBrain records:
 
 | Field | Value |
 |-------|-------|
-| `decision_path` | `"single_candidate"`, `"instant_win"`, `"instant_block"`, `"vcf_win"`, `"mcts"`, `"mcts_vcf_gated"` |
+| `decision_path` | `"single_candidate"`, `"instant_win"`, `"instant_block"`, `"vcf_win"`, `"mcts"`, `"mcts_vcf_gated"`, `"mcts_proven_win"` |
 | `chosen_move` | The most-visited root child (or the shortcut move) |
 | `search_stats.iterations` | Simulations run (fewer than `iterations` when `time_limit_s` stopped the search) |
 | `search_stats.nodes_searched` | `root.visits` (total tree samples) |

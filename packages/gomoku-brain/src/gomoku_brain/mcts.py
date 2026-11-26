@@ -118,6 +118,7 @@ class _Node:
         "move",
         "parent",
         "prior",
+        "proven",
         "stone",
         "terminal",
         "visits",
@@ -145,6 +146,10 @@ class _Node:
         # an immediate five); ``None`` for an undecided position.  A
         # terminal node is never expanded: every visit backs up this value.
         self.terminal: float | None = None
+        # The same result from the mover's side (``stone``): +1 the mover
+        # wins, -1 the mover loses, 0 not proven.  Kept next to
+        # ``terminal`` so selection can read it without the root stone.
+        self.proven = 0
         # ``untried=None`` defers move generation to the node's first
         # expansion (:meth:`MCTSBrain._generate`): most leaves are scored
         # once and never revisited, so they never pay for it.
@@ -153,6 +158,12 @@ class _Node:
         self._untried_priors: list[float] = []
         if untried is not None:
             self.set_untried(untried, untried_priors)
+
+    def prove(self, value: float, root_stone: Stone) -> None:
+        """Mark the position decided: *value* from *root_stone*'s side."""
+        self.terminal = value
+        mover_wins = (value == 1.0) == (self.stone is root_stone)
+        self.proven = 1 if mover_wins else -1
 
     def set_untried(self, untried: list[tuple[int, int]], priors: list[float] | None = None) -> None:
         """Set the moves still to expand, with their priors (uniform if ``None``)."""
@@ -167,13 +178,21 @@ class _Node:
         self.generated = True
 
     def puct(self, exploration: float) -> float:
-        """AGZ-style PUCT score: Q + c · P · √N / (n + 1)."""
+        """AGZ-style PUCT score: Q + c · P · √N / (n + 1).
+
+        A proven node uses its exact value (1 or 0 for the mover) as Q.
+        """
         q = self.wins / self.visits if self.visits else 0.0
+        if self.proven:
+            q = 1.0 if self.proven > 0 else 0.0
         parent_visits = self.parent.visits if self.parent else 1
         return q + exploration * self.prior * math.sqrt(parent_visits) / (self.visits + 1)
 
     def best_child(self, exploration: float) -> _Node:
-        return max(self.children, key=lambda c: c.puct(exploration))
+        """The child to descend into: highest PUCT, never a proven loss
+        for the player choosing here while another child is unproven."""
+        open_children = [c for c in self.children if c.proven >= 0]
+        return max(open_children or self.children, key=lambda c: c.puct(exploration))
 
     def untried_puct(self, exploration: float, fpu_reduction: float) -> float:
         """PUCT score of the best untried move, as an unvisited child.
@@ -194,6 +213,10 @@ class _Node:
         if not self._untried:
             return False
         if not self.children:
+            return True
+        if all(c.proven < 0 for c in self.children):
+            # Every child loses for the chooser: try another move (and
+            # complete the proof that this node is lost if none is left).
             return True
         best = max(c.puct(exploration) for c in self.children)
         return self.untried_puct(exploration, fpu_reduction) > best
@@ -337,10 +360,12 @@ class MCTSBrain(Brain[MCTSBrainSettings], name="mcts"):
         while iterations < self.settings.iterations:
             self._run_iteration(root, state, stone)
             iterations += 1
+            if root.proven:
+                break  # the root position is solved: no more to learn
             if deadline and time.monotonic() >= deadline:
                 break
 
-        best = max(root.children, key=lambda c: c.visits)
+        best = self._final_choice(root)
         assert best.move is not None
         br, bc = best.move
         logfire.info(
@@ -363,9 +388,12 @@ class MCTSBrain(Brain[MCTSBrainSettings], name="mcts"):
             from gomoku.diagnostics import CandidateInfo, SearchStats
 
             search_ms = session.elapsed_ms()
-            diag.decision_path = diag.decision_path or (
-                "mcts_vcf_gated" if vcf_gated else "mcts"
-            )
+            path = "mcts_vcf_gated" if vcf_gated else "mcts"
+            if best.proven > 0:
+                path = "mcts_proven_win"
+            diag.decision_path = diag.decision_path or path
+            if root.proven > 0:
+                diag.notes.append("Every move is a proven loss")
             diag.chosen_move = chosen
             diag.search_stats = SearchStats(
                 iterations=iterations,
@@ -396,6 +424,17 @@ class MCTSBrain(Brain[MCTSBrainSettings], name="mcts"):
             )
 
         return chosen
+
+    @staticmethod
+    def _final_choice(root: _Node) -> _Node:
+        """The root child to play: a proven win if there is one, else the
+        most visited child that is not a proven loss (most visited of all
+        when every move loses)."""
+        wins = [c for c in root.children if c.proven > 0]
+        if wins:
+            return max(wins, key=lambda c: c.visits)
+        open_children = [c for c in root.children if c.proven >= 0]
+        return max(open_children or root.children, key=lambda c: c.visits)
 
     def _take_kept(self, board: Board, stone: Stone) -> _Node | None:
         """The kept subtree for *board*, or ``None``.
@@ -478,7 +517,7 @@ class MCTSBrain(Brain[MCTSBrainSettings], name="mcts"):
             terminal_value, forced = self._node_status(state, r, c, child_stone, root_stone)
             if terminal_value is not None:
                 child = _Node(move=move_rc, stone=child_stone, parent=node, untried=[], prior=move_prior)
-                child.terminal = terminal_value
+                child.prove(terminal_value, root_stone)
                 node.children.append(child)
                 self._backpropagate(child, terminal_value, root_stone)
                 self._restore(state, depth)
@@ -567,11 +606,36 @@ class MCTSBrain(Brain[MCTSBrainSettings], name="mcts"):
         return None, (threat.row, threat.col)
 
     @staticmethod
+    def _propagate_proof(node: _Node, root_stone: Stone) -> None:
+        """MCTS-Solver step (Winands, Björnsson, Saito, CG 2008).
+
+        After *node* was proven, mark its ancestors that are now decided:
+        a node is lost for its mover when any child wins for the player
+        choosing there, and won for its mover when every move has been
+        expanded and every child loses for the chooser.
+        """
+        child = node
+        parent = child.parent
+        while parent is not None and parent.terminal is None and child.proven:
+            if child.proven > 0:
+                # The chooser at *parent* (child's mover) has a winning move.
+                parent.prove(0.0 if parent.stone is root_stone else 1.0, root_stone)
+            elif parent.generated and not parent._untried and all(c.proven < 0 for c in parent.children):
+                parent.prove(1.0 if parent.stone is root_stone else 0.0, root_stone)
+            else:
+                return
+            child = parent
+            parent = child.parent
+
+    @staticmethod
     def _backpropagate(node: _Node, value: float, root_stone: Stone) -> None:
         """Walk up to root, updating visit counts and wins.
 
-        *value* is in [0, 1] from *root_stone*'s perspective.
+        *value* is in [0, 1] from *root_stone*'s perspective.  A proven
+        *node* first proves the ancestors it decides (MCTS-Solver).
         """
+        if node.proven:
+            MCTSBrain._propagate_proof(node, root_stone)
         n: _Node | None = node
         while n is not None:
             n.visits += 1

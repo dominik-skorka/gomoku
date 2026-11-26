@@ -386,18 +386,19 @@ class TestPriorOrderedExpansion:
 
 class TestTerminalNodes:
     def test_terminal_nodes_are_never_expanded(self):
+        """A position decided when its node is created gets no moves and
+        no children (nodes proven later by the solver keep theirs)."""
         root = _search_tree(_open_three_board(), Stone.BLACK, iterations=3000)
-        terminals = [n for n in _walk(root) if n.terminal is not None]
-        assert terminals, "the open three must lead to decided positions"
-        for n in terminals:
-            assert n.children == []
+        decided = [n for n in _walk(root) if n.terminal is not None and not n.children]
+        assert decided, "the open three must lead to decided positions"
+        for n in decided:
             assert not n.has_untried()
 
     def test_terminal_value_is_not_diluted(self):
-        """Every visit of a terminal node backs up the same 0 / 1 value."""
+        """Every visit of a decided leaf backs up the same 0 / 1 value."""
         root = _search_tree(_open_three_board(), Stone.BLACK, iterations=3000)
         for n in _walk(root):
-            if n.terminal is not None:
+            if n.terminal is not None and not n.children:
                 assert n.terminal in (0.0, 1.0)
                 q = n.wins / n.visits
                 # Q is stored from the mover's perspective.
@@ -618,3 +619,84 @@ class TestBudgetAndReuse:
         brain = MCTSBrain(iterations=50)
         brain.get_move(self._quiet_board(), Stone.BLACK)
         assert brain._kept is None
+
+
+class TestSolver:
+    @staticmethod
+    def _node(stone: Stone, parent: _Node | None, untried=None) -> _Node:
+        n = _Node(move=(0, 0) if parent else None, stone=stone, parent=parent, untried=untried)
+        if parent is not None:
+            parent.children.append(n)
+        return n
+
+    def test_a_winning_child_proves_the_parent(self):
+        root = self._node(Stone.WHITE, None, untried=[])  # Black chooses at the root
+        mid = self._node(Stone.BLACK, root, untried=[(1, 1)])  # White chooses here
+        win_for_white = self._node(Stone.WHITE, mid, untried=[])
+        win_for_white.prove(0.0, Stone.BLACK)  # Black (root stone) loses
+        MCTSBrain._backpropagate(win_for_white, 0.0, Stone.BLACK)
+        assert mid.proven == -1 and mid.terminal == 0.0  # Black's move there loses
+        # The root has no untried move left and its only child loses for
+        # Black, so the root is lost for Black too (a win for its "mover").
+        assert root.proven == 1 and root.terminal == 0.0
+
+    def test_parent_with_open_moves_is_not_proven_lost(self):
+        root = self._node(Stone.WHITE, None, untried=[(5, 5)])
+        lost = self._node(Stone.BLACK, root, untried=[])
+        lost.prove(0.0, Stone.BLACK)  # Black's move loses
+        MCTSBrain._backpropagate(lost, 0.0, Stone.BLACK)
+        assert root.proven == 0 and root.terminal is None
+        # ...and the untried move is expanded rather than the lost one revisited.
+        assert root.wants_expansion(2.0, 0.2)
+
+    def test_best_child_skips_proven_losses(self):
+        root = self._node(Stone.WHITE, None, untried=[])
+        root.visits = 10
+        lost = self._node(Stone.BLACK, root, untried=[])
+        lost.prior, lost.visits, lost.wins = 0.9, 1, 1.0
+        lost.prove(0.0, Stone.BLACK)
+        other = self._node(Stone.BLACK, root, untried=[])
+        other.prior, other.visits, other.wins = 0.1, 5, 1.0
+        assert root.best_child(2.0) is other
+
+    def test_final_choice_prefers_a_proven_win(self):
+        root = self._node(Stone.WHITE, None, untried=[])
+        busy = self._node(Stone.BLACK, root, untried=[])
+        busy.visits = 100
+        win = self._node(Stone.BLACK, root, untried=[])
+        win.visits = 3
+        win.prove(1.0, Stone.BLACK)
+        assert MCTSBrain._final_choice(root) is win
+
+    def test_final_choice_avoids_proven_losses(self):
+        root = self._node(Stone.WHITE, None, untried=[])
+        lost = self._node(Stone.BLACK, root, untried=[])
+        lost.visits = 100
+        lost.prove(0.0, Stone.BLACK)
+        other = self._node(Stone.BLACK, root, untried=[])
+        other.visits = 3
+        assert MCTSBrain._final_choice(root) is other
+
+    def test_proofs_in_the_tree_are_consistent(self):
+        """Every proven node with children agrees with them."""
+        root = _search_tree(_open_three_board(), Stone.BLACK, iterations=3000)
+        assert root.proven == -1  # Black to move wins: a loss for White, who "moved" into the root
+        for n in _walk(root):
+            if n.proven and n.children:
+                if n.proven < 0:
+                    assert any(c.proven > 0 for c in n.children)
+                else:
+                    assert not n._untried and all(c.proven < 0 for c in n.children)
+
+    def test_search_stops_once_the_root_is_solved(self):
+        from gomoku.diagnostics import MoveDiagnostics
+        from gomoku_brain.brain_base import BrainSession
+
+        diag = MoveDiagnostics(move_number=9, stone=Stone.BLACK)
+        session = BrainSession(diag=diag, _t0=0.0)
+        brain = MCTSBrain(iterations=5000, vcf_depth=0)  # no root VCF: the tree must solve it
+        move = brain.choose_move(_open_three_board(), Stone.BLACK, session)
+        assert move in {Move(row=7, col=4), Move(row=7, col=8)}
+        assert diag.search_stats is not None
+        assert diag.search_stats.iterations < 5000
+        assert diag.decision_path == "mcts_proven_win"
