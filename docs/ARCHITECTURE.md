@@ -371,12 +371,22 @@ AlphaBetaBrain(evaluator="stones")           # or alphabeta,evaluator=stones on 
 - An evaluator must stay within ±99,000 (the win score is 100,000) and,
   like a generator, be stateless or thread-safe: `probe_threads` runs
   searches in parallel.
-- The threat-space searches (VCF, VCT, PNS) do not take a generator: their
-  proofs depend on exactly which threats and defences are generated
-  ([THREATS.md](THREATS.md)).
-- MCTS priors stay `priors.compute_priors`.
-- Wiring into the brains: minimax / negamax in #103, alpha-beta and MCTS
-  in #104 (plan in #77).
+- Brains resolve the names once, in `__init__` (`self._evaluate`,
+  `self._candidates`), never per node.  The defaults *are*
+  `evaluate_board` and `get_candidate_moves`, so alpha-beta keeps the
+  incremental `SearchState` evaluation cache and plays exactly as before
+  (`gomoku bench`, 48 positions).
+- In alpha-beta the evaluator scores the leaves, quiescence's stand-pat,
+  move ordering, futility and null-move pruning and the diagnostics; the
+  generator gives the moves searched at each node (made for both
+  `early_game_radius` and the mid-game radius).  Ordering (TT move,
+  killers, history, priors) stays alpha-beta's own.
+- Not pluggable, on purpose: the threat-space searches (VCF, VCT, PNS),
+  quiescence's threat moves, alpha-beta's root VCF pre-check and the
+  threat brain's own breaker choice.  Their proofs depend on exactly which
+  threats and defences are generated ([THREATS.md](THREATS.md)).  MCTS
+  priors stay `priors.compute_priors`, and its expansion candidates the
+  radius scan.
 
 | Brain | Module | Algorithm | Strength |
 |-------|--------|-----------|----------|

@@ -26,11 +26,14 @@ from gomoku.strategies import (
     unregister_strategy,
 )
 from gomoku_brain import resolve_brain
+from gomoku_brain.alphabeta import AlphaBetaBrain
 from gomoku_brain.candidates import get_candidate_moves, radius_generator
-from gomoku_brain.evaluate import evaluate_board
+from gomoku_brain.evaluate import _EVAL_CLAMP, evaluate_board
+from gomoku_brain.mcts import MCTSBrain
 from gomoku_brain.minimax import MinimaxBrain
 from gomoku_brain.negamax import NegamaxBrain
 from gomoku_brain.search_state import SearchState
+from gomoku_brain.threat import ThreatBrain
 from pydantic import ValidationError
 
 
@@ -223,3 +226,79 @@ def test_every_registered_strategy_plays_legal_moves(brain_cls: type[MinimaxBrai
                 board = _random_board(seed, stones=7)
                 move = brain.get_move(board, Stone.BLACK)
                 assert board.at(move.row, move.col) is Stone.EMPTY, (evaluator, generator, seed)
+
+
+# ── Alpha-beta, threat fallback, MCTS (#104) ───────────────────────────────
+
+
+@pytest.mark.usefixtures("toy_strategies", "centre_evaluator")
+@pytest.mark.parametrize("seed", range(20))
+def test_every_registered_evaluator_is_clamped(seed: int) -> None:
+    board = _random_board(seed, stones=10 + 4 * seed)
+    state = SearchState.from_board(board, Stone.BLACK)
+    for name, evaluate in EVALUATORS.items():
+        for position in (board, state):
+            for stone in (Stone.BLACK, Stone.WHITE):
+                assert abs(evaluate(position, stone)) <= _EVAL_CLAMP, (name, seed)
+
+
+def test_alphabeta_defaults_resolve_to_the_builtins() -> None:
+    brain = AlphaBetaBrain()
+    assert brain._evaluate is evaluate_board
+    assert brain._candidates.__qualname__ == "radius_generator(2)"
+    assert brain._early_candidates.__qualname__ == f"radius_generator({brain.settings.early_game_radius})"
+
+
+def test_threat_fallback_gets_the_strategy() -> None:
+    register_evaluator("stones", _stones_only)
+    try:
+        brain = ThreatBrain(fallback=AlphaBetaBrainSettings(depth=2, evaluator="stones"))
+        assert brain._fallback._evaluate is _stones_only
+    finally:
+        unregister_strategy("stones")
+
+
+def test_mcts_uses_the_evaluator_for_leaves() -> None:
+    calls: list[int] = []
+
+    def counting(board: BoardView, stone: Stone, /) -> float:
+        calls.append(1)
+        return evaluate_board(board, stone)
+
+    register_evaluator("counting", counting)
+    try:
+        board = _random_board(2, stones=6)
+        MCTSBrain(iterations=30, vcf_depth=0, evaluator="counting").get_move(board, Stone.BLACK)
+    finally:
+        unregister_strategy("counting")
+    assert calls
+
+
+def test_alphabeta_quiescence_uses_the_evaluator() -> None:
+    calls: list[int] = []
+
+    def counting(board: BoardView, stone: Stone, /) -> float:
+        calls.append(1)
+        return evaluate_board(board, stone)
+
+    register_evaluator("counting", counting)
+    try:
+        brain = AlphaBetaBrain(depth=2, evaluator="counting")
+        brain.get_move(_random_board(3, stones=9), Stone.BLACK)
+        assert brain._qs_ctx is not None and brain._qs_ctx.evaluate is counting
+    finally:
+        unregister_strategy("counting")
+    assert calls
+
+
+@pytest.mark.usefixtures("toy_strategies", "corner_generator", "centre_evaluator")
+def test_alphabeta_and_mcts_play_legal_moves_with_every_strategy() -> None:
+    boards = [_random_board(seed, stones=3 + 5 * seed) for seed in range(3)]
+    for evaluator in sorted(EVALUATORS):
+        mcts = MCTSBrain(iterations=40, vcf_depth=0, evaluator=evaluator)
+        for generator in sorted(MOVE_GENERATORS):
+            brain = AlphaBetaBrain(depth=2, evaluator=evaluator, move_generator=generator)
+            for board in boards:
+                for player in (brain, mcts):
+                    move = player.get_move(board, Stone.BLACK)
+                    assert board.at(move.row, move.col) is Stone.EMPTY, (player.name, evaluator, generator)

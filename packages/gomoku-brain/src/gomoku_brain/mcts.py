@@ -31,12 +31,13 @@ import math
 import random as _random
 import threading
 import time
-from typing import override
+from typing import TYPE_CHECKING, override
 
 import logfire
 from gomoku.board import Board
 from gomoku.models import Move, Stone
 from gomoku.settings import MCTSBrainSettings
+from gomoku.strategies import get_evaluator
 
 from gomoku_brain.base import Brain
 from gomoku_brain.brain_base import BrainSession
@@ -44,6 +45,9 @@ from gomoku_brain.candidates import get_candidate_moves
 from gomoku_brain.priors import compute_priors as _compute_priors
 from gomoku_brain.search_state import SearchState
 from gomoku_brain.threat import classify_vcf_breakers, probe_immediate
+
+if TYPE_CHECKING:
+    from gomoku.interfaces import Evaluator
 
 
 def _apply_dirichlet_noise(
@@ -72,7 +76,12 @@ def _apply_dirichlet_noise(
 _TEMPO_WIN = 5_000.0
 
 
-def _leaf_value(state: SearchState, root_stone: Stone, to_move: Stone | None = None) -> float:
+def _leaf_value(
+    state: SearchState,
+    root_stone: Stone,
+    to_move: Stone | None = None,
+    evaluate: Evaluator[SearchState] | None = None,
+) -> float:
     """Return a leaf value in [0, 1] from *root_stone*'s perspective.
 
     Uses the same :func:`gomoku_brain.evaluate.evaluate_board` as
@@ -86,12 +95,15 @@ def _leaf_value(state: SearchState, root_stone: Stone, to_move: Stone | None = N
     the other side has no five threat, the score moves by
     ``_TEMPO_WIN`` towards *to_move*: the same open three is nearly a
     win for the side to move but only a threat to block for the other.
+
+    *evaluate* is the brain's ``evaluator`` setting (default
+    :func:`~gomoku_brain.evaluate.evaluate_board`).
     """
     from gomoku_brain.evaluate import evaluate_board
     from gomoku_brain.threat import _find_winning_move
     from gomoku_brain.threat_detect import _has_unblockable_four
 
-    raw = evaluate_board(state, root_stone)
+    raw = (evaluate or evaluate_board)(state, root_stone)
     if (
         to_move is not None
         and _find_winning_move(state, to_move.opponent()) is None
@@ -242,6 +254,8 @@ class MCTSBrain(Brain[MCTSBrainSettings], name="mcts"):
 
     def __init__(self, settings: MCTSBrainSettings | None = None, /, **overrides: object) -> None:
         super().__init__(settings, **overrides)
+        # Leaf evaluation, resolved once (called every iteration).
+        self._evaluate = get_evaluator(self.settings.evaluator)
         # Tree kept for the next move when ``reuse_tree`` is on: the node
         # reached by our move, the stones on the board after it, and our
         # stone.  Taken under the lock, so two concurrent searches never
@@ -534,7 +548,7 @@ class MCTSBrain(Brain[MCTSBrainSettings], name="mcts"):
             node = child
 
         # 3. Heuristic leaf evaluation (replaces random rollout).
-        value = _leaf_value(state, root_stone, node.stone.opponent())
+        value = _leaf_value(state, root_stone, node.stone.opponent(), self._evaluate)
 
         # 4. Backpropagation + restore the shared state to the root position.
         self._backpropagate(node, value, root_stone)
