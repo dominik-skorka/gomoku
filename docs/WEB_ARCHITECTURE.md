@@ -162,7 +162,19 @@ translation shows its id.  Parameters without an override are not sent,
 so the server's own settings apply (they may differ from the schema
 defaults, e.g. `vcf_depth` in `gomoku.toml`, which is why the editor asks
 the server rather than showing schema defaults).  Settings that name server
-files (`opening_book`) are never offered.
+files (`opening_book`) are never offered: the API leaves them out of the
+schemas and the effective settings (see below).
+
+**Server-only settings.**  `brain_overrides` are merged into the settings a
+brain is built from, so a free-form file path there would let any client
+make the server probe and parse arbitrary files (#113).  Settings marked
+`SERVER_ONLY` (`gomoku.settings`; today `opening_book`, also inside the
+threat brain's `fallback`, and any plug-in setting marked the same way)
+therefore keep the value the server resolved from `gomoku.toml` or the
+defaults: an override repeating it is accepted (the web sends whole
+nested groups), one changing it is a 422 `invalid_brain_overrides` naming
+the setting, checked before the brain and its file access are built.  The
+API does not publish them, so clients never learn the server's paths.
 
 ### ADR-2: A static SPA, not a server-rendered framework
 

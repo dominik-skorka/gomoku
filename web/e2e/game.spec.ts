@@ -328,7 +328,6 @@ const BRAINS = {
         properties: {
           depth: { type: "integer", minimum: 1, maximum: 10, default: 4 },
           lmr: { type: "boolean", default: false, description: "Late move reductions." },
-          opening_book: { type: "string", default: "" },
         },
       },
     },
@@ -373,7 +372,7 @@ test("config.json decides the levels and what each sends to the engine", async (
 
 const SERVER_SETTINGS: Record<string, Record<string, unknown>> = {
   negamax: { depth: 3 },
-  alphabeta: { depth: 4, lmr: false, opening_book: "" },
+  alphabeta: { depth: 4, lmr: false },
   threat: {
     pns_time_s: 5,
     threats: { own: { fours: true, threes: true }, defence: { block_fours: true } },
@@ -410,8 +409,6 @@ test("level settings: show the server's values, mark and send changes, restore t
   await expect(dialog.locator("#param-depth")).toHaveValue("4");
   await expect(dialog.getByTestId("param-depth")).not.toHaveAttribute("data-changed");
   await expect(dialog.locator("#param-lmr")).toHaveValue("false");
-  // Server file paths are never offered.
-  await expect(dialog.locator("#param-opening_book")).toHaveCount(0);
   // Descriptions live in an (i) tooltip: hover with a mouse, tap on touch.
   await expect(dialog.getByText("Late move reductions.")).toHaveCount(0);
   const info = dialog.getByRole("button", { name: "lmr: what is this?" });

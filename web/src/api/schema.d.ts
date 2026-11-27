@@ -65,7 +65,9 @@ export interface paths {
          *
          *     Each entry includes the brain's *settings JSON Schema* so a UI can
          *     auto-render a configuration form without hard-coding the per-brain
-         *     knob list (depth, ``vcf_depth``, exploration, …).
+         *     knob list (depth, ``vcf_depth``, exploration, …).  Settings only the
+         *     server's configuration may set (file paths such as ``opening_book``)
+         *     are not listed.
          */
         get: operations["list_brains_v1_brains_get"];
         put?: never;
@@ -567,7 +569,7 @@ export interface components {
             brain: string;
             /**
              * Brain Overrides
-             * @description Per-request tweaks merged on top of the resolved brain settings, validated against the brain's pydantic model.  Use sparingly — most clients should configure brains via the TOML aliases.
+             * @description Per-request tweaks merged on top of the resolved brain settings, validated against the brain's pydantic model.  Use sparingly — most clients should configure brains via the TOML aliases.  Settings that name server files (``opening_book``) cannot be changed: a different value is a 422.
              */
             brain_overrides?: {
                 [key: string]: unknown;
@@ -617,7 +619,7 @@ export interface components {
             brain?: string | null;
             /**
              * Brain Overrides
-             * @description Per-session tweaks merged on top of the resolved brain settings.  Ignored when ``brain`` is ``null``.
+             * @description Per-session tweaks merged on top of the resolved brain settings.  Ignored when ``brain`` is ``null``.  Settings that name server files (``opening_book``) cannot be changed: a different value is a 422.
              */
             brain_overrides?: {
                 [key: string]: unknown;

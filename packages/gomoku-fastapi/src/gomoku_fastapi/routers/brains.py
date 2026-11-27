@@ -8,6 +8,7 @@ from gomoku_brain import BRAINS
 
 from gomoku_fastapi.deps import SettingsDep, effective_brain_settings
 from gomoku_fastapi.schemas import BrainInfo, BrainSettingsResponse, BrainsResponse
+from gomoku_fastapi.server_only import public_schema
 
 router = APIRouter(tags=["brains"])
 
@@ -22,12 +23,14 @@ async def list_brains() -> BrainsResponse:
 
     Each entry includes the brain's *settings JSON Schema* so a UI can
     auto-render a configuration form without hard-coding the per-brain
-    knob list (depth, ``vcf_depth``, exploration, …).
+    knob list (depth, ``vcf_depth``, exploration, …).  Settings only the
+    server's configuration may set (file paths such as ``opening_book``)
+    are not listed.
     """
     items = [
         BrainInfo(
             name=spec.name,
-            settings_schema=spec.settings_cls.model_json_schema(),
+            settings_schema=public_schema(spec.settings_cls),
         )
         for spec in sorted(BRAINS.values(), key=lambda s: s.name)
     ]

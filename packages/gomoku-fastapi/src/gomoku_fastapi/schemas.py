@@ -79,7 +79,8 @@ class MoveRequest(BaseModel):
             "Per-request tweaks merged on top of the resolved brain "
             "settings, validated against the brain's pydantic model.  "
             "Use sparingly — most clients should configure brains via "
-            "the TOML aliases."
+            "the TOML aliases.  Settings that name server files "
+            "(``opening_book``) cannot be changed: a different value is a 422."
         ),
     )
     diagnostics: bool = Field(
@@ -172,7 +173,8 @@ class PlayerConfig(BaseModel):
     brain_overrides: dict[str, Any] | None = Field(
         default=None,
         description=(
-            "Per-session tweaks merged on top of the resolved brain settings.  Ignored when ``brain`` is ``null``."
+            "Per-session tweaks merged on top of the resolved brain settings.  Ignored when ``brain`` is ``null``.  "
+            "Settings that name server files (``opening_book``) cannot be changed: a different value is a 422."
         ),
     )
 

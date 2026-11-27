@@ -16,7 +16,7 @@ name to settings model lives alongside the brain classes themselves in
 
 import os
 from pathlib import Path
-from typing import Annotated, override
+from typing import Annotated, Any, override
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict, TomlConfigSettingsSource
@@ -104,6 +104,28 @@ def _move_generator_field() -> MoveGeneratorName:
     )
 
 
+SERVER_ONLY: dict[str, Any] = {"server_only": True}
+"""``json_schema_extra`` marker of a setting only the server's configuration may set.
+
+Use it on settings that reach outside the brain, such as a file path::
+
+    opening_book: str = Field(default="", json_schema_extra=SERVER_ONLY)
+
+The REST API keeps such a setting at the value the server resolved
+(``gomoku.toml`` alias or default): a ``brain_overrides`` entry with a
+different value is rejected with 422, and the setting is left out of the
+published settings schemas and effective settings.  The marker works at
+any depth (e.g. inside the threat brain's ``fallback``) and for plug-in
+brains' settings alike.
+"""
+
+
+def is_server_only(field: Any) -> bool:
+    """Whether a pydantic ``FieldInfo`` carries the :data:`SERVER_ONLY` marker."""
+    extra = getattr(field, "json_schema_extra", None)
+    return isinstance(extra, dict) and extra.get("server_only") is True
+
+
 class BaseBrainSettings(BaseModel):
     """Base of every brain's settings model (and of its nested tables).
 
@@ -170,7 +192,11 @@ class AlphaBetaBrainSettings(BaseBrainSettings):
         description="Nodes at least this deep order moves by full evaluation; shallower ones by pattern priors.",
     )
     time_limit_s: float = Field(default=0.0, ge=0.0, le=600.0)
-    opening_book: str = Field(default="", description="Path to an opening book JSON file.")
+    opening_book: str = Field(
+        default="",
+        description="Path to an opening book JSON file (server configuration only).",
+        json_schema_extra=SERVER_ONLY,
+    )
     vcf_breaker_pns_nodes: int = Field(
         default=0,
         ge=0,

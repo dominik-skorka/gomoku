@@ -37,7 +37,7 @@ describe("settings form", () => {
     properties: {
       depth: { type: "integer", minimum: 1, maximum: 10, default: 4 },
       lmr: { type: "boolean", default: false },
-      opening_book: { type: "string", default: "" },
+      evaluator: { type: "string", default: "pattern" },
       threats: { $ref: "#/$defs/Search", description: "Which threats." },
       fallback: { anyOf: [{ $ref: "#/$defs/AB" }, { type: "null" }], default: null },
     },
@@ -48,10 +48,10 @@ describe("settings form", () => {
     },
   };
 
-  it("lists flat settings, walks into nested groups, hides server paths", () => {
+  it("lists flat settings and walks into nested groups", () => {
     const groups = groupsOf(schema);
     expect(groups.map((g) => [g.path.join("."), g.fields.map((f) => f.key)])).toEqual([
-      ["", ["depth", "lmr"]],
+      ["", ["depth", "lmr", "evaluator"]],
       ["threats", []],
       ["threats.own", ["fours"]],
       ["fallback", ["depth"]],
@@ -64,7 +64,7 @@ describe("settings form", () => {
     expect(defaultsOf(schema)).toEqual({
       depth: 4,
       lmr: false,
-      opening_book: "",
+      evaluator: "pattern",
       threats: { own: { fours: true } },
       fallback: { depth: 4 },
     });
