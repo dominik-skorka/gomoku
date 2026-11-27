@@ -204,6 +204,19 @@ radius = 1
 uv run gomoku play --black greedy_near --white random
 ```
 
+A setting that reaches outside the brain, such as a file path, must not be
+chosen by API clients: mark it with `SERVER_ONLY` and only `gomoku.toml`
+(or the command line) can set it.  The REST API keeps it at the server's
+value (a `brain_overrides` entry with another value is a 422, at any
+depth) and leaves it out of `GET /v1/brains` and
+`GET /v1/brains/{name}/settings`:
+
+```python
+from gomoku.settings import SERVER_ONLY
+
+weights_file: str = Field(default="", description="Path to a weights file.", json_schema_extra=SERVER_ONLY)
+```
+
 ## Measure it
 
 `gomoku match` plays both colours of each opening and reports the score

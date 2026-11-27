@@ -573,7 +573,7 @@
                 "type": "null"
               }
             ],
-            "description": "Per-request tweaks merged on top of the resolved brain settings, validated against the brain's pydantic model.  Use sparingly \u2014 most clients should configure brains via the TOML aliases.",
+            "description": "Per-request tweaks merged on top of the resolved brain settings, validated against the brain's pydantic model.  Use sparingly \u2014 most clients should configure brains via the TOML aliases.  Settings that name server files (``opening_book``) cannot be changed: a different value is a 422.",
             "title": "Brain Overrides"
           },
           "diagnostics": {
@@ -656,7 +656,7 @@
                 "type": "null"
               }
             ],
-            "description": "Per-session tweaks merged on top of the resolved brain settings.  Ignored when ``brain`` is ``null``.",
+            "description": "Per-session tweaks merged on top of the resolved brain settings.  Ignored when ``brain`` is ``null``.  Settings that name server files (``opening_book``) cannot be changed: a different value is a 422.",
             "title": "Brain Overrides"
           }
         },
@@ -1095,7 +1095,7 @@
     },
     "/v1/brains": {
       "get": {
-        "description": "Return one entry per brain in :data:`gomoku_brain.BRAINS`.\n\nEach entry includes the brain's *settings JSON Schema* so a UI can\nauto-render a configuration form without hard-coding the per-brain\nknob list (depth, ``vcf_depth``, exploration, \u2026).",
+        "description": "Return one entry per brain in :data:`gomoku_brain.BRAINS`.\n\nEach entry includes the brain's *settings JSON Schema* so a UI can\nauto-render a configuration form without hard-coding the per-brain\nknob list (depth, ``vcf_depth``, exploration, \u2026).  Settings only the\nserver's configuration may set (file paths such as ``opening_book``)\nare not listed.",
         "operationId": "list_brains_v1_brains_get",
         "responses": {
           "200": {

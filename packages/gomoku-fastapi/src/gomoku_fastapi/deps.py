@@ -23,6 +23,7 @@ from gomoku_brain import (
     resolve_brain,
 )
 
+from gomoku_fastapi.server_only import pin_server_only, strip_server_only
 from gomoku_fastapi.sessions import SessionStore
 
 _settings: GomokuSettings | None = None
@@ -94,7 +95,9 @@ def effective_brain_settings(name: str, settings: GomokuSettings) -> tuple[str, 
     :func:`build_brain` does, fills every setting the alias leaves out with
     the brain's default, and applies the server's time cap
     (``[api].max_time_limit_s``), so the values are the ones a move really
-    runs with.  Raises the same 404 / 422 as :func:`build_brain`.
+    runs with.  Server-only settings (``gomoku.settings.SERVER_ONLY``, e.g.
+    ``opening_book``) are left out: clients cannot change them and must not
+    learn the server's paths.  Raises the same 404 / 422 as :func:`build_brain`.
     """
     if name not in BRAINS and name not in settings.brains.aliases():
         available = sorted(set(BRAINS) | set(settings.brains.aliases()))
@@ -113,7 +116,7 @@ def effective_brain_settings(name: str, settings: GomokuSettings) -> tuple[str, 
     cap = settings.api.max_time_limit_s
     if cap > 0:
         kwargs = _cap_time_budget(brain_type, kwargs, cap)
-    return brain_type, kwargs
+    return brain_type, strip_server_only(BRAINS[brain_type].settings_cls, kwargs)
 
 
 def build_brain(
@@ -127,7 +130,10 @@ def build_brain(
     …) or a TOML alias from ``[brains.<name>]``.  *overrides* are
     request-time tweaks merged on top of the resolved settings — they
     are validated against the brain's pydantic settings model so a
-    malformed knob produces a clean 422 instead of a 500.
+    malformed knob produces a clean 422 instead of a 500.  Server-only
+    settings (``gomoku.settings.SERVER_ONLY``, e.g. ``opening_book``) keep
+    the server's values: an override repeating them is accepted, one
+    changing them is a 422.
 
     Raises :class:`HTTPException` (404 / 422) on any resolution failure
     so the FastAPI error handler renders it as a normal API error
@@ -157,12 +163,27 @@ def build_brain(
         # values (e.g. depth=999) fail at the API edge with a 422.
         spec = BRAINS[brain_type]
         try:
-            kwargs = spec.settings_cls(**{**kwargs, **overrides}).model_dump()
+            resolved = spec.settings_cls(**kwargs).model_dump()
+            requested = spec.settings_cls(**{**kwargs, **overrides}).model_dump()
         except ValueError as exc:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail={"error": "invalid_brain_overrides", "message": str(exc)},
             ) from exc
+        # Settings naming server files (``opening_book``) keep the server's
+        # values; a client asking for another one gets a 422 before the
+        # brain (and its file access) is built.
+        rejected = pin_server_only(spec.settings_cls, requested, resolved, overrides)
+        if rejected:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail={
+                    "error": "invalid_brain_overrides",
+                    "message": f"server-only settings cannot be overridden: {', '.join(rejected)}",
+                    "server_only": rejected,
+                },
+            )
+        kwargs = requested
 
     cap = settings.api.max_time_limit_s
     if cap > 0:

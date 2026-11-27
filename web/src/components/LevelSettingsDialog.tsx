@@ -31,12 +31,6 @@ export interface Group {
 
 type Schema = Record<string, unknown>;
 
-/**
- * Settings that name files on the server: a client must not choose them
- * (and the form would not know the server's paths anyway).
- */
-const HIDDEN = new Set(["opening_book"]);
-
 /** The object schema behind a `$ref` or a nullable `anyOf: [$ref, null]`, if any. */
 function objectSchema(p: Schema, defs: Record<string, Schema>): Schema | null {
   const ref = (s: Schema) => (typeof s.$ref === "string" ? (defs[s.$ref.split("/").at(-1) ?? ""] ?? null) : null);
@@ -64,7 +58,6 @@ export function groupsOf(schema: Schema): Group[] {
     const fields: Field[] = [];
     const nested: [Schema, string, string | undefined][] = [];
     for (const [key, p] of Object.entries((node.properties ?? {}) as Record<string, Schema>)) {
-      if (HIDDEN.has(key)) continue;
       const type = p.type;
       const desc = typeof p.description === "string" ? p.description : undefined;
       if (type === "integer" || type === "number" || type === "boolean" || type === "string") {
